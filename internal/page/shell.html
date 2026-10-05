@@ -14,6 +14,7 @@
       <p class="turn" id="turn" data-state="connecting" role="status" aria-live="polite">Collegamento a lavagna…</p>
     </div>
     <nav aria-label="Percorso di lettura"><ol class="route" id="route"></ol></nav>
+    <div class="picker-hint" id="picker-hint" role="status" hidden>Scegli il punto da collegare al commento: i controlli del contenuto restano fermi. <kbd>Esc</kbd> annulla.</div>
   </header>
 
   <section class="notice" id="waiting">
@@ -39,6 +40,11 @@
       </header>
       <div class="feedback-body" id="draft-area">
         <label for="comment-text">Che cosa vuoi chiarire o cambiare?</label>
+        <div class="anchor-line" id="anchor-line" hidden>
+          <button type="button" id="pick-anchor" aria-pressed="false">Collega un punto della pagina</button>
+          <button type="button" id="clear-anchor" hidden>Rimuovi riferimento</button>
+          <span class="anchor-label" id="anchor-label"></span>
+        </div>
         <textarea id="comment-text" aria-describedby="comment-counter editor-help image-help" placeholder="Scrivi qui una domanda o un commento."></textarea>
         <p class="counter" id="comment-counter" aria-live="polite" hidden></p>
         <div class="editor-actions">

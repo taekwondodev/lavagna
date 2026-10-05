@@ -38,6 +38,12 @@ func turnIs(p *cdptest.Page, turn string) {
 
 func roundShown(p *cdptest.Page, n string) {
 	p.WaitFor(formShown + ` && document.querySelector('#round-label').textContent === 'Round ` + n + `'`)
+	var framed bool
+	p.MustEval(`Boolean(document.querySelector('#content'))`, &framed)
+	if framed {
+		p.Frame("#content").WaitFor(`document.readyState === 'complete' && document.fonts.status === 'loaded'`)
+		p.WaitFor(`document.querySelector('#content').offsetHeight > 0`)
+	}
 }
 
 func unreachable(t *testing.T, origin string) {
@@ -62,13 +68,13 @@ func browserStub(t *testing.T) (string, func() []string) {
 	}
 }
 
-func startBlocked(t *testing.T, environ []string, src string) (*call, *bufio.Reader) {
+func startBlocked(t *testing.T, environ []string, src string, args ...string) (*call, *bufio.Reader) {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := command(environ, src)
+	cmd := command(environ, src, args...)
 	cmd.Stdout = w
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -111,11 +117,11 @@ func TestPageFollowsConsecutiveRoundsWithoutRefresh(t *testing.T) {
 	turnIs(p, "Tocca a te")
 	var page struct {
 		Same    bool
-		Text    string
 		Checked int
 	}
-	p.MustEval(`({Same: window.sameDocument === true, Text: document.querySelector('#document').textContent, Checked: document.querySelectorAll('#document input:checked').length})`, &page)
-	if !page.Same || !strings.Contains(page.Text, "Il secondo round chiarisce il primo.") || page.Checked != 0 {
+	p.MustEval(`({Same: window.sameDocument === true, Checked: document.querySelectorAll('#document input:checked').length})`, &page)
+	p.Frame("#content").WaitFor(`document.body.textContent.includes('Il secondo round chiarisce il primo.')`)
+	if !page.Same || page.Checked != 0 {
 		t.Fatalf("round 2 in the same tab: %+v", page)
 	}
 	p.Click(`input[value="file"]`)

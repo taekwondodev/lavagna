@@ -75,6 +75,7 @@ type State struct {
 	Live     string   `json:"live,omitempty"`
 	Accepted string   `json:"accepted,omitempty"`
 	Previous *Outcome `json:"previous,omitempty"`
+	Anchors  []string `json:"anchors,omitempty"`
 }
 
 type Lease struct {

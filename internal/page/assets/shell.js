@@ -33,6 +33,7 @@ const RECORD_KEY = 'lavagna:' + location.pathname;
 const CACHE_NAME = 'lavagna:' + location.pathname;
 const RETRY_MS = 250;
 const COUNTER_FROM = 0.75;
+const MAX_FRAME_HEIGHT = 100000;
 const LINE_SEPARATORS = new RegExp('[' + String.fromCharCode(0x2028, 0x2029) + ']', 'g');
 
 const $ = selector => document.querySelector(selector);
@@ -50,13 +51,16 @@ let closed = false;
 let inactive = false;
 let feedbackVisible = false;
 let refusal = '';
+let picking = false;
+let chapterTops = {};
+let snapshotURL = null;
 let uploading = 0;
 let imageRefusal = '';
 let acceptedWhileLive = null;
 let leaving = false;
 
 function blank() {
-  return { choices: {}, comments: [], images: [], editor: '', editing: null, previous: null, next: 0, submission: null, stage: '', sent: null, uncertain: false, carried: false };
+  return { choices: {}, comments: [], images: [], editor: '', anchor: null, editing: null, previous: null, next: 0, submission: null, stage: '', sent: null, uncertain: false, carried: false };
 }
 
 function stored() {
@@ -69,24 +73,24 @@ function stored() {
 
 function roundNumber(round) { return Number(round.replace(/^r/, '')); }
 
-function withComments(target, texts) {
-  target.comments = texts.map((text, index) => ({ id: index + 1, text }));
-  target.next = texts.length;
+function withComments(target, comments) {
+  target.comments = comments.map((comment, index) => ({ id: index + 1, ...comment }));
+  target.next = comments.length;
 }
 
 function leftover(old, previous) {
   const outcome = previous && old.submission && previous.submission === old.submission ? previous.end : null;
   if (old.stage === 'returned' || outcome === 'returned') return null;
   if (old.stage === 'accepted') return outcome === 'uncertain' ? resend(old.sent) : null;
-  const texts = old.comments.map(comment => comment.text);
+  const comments = old.comments.map(comment => ({ text: comment.text, anchor: comment.anchor }));
   const index = old.comments.findIndex(comment => comment.id === old.editing);
-  if (index !== -1 && old.editor.trim()) texts[index] = old.editor.trim();
-  const editorText = index === -1 ? old.editor : old.previous || '';
-  return { texts, editor: editorText, choices: old.choices, images: old.images, uncertain: old.uncertain || outcome === 'uncertain' };
+  if (index !== -1 && old.editor.trim()) comments[index] = { text: old.editor.trim(), anchor: old.anchor };
+  const editor = index === -1 ? { text: old.editor, anchor: old.anchor } : old.previous || { text: '', anchor: null };
+  return { comments, editor: editor.text, anchor: editor.anchor, choices: old.choices, images: old.images, uncertain: old.uncertain || outcome === 'uncertain' };
 }
 
 function resend(batch) {
-  return { texts: batch.comments, editor: '', choices: batch.choices, images: batch.images, uncertain: true };
+  return { comments: batch.comments, editor: '', anchor: null, choices: batch.choices, images: batch.images, uncertain: true };
 }
 
 function carry(old, next) {
@@ -97,11 +101,12 @@ function carry(old, next) {
     const option = batch.choices[question.id];
     if (option && question.options.includes(option)) result.choices[question.id] = option;
   }
-  withComments(result, batch.texts);
+  withComments(result, batch.comments);
   result.editor = batch.editor;
+  result.anchor = batch.anchor;
   result.images = batch.images;
   result.uncertain = batch.uncertain;
-  result.carried = batch.texts.length > 0 || Boolean(batch.editor.trim()) || Object.keys(result.choices).length > 0 || result.images.length > 0;
+  result.carried = batch.comments.length > 0 || Boolean(batch.editor.trim()) || Object.keys(result.choices).length > 0 || result.images.length > 0;
   return result;
 }
 
@@ -138,9 +143,9 @@ function collectComments() {
   const text = editor.value.trim();
   if (draft.editing !== null) {
     const index = result.findIndex(comment => comment.id === draft.editing);
-    if (index !== -1 && text) result[index] = { ...result[index], text };
+    if (index !== -1 && text) result[index] = { ...result[index], text, anchor: draft.anchor };
   } else if (text) {
-    result.push({ id: 'draft', text });
+    result.push({ id: 'draft', text, anchor: draft.anchor });
   }
   return result;
 }
@@ -177,7 +182,8 @@ function markUncertain() {
   draft.stage = '';
   draft.uncertain = batch.uncertain;
   draft.choices = { ...batch.choices };
-  withComments(draft, batch.texts);
+  withComments(draft, batch.comments);
+  draft.anchor = batch.anchor;
   draft.images = batch.images;
   draft.editing = null;
   draft.previous = null;
@@ -242,6 +248,7 @@ function reviewItems(comments) {
   const items = view.questions.map(question => choiceItem(question, draft.choices[question.id]));
   for (const comment of comments) {
     const item = element('li', undefined, 'review-comment review-line');
+    if (comment.anchor) item.append(element('span', comment.anchor, 'review-anchor'));
     item.append(element('span', comment.text, 'review-text'));
     if (comment.id === 'draft') item.append(element('span', 'nell’editor', 'review-marker'));
     items.push(item);
@@ -253,9 +260,77 @@ function reviewItems(comments) {
 function sentItems(batch) {
   const items = view.questions.filter(question => batch.choices[question.id])
     .map(question => choiceItem(question, batch.choices[question.id]));
-  for (const comment of batch.comments) items.push(element('li', typeof comment === 'string' ? comment : comment.text, 'review-comment'));
+  for (const comment of batch.comments) {
+    const item = element('li', undefined, 'review-comment');
+    if (comment.anchor) item.append(element('span', comment.anchor, 'note-anchor'));
+    item.append(element('span', comment.text));
+    items.push(item);
+  }
   if (batch.images.length) items.push(element('li', batch.images.length + ' screenshot', 'review-comment'));
   return items;
+}
+
+function frame() { return $('#content'); }
+
+function toFrame(message) {
+  const content = frame();
+  if (content && content.contentWindow) content.contentWindow.postMessage(message, '*');
+}
+
+function setPicking(active) {
+  picking = active && Boolean(frame());
+  const button = $('#pick-anchor');
+  button.setAttribute('aria-pressed', String(picking));
+  setText(button, picking ? 'Annulla collegamento' : 'Collega un punto della pagina');
+  $('#picker-hint').hidden = !picking;
+  toFrame({ lavagna: 'pick', active: picking });
+  if (picking) frame().focus({ preventScroll: true });
+}
+
+function updateAnchor(locked) {
+  const anchorable = Boolean(view.frame) && view.anchors.length > 0;
+  $('#anchor-line').hidden = !anchorable && !draft.anchor;
+  $('#pick-anchor').disabled = locked || !anchorable;
+  $('#clear-anchor').hidden = !draft.anchor;
+  $('#clear-anchor').disabled = locked;
+  setText($('#anchor-label'), draft.anchor ? 'Riferimento: ' + draft.anchor : '');
+  if (picking && locked) setPicking(false);
+  toFrame({ lavagna: 'mark', ref: draft.anchor });
+}
+
+function layout(data) {
+  const height = Number(data.height);
+  if (Number.isFinite(height) && height >= 0) frame().style.height = Math.min(Math.ceil(height), MAX_FRAME_HEIGHT) + 'px';
+  chapterTops = {};
+  const tops = data.chapters && typeof data.chapters === 'object' ? data.chapters : {};
+  for (const chapter of view.chapters) {
+    const top = Number(tops[chapter.id]);
+    if (Object.hasOwn(tops, chapter.id) && Number.isFinite(top) && !document.getElementById(chapter.id)) chapterTops[chapter.id] = Math.max(0, top);
+  }
+  toFrame({ lavagna: 'pick', active: picking });
+  toFrame({ lavagna: 'mark', ref: draft.anchor });
+  updateRoute();
+}
+
+function fromFrame(event) {
+  const content = frame();
+  const data = event.data;
+  if (!view || !content || event.source !== content.contentWindow || !data || typeof data !== 'object') return;
+  if (data.lavagna === 'layout') layout(data);
+  if (data.lavagna === 'anchor' && picking && !frozen() && typeof data.ref === 'string' && view.anchors.includes(data.ref)) {
+    draft.anchor = data.ref;
+    setPicking(false);
+    $('#editor-status').textContent = 'Punto collegato. Scrivi il commento qui sotto.';
+    changed();
+    editor.focus();
+  }
+  if (data.lavagna === 'cancel' && picking) cancelPicking();
+}
+
+function cancelPicking() {
+  setPicking(false);
+  $('#editor-status').textContent = 'Collegamento annullato. Il commento è rimasto intatto.';
+  $('#pick-anchor').focus();
 }
 
 function sendBlocker(over, count, answers) {
@@ -292,6 +367,7 @@ function updateControls() {
   setText($('#feedback-lead'), current.lead || panel.lead);
 
   editor.readOnly = locked;
+  updateAnchor(locked);
   for (const input of document.querySelectorAll('#document input[type=radio]')) input.disabled = locked;
   $('#add-comment').disabled = locked || !editor.value.trim();
   setText($('#add-comment'), draft.editing === null ? 'Aggiungi commento' : 'Salva modifica');
@@ -347,14 +423,16 @@ function renderComments() {
   list.replaceChildren();
   for (const comment of draft.comments) {
     const item = element('li', undefined, 'note' + (comment.id === draft.editing ? ' editing' : ''));
+    if (comment.anchor) item.append(element('p', comment.anchor, 'note-anchor'));
     item.append(element('p', comment.id === draft.editing ? 'Stai modificando questo commento nell’editor.' : comment.text));
     const actions = element('div', undefined, 'note-actions');
     const edit = element('button', 'Modifica');
     edit.type = 'button';
     edit.disabled = draft.editing !== null || frozen();
     edit.addEventListener('click', () => {
-      draft.previous = editor.value;
+      draft.previous = { text: editor.value, anchor: draft.anchor };
       draft.editing = comment.id;
+      draft.anchor = comment.anchor;
       editor.value = comment.text;
       $('#editor-status').textContent = 'Modifica il commento; non ne verrà creata una copia.';
       changed();
@@ -468,7 +546,8 @@ function changed() {
 }
 
 function restorePrevious() {
-  editor.value = draft.previous || '';
+  editor.value = draft.previous ? draft.previous.text : '';
+  draft.anchor = draft.previous ? draft.previous.anchor : null;
   draft.previous = null;
   draft.editing = null;
 }
@@ -480,6 +559,13 @@ function renderRoute() {
     const link = element('a', undefined, chapter.role);
     link.href = '#' + chapter.id;
     link.append(element('span', chapter.index), ' ' + chapter.name);
+    link.addEventListener('click', event => {
+      const top = chapterTop(chapter.id);
+      if (top === null) return;
+      event.preventDefault();
+      const offset = $('#topbar').getBoundingClientRect().height + 20;
+      window.scrollTo({ top: window.scrollY + top - offset, behavior: 'instant' });
+    });
     const item = element('li');
     item.append(link);
     route.append(item);
@@ -495,8 +581,8 @@ function updateRoute() {
   const line = offset + (window.innerHeight - offset) * progress;
   let current = view.chapters.length ? view.chapters[0].id : '';
   for (const chapter of view.chapters) {
-    const section = document.getElementById(chapter.id);
-    if (section && section.getBoundingClientRect().top <= line) current = chapter.id;
+    const top = chapterTop(chapter.id);
+    if (top !== null && top <= line) current = chapter.id;
   }
   for (const link of document.querySelectorAll('#route a')) {
     if (link.hash === '#' + current) link.setAttribute('aria-current', 'location');
@@ -504,7 +590,80 @@ function updateRoute() {
   }
 }
 
-function render(next) {
+function chapterTop(id) {
+  const content = frame();
+  if (content && Object.hasOwn(chapterTops, id)) return content.getBoundingClientRect().top + content.clientTop + chapterTops[id];
+  const section = document.getElementById(id);
+  return section ? section.getBoundingClientRect().top : null;
+}
+
+function dataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function cacheFrame(next) {
+  await navigator.serviceWorker.ready;
+  const cache = await caches.open(CACHE_NAME);
+  const resources = new Map();
+  for (const path of next.resources) {
+    const url = new URL(path, location.origin).href;
+    let response = await cache.match(url);
+    if (!response) {
+      response = await fetch(url);
+      if (!response.ok) throw new Error('Round resource unavailable');
+      await cache.put(url, response.clone());
+    }
+    resources.set(url, response);
+  }
+  if (live) return null;
+  const encoded = new Map();
+  const scripts = new Map();
+  for (const [url, response] of resources) {
+    if (response.headers.get('Content-Type').startsWith('text/css') || url === new URL(next.frame, location.origin).href) continue;
+    const blob = await response.clone().blob();
+    encoded.set(url, await dataURL(blob));
+    if (response.headers.get('Content-Type').startsWith('text/javascript')) {
+      const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+      scripts.set(url, 'sha256-' + btoa(String.fromCharCode(...new Uint8Array(digest))));
+    }
+  }
+  for (const [url, response] of resources) {
+    if (!response.headers.get('Content-Type').startsWith('text/css')) continue;
+    const css = (await response.text()).replace(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*?))\s*\)/g, (match, doubleQuoted, singleQuoted, unquoted) => {
+      const data = encoded.get(new URL(doubleQuoted ?? singleQuoted ?? unquoted, url).href);
+      return data ? 'url("' + data + '")' : match;
+    });
+    encoded.set(url, await dataURL(new Blob([css], { type: 'text/css' })));
+  }
+  const url = new URL(next.frame, location.origin).href;
+  const response = resources.get(url);
+  const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+  for (const node of doc.querySelectorAll('[src], [href]')) {
+    for (const attr of ['src', 'href']) {
+      if (!node.hasAttribute(attr)) continue;
+      const resource = new URL(node.getAttribute(attr), url).href;
+      const data = encoded.get(resource);
+      if (data) node.setAttribute(attr, data);
+      if (node.tagName === 'SCRIPT' && scripts.has(resource)) node.setAttribute('integrity', scripts.get(resource));
+    }
+  }
+  const policy = doc.createElement('meta');
+  policy.httpEquiv = 'Content-Security-Policy';
+  policy.content = response.headers.get('Content-Security-Policy')
+    .replace(/(?:sandbox|frame-ancestors)[^;]*;?\s*/g, '')
+    .replace("script-src 'self'", 'script-src ' + [...scripts.values()].map(hash => "'" + hash + "'").join(' '))
+    .replace("style-src 'self'", "style-src 'self' data:")
+    .replace("font-src 'self'", "font-src 'self' data:");
+  doc.head.prepend(policy);
+  return URL.createObjectURL(new Blob(['<!doctype html>' + doc.documentElement.outerHTML], { type: 'text/html' }));
+}
+
+async function render(next) {
   const record = stored();
   const own = record && record.view.token === next.token;
   draft = own ? record.draft : record ? carry(record.draft, next) : blank();
@@ -512,7 +671,34 @@ function render(next) {
   sending = false;
   inactive = false;
   refusal = '';
-  $('#document').innerHTML = view.html;
+  picking = false;
+  chapterTops = {};
+  $('#picker-hint').hidden = true;
+  let snapshot = null;
+  if (view.frame) {
+    try {
+      snapshot = await cacheFrame(next);
+    } catch { }
+    if (view !== next) {
+      if (snapshot) URL.revokeObjectURL(snapshot);
+      return;
+    }
+  }
+  const area = $('#document');
+  area.replaceChildren();
+  if (snapshotURL) URL.revokeObjectURL(snapshotURL);
+  snapshotURL = !live ? snapshot : null;
+  if (live && snapshot) URL.revokeObjectURL(snapshot);
+  if (view.frame) {
+    const content = document.createElement('iframe');
+    content.id = 'content';
+    content.className = 'content-frame';
+    content.title = 'Contenuto del round';
+    content.setAttribute('sandbox', 'allow-scripts');
+    content.src = snapshotURL || view.frame;
+    area.append(content);
+  }
+  area.insertAdjacentHTML('beforeend', view.decide);
   setText($('#round-label'), 'Round ' + view.round.replace(/^r/, ''));
   setText($('#image-help'), `Incolla o trascina qui fino a ${view.imageLimit} screenshot: PNG, JPEG, WebP o GIF, ${size(view.imageBytes)} ciascuno.`);
   document.title = 'lavagna · round ' + view.round.replace(/^r/, '');
@@ -544,7 +730,7 @@ function newSubmission() {
 async function send() {
   if (!view || $('#send-feedback').disabled) return;
   draft.submission = draft.submission || newSubmission();
-  const comments = collectComments().map(comment => comment.text);
+  const comments = collectComments().map(comment => ({ text: comment.text, anchor: comment.anchor || null }));
   const choices = { ...draft.choices };
   const images = draft.images.map(image => image.id);
   draft.sent = { choices, comments, images: draft.images.map(image => ({ ...image })) };
@@ -559,13 +745,14 @@ async function send() {
     const response = await fetch('send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ round: view.round, token: view.token, submission: draft.submission, choices, comments: comments.map(text => ({ text })), images }),
+      body: JSON.stringify({ round: view.round, token: view.token, submission: draft.submission, choices, comments, images }),
     });
     const body = await response.json().catch(() => ({}));
     if (response.status === 202 || response.status === 200) {
       advance(body.stage || 'accepted');
       withComments(draft, comments);
       draft.editing = null;
+      draft.anchor = null;
       editor.value = '';
       draft.editor = '';
     } else if (response.status === 409) {
@@ -602,10 +789,11 @@ $('#add-comment').addEventListener('click', () => {
   if (!text) return;
   if (draft.editing !== null) {
     const comment = draft.comments.find(item => item.id === draft.editing);
-    if (comment) comment.text = text;
+    if (comment) Object.assign(comment, { text, anchor: draft.anchor });
     restorePrevious();
   } else {
-    draft.comments.push({ id: ++draft.next, text });
+    draft.comments.push({ id: ++draft.next, text, anchor: draft.anchor });
+    draft.anchor = null;
     editor.value = '';
   }
   $('#editor-status').textContent = 'Commento nella bozza. Non è stato inviato.';
@@ -667,6 +855,31 @@ $('#to-feedback').addEventListener('click', () => {
   button.closest('.send-area').scrollIntoView({ block: 'end' });
   target.focus({ preventScroll: true });
 });
+
+$('#pick-anchor').addEventListener('click', () => {
+  if (picking) {
+    cancelPicking();
+    return;
+  }
+  setPicking(true);
+  $('#editor-status').textContent = 'Scegli un punto evidenziato nel contenuto.';
+});
+
+$('#clear-anchor').addEventListener('click', () => {
+  draft.anchor = null;
+  $('#editor-status').textContent = 'Riferimento rimosso. Il commento vale per la pagina nel suo insieme.';
+  changed();
+  editor.focus();
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && picking) {
+    event.preventDefault();
+    cancelPicking();
+  }
+});
+
+window.addEventListener('message', fromFrame);
 
 form.addEventListener('submit', event => {
   event.preventDefault();

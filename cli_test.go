@@ -72,8 +72,8 @@ type call struct {
 
 var statusLine = regexp.MustCompile(`^lavagna · round (r\d+) · (http://127\.0\.0\.1:\d+)(/s/[0-9a-f]{64}/) · Esc per interrompere$`)
 
-func command(environ []string, src string) *exec.Cmd {
-	cmd := exec.Command(binary, "round")
+func command(environ []string, src string, args ...string) *exec.Cmd {
+	cmd := exec.Command(binary, append([]string{"round"}, args...)...)
 	cmd.Env = environ
 	cmd.Stdin = strings.NewReader(src)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -87,9 +87,9 @@ func (c *call) status(first string) {
 	}
 }
 
-func spawn(t *testing.T, environ []string, src string) *call {
+func spawn(t *testing.T, environ []string, src string, args ...string) *call {
 	t.Helper()
-	cmd := command(environ, src)
+	cmd := command(environ, src, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -116,6 +116,24 @@ func startRound(t *testing.T, environ []string, src string) *call {
 	return c
 }
 
+func writeFiles(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func startDir(t *testing.T, environ []string, dir string) *call {
+	t.Helper()
+	c := spawn(t, environ, "", dir)
+	if c.url == "" {
+		t.Fatalf("status line %q", c.first)
+	}
+	return c
+}
+
 func (c *call) esc() {
 	if c.cmd.ProcessState != nil {
 		return
@@ -126,6 +144,8 @@ func (c *call) esc() {
 
 func (c *call) finish() ([]string, int) {
 	c.t.Helper()
+	deadline := time.AfterFunc(20*time.Second, func() { c.cmd.Process.Kill() })
+	defer deadline.Stop()
 	rest, _ := io.ReadAll(c.out)
 	err := c.cmd.Wait()
 	code := 0
@@ -220,9 +240,69 @@ func TestRoundRefusesInvalidInputBeforeServing(t *testing.T) {
 	if code != 2 || !strings.HasPrefix(last(lines), `{"lavagna":"invalid","errors":["no conversation identity`) {
 		t.Fatalf("exit %d, output %q", code, lines)
 	}
-	lines, code = run(t, env(t, "LAVAGNA_SESSION=a"), "", "round", "/tmp/round")
-	if code != 2 || !strings.HasPrefix(last(lines), `{"lavagna":"invalid","errors":["usage: `) {
+	lines, code = run(t, env(t, "LAVAGNA_SESSION=a"), "", "round", "uno", "due")
+	if code != 2 || last(lines) != `{"lavagna":"invalid","errors":["usage: lavagna check | round [DIR | --help] | close"]}` {
 		t.Fatalf("exit %d, output %q", code, lines)
+	}
+}
+
+func TestRoundDirRefusesBoundsBeforeServing(t *testing.T) {
+	cases := map[string]struct {
+		files map[string]string
+		want  string
+	}{
+		"33 files":     {map[string]string{"round.md": decision}, `{"lavagna":"invalid","errors":["round: more than 32 files"]}`},
+		"4 MiB":        {map[string]string{"round.md": decision, "grande.png": strings.Repeat("x", 4<<20)}, fmt.Sprintf(`{"lavagna":"invalid","errors":["round: %d bytes exceed the 4194304 byte bound"]}`, 4<<20+len(decision))},
+		"missing file": {map[string]string{"round.md": "# Capire\n<img src=\"manca.png\" alt=\"\">\n"}, `{"lavagna":"invalid","errors":["round.md:2: src=\"manca.png\" is not a file of the round directory or a data: image"]}`},
+	}
+	for i := range 32 {
+		cases["33 files"].files[fmt.Sprintf("%02d.css", i)] = ""
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFiles(t, dir, c.files)
+			lines, code := run(t, env(t, "LAVAGNA_SESSION=dir"), "", "round", dir)
+			if code != 2 || len(lines) != 1 || lines[0] != c.want {
+				t.Fatalf("exit %d, output %q", code, lines)
+			}
+		})
+	}
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"round.md": decision})
+	if err := os.Symlink("/etc/hosts", filepath.Join(dir, "hosts.png")); err != nil {
+		t.Fatal(err)
+	}
+	lines, code := run(t, env(t, "LAVAGNA_SESSION=dir"), "", "round", dir)
+	if code != 2 || last(lines) != `{"lavagna":"invalid","errors":["round: hosts.png: symlinks are not allowed"]}` {
+		t.Fatalf("symlink: exit %d, output %q", code, lines)
+	}
+}
+
+func TestRoundHelpPrintsTheGrammarAndAnExample(t *testing.T) {
+	cmd := exec.Command(binary, "round", "--help")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	help := string(out)
+	for _, want := range []string{"::: info", "::: proposal", "::: evidence", "::: steps", "::: boundary", "::: why", "::: excerpt path:12-30", "{ref=", "| --- |", "<tag", "## Question {id=", "Example (DIR/round.md"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("help lacks %q", want)
+		}
+	}
+	example := help[strings.Index(help, "# Capire\n"):]
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"round.md": strings.Replace(example, "::: excerpt internal/state/store.go:40-58", "::: excerpt main.go:1-5", 1),
+		"flow.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+		"demo.js":  "",
+	})
+	c := startDir(t, env(t, "LAVAGNA_SESSION=help"), dir)
+	round, token := c.view()
+	c.post(c.url+"send", c.origin, "application/json", fmt.Sprintf(`{"round":%q,"token":%q,"submission":"s-0123456789abcdef","comments":[{"text":"ok","anchor":"Flusso"}]}`, round, token))
+	if lines, code := c.finish(); code != 0 || !strings.Contains(last(lines), `"comments":[{"anchor":"Flusso","text":"ok"}]`) {
+		t.Fatalf("the help example: exit %d, output %q", code, lines)
 	}
 }
 

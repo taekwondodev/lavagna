@@ -1,6 +1,9 @@
 package conversation
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 type end string
 
@@ -18,7 +21,10 @@ type Outcome struct {
 
 type Event interface{ event() }
 
-type RoundStarted struct{ Origin Origin }
+type RoundStarted struct {
+	Origin  Origin
+	Anchors []string
+}
 
 type BatchAccepted struct{ Submission string }
 
@@ -38,6 +44,9 @@ func (s State) Step(e Event) State {
 			}
 			s.Previous = &Outcome{Round: s.Live, Submission: s.Accepted, End: outcome}
 		}
+		s.Anchors = append(slices.Clone(s.Anchors), e.Anchors...)
+		slices.Sort(s.Anchors)
+		s.Anchors = slices.Compact(s.Anchors)
 		s.Origin = &e.Origin
 		s.Rounds++
 		s.Live = fmt.Sprintf("r%d", s.Rounds)
