@@ -724,9 +724,21 @@ async function render(next) {
   document.title = 'lavagna · round ' + view.round.replace(/^r/, '');
   for (const input of document.querySelectorAll('#document input[type=radio]')) {
     input.checked = draft.choices[input.dataset.question] === input.value;
-    input.addEventListener('change', () => {
-      draft.choices[input.dataset.question] = input.value;
+    input.addEventListener('click', () => {
+      const question = input.dataset.question;
+      if (draft.choices[question] === input.value) {
+        delete draft.choices[question];
+        input.checked = false;
+      } else {
+        draft.choices[question] = input.value;
+      }
       changed();
+    });
+    input.addEventListener('change', () => {
+      if (input.checked) {
+        draft.choices[input.dataset.question] = input.value;
+        changed();
+      }
     });
   }
   editor.value = draft.editor;

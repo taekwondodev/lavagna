@@ -105,6 +105,39 @@ func feedbackTail(choice string, comments ...string) string {
 	return `","choices":{"storage":"` + choice + `"},"comments":[` + strings.Join(parts, ",") + `],"images":[]}`
 }
 
+func TestPageCanDeselectDecision(t *testing.T) {
+	c, p := openRound(t, richRound+`## Confermi? {id="confirm"}
+- [yes] Sì
+- [no] No
+`, 1280)
+	p.Click(`input[value="yes"]`)
+	p.Click(`input[value="file"]`)
+	p.Click(`input[value="db"]`)
+	p.Click(`label.option:has(input[value="db"]) strong`)
+	var state struct {
+		Storage int
+		Confirm bool
+	}
+	facts := `({Storage: document.querySelectorAll('input[name="q-storage"]:checked').length, Confirm: document.querySelector('input[value="yes"]').checked})`
+	p.MustEval(facts, &state)
+	if state.Storage != 0 || !state.Confirm {
+		t.Fatalf("after deselecting: %+v", state)
+	}
+	p.Reload()
+	settled(t, p)
+	p.MustEval(facts, &state)
+	if state.Storage != 0 || !state.Confirm {
+		t.Fatalf("after reload: %+v", state)
+	}
+	p.Click(`input[value="file"]`)
+	p.Click(`input[value="file"]`)
+	p.Click("#send-feedback")
+	lines, code := c.finish()
+	if code != 0 || len(lines) != 1 || !strings.HasSuffix(lines[0], `","choices":{"confirm":"yes"},"comments":[],"images":[]}`) {
+		t.Fatalf("exit %d, output %q", code, lines)
+	}
+}
+
 func TestPageSendsOneBatchPerSend(t *testing.T) {
 	c, p := openRound(t, richRound, 1280)
 	p.Click(`input[value="db"]`)
