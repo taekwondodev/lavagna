@@ -22,6 +22,7 @@ import (
 const (
 	acceptedText = "Ricevuto da lavagna · non ancora consegnato all’agente"
 	returnedText = "Consegnato al terminale"
+	blindText    = returnedText + " · stato in tempo reale non disponibile"
 	formShown    = `!document.querySelector('#feedback-form').hidden`
 )
 
@@ -131,7 +132,7 @@ func TestPageSendsOneBatchPerSend(t *testing.T) {
 		!strings.HasSuffix(lines[0], feedbackTail("db", "Primo commento", "Ancora in bozza")) {
 		t.Fatalf("exit %d, output %q", code, lines)
 	}
-	p.WaitFor(`document.querySelector('#delivery').textContent === '` + returnedText + `'`)
+	p.WaitFor(`document.querySelector('#delivery').textContent === '` + blindText + `'`)
 	time.Sleep(200 * time.Millisecond)
 	var disabled bool
 	p.MustEval(`document.querySelector('#send-feedback').disabled`, &disabled)
@@ -264,7 +265,7 @@ func TestPageShowsTheClosingPage(t *testing.T) {
 	if _, code := c.finish(); code != 0 {
 		t.Fatalf("round exit %d", code)
 	}
-	p.WaitFor(`document.querySelector('#delivery').textContent === '` + returnedText + `' || document.querySelector('#delivery').textContent === '` + acceptedText + `'`)
+	p.WaitFor(`document.querySelector('#delivery').textContent === '` + blindText + `' || document.querySelector('#delivery').textContent === '` + acceptedText + `'`)
 
 	lines, code := run(t, environ, "", "close")
 	if code != 0 || last(lines) != `{"lavagna":"closed","page":"shown"}` {

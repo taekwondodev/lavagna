@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -138,7 +139,7 @@ func Round(getenv func(string) string, src io.Reader, dir string, out, errw io.W
 	if err != nil {
 		return failure(out, err)
 	}
-	ln, origin, fresh, err := bind(st.Origin)
+	ln, origin, fresh, err := bind(c, st.Origin)
 	if err != nil {
 		return failure(out, err)
 	}
@@ -147,12 +148,15 @@ func Round(getenv func(string) string, src io.Reader, dir string, out, errw io.W
 		return failure(out, err)
 	}
 
-	srv := newRound(origin, st.Live, conversation.Secret(16), r, files, st.Previous, c.Images())
+	spec := roundSpec{
+		Origin: origin, ID: st.Live, Token: conversation.Secret(16), FrameKey: conversation.Secret(16),
+		Round: r, Files: files, Previous: st.Previous, Images: c.Images(),
+	}
+	srv := newRound(spec)
 	for _, anchor := range st.Anchors {
 		srv.anchors[anchor] = true
 	}
-	hs := &http.Server{Handler: srv.handler(), ReadHeaderTimeout: 10 * time.Second}
-	go hs.Serve(ln)
+	h := listen(srv, ln)
 	fmt.Fprintf(out, "lavagna · round %s · %s · Esc per interrompere\n", st.Live, origin.URL())
 	go reveal(getenv, errw, origin.URL(), fresh, srv.seen)
 
@@ -165,8 +169,8 @@ func Round(getenv func(string) string, src io.Reader, dir string, out, errw io.W
 	}
 	st = st.Step(conversation.BatchReturned{})
 	record(errw, lease, st)
-	srv.returned()
-	stop(hs, srv)
+	srv.returned(handOver(getenv, errw, c.Relay(), ln, spec, got.submission))
+	h.stop()
 	return code
 }
 
@@ -208,7 +212,7 @@ func Close(getenv func(string) string, out io.Writer) int {
 	if st, err := lease.Load(); err == nil && st.Origin != nil {
 		st.Live = ""
 		lease.Save(st)
-		page = showClosed(*st.Origin)
+		page = showClosed(c, *st.Origin)
 	}
 	if err := lease.Discard(); err != nil {
 		return failure(out, err)
@@ -219,15 +223,17 @@ func Close(getenv func(string) string, out io.Writer) int {
 	}{"closed", page})
 }
 
-func showClosed(origin conversation.Origin) string {
-	ln, err := net.Listen("tcp", origin.Host())
-	if err != nil {
-		return "not-connected"
+func showClosed(c conversation.Conversation, origin conversation.Origin) string {
+	ln := take(c.Relay())
+	if ln == nil {
+		var err error
+		if ln, err = net.Listen("tcp", origin.Host()); err != nil {
+			return "not-connected"
+		}
 	}
 	srv := newClose(origin)
-	hs := &http.Server{Handler: srv.handler(), ReadHeaderTimeout: 10 * time.Second}
-	go hs.Serve(ln)
-	defer stop(hs, srv)
+	h := listen(srv, ln)
+	defer h.stop()
 	select {
 	case <-srv.seen:
 		return "shown"
@@ -236,8 +242,11 @@ func showClosed(origin conversation.Origin) string {
 	}
 }
 
-func bind(recorded *conversation.Origin) (net.Listener, conversation.Origin, bool, error) {
+func bind(c conversation.Conversation, recorded *conversation.Origin) (net.Listener, conversation.Origin, bool, error) {
 	if recorded != nil {
+		if ln := take(c.Relay()); ln != nil {
+			return ln, *recorded, false, nil
+		}
 		ln, err := net.Listen("tcp", recorded.Host())
 		if err == nil {
 			return ln, *recorded, false, nil
@@ -273,9 +282,66 @@ func reveal(getenv func(string) string, errw io.Writer, url string, fresh bool, 
 	go cmd.Wait()
 }
 
-func stop(hs *http.Server, srv *server) {
-	srv.stop()
-	ctx, cancel := context.WithTimeout(context.Background(), drainGrace)
-	defer cancel()
-	hs.Shutdown(ctx)
+type holding struct {
+	srv    *server
+	hs     *http.Server
+	ln     net.Listener
+	served chan struct{}
+	mu     sync.Mutex
+	open   map[net.Conn]struct{}
+}
+
+type connKey struct{}
+
+func listen(srv *server, ln net.Listener) *holding {
+	h := &holding{srv: srv, ln: ln, served: make(chan struct{}), open: map[net.Conn]struct{}{}}
+	page := srv.handler()
+	h.hs = &http.Server{
+		ReadHeaderTimeout: 10 * time.Second,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer h.done(r.Context().Value(connKey{}).(net.Conn))
+			page.ServeHTTP(w, r)
+			w.(http.Flusher).Flush()
+		}),
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context { return context.WithValue(ctx, connKey{}, c) },
+		ConnState: func(c net.Conn, st http.ConnState) {
+			switch st {
+			case http.StateNew:
+				h.mu.Lock()
+				h.open[c] = struct{}{}
+				h.mu.Unlock()
+			case http.StateClosed, http.StateHijacked:
+				h.done(c)
+			}
+		},
+	}
+	h.hs.SetKeepAlivesEnabled(false)
+	go func() {
+		h.hs.Serve(ln)
+		close(h.served)
+	}()
+	return h
+}
+
+func (h *holding) done(c net.Conn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.open, c)
+}
+
+func (h *holding) answered() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.open) == 0
+}
+
+func (h *holding) stop() {
+	h.srv.stop()
+	h.ln.Close()
+	<-h.served
+	deadline := time.Now().Add(drainGrace)
+	for !h.answered() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	h.hs.Close()
 }

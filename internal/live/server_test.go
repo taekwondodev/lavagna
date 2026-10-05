@@ -30,7 +30,7 @@ func serve(t *testing.T) (*server, func(body string) int) {
 	if errs != nil {
 		t.Fatal(errs)
 	}
-	s := newRound(o, "r1", "tok-1", r, files, nil, t.TempDir())
+	s := newRound(roundSpec{Origin: o, ID: "r1", Token: "tok-1", FrameKey: conversation.Secret(16), Round: r, Files: files, Images: t.TempDir()})
 	hs := &http.Server{Handler: s.handler()}
 	go hs.Serve(ln)
 	t.Cleanup(func() { hs.Close() })
@@ -308,7 +308,7 @@ func TestSendReturnsAttachedImagesAsAbsolutePaths(t *testing.T) {
 func TestUploadedImagesRemainValidAcrossRoundServers(t *testing.T) {
 	s, _ := serve(t)
 	_, id := postImage(t, s, screenshots["png"])
-	next := newRound(s.origin, "r2", "tok-2", s.view.Round, nil, nil, s.imageDir)
+	next := newRound(roundSpec{Origin: s.origin, ID: "r2", Token: "tok-2", Round: s.view.Round, Images: s.imageDir})
 	u, ok := next.uploads[id]
 	if !ok {
 		t.Fatalf("new server did not restore image reference %q", id)

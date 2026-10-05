@@ -156,7 +156,7 @@ func TestPageReloadBetweenRoundsUsesThePrecache(t *testing.T) {
 		SendHidden     bool
 	}
 	p.MustEval(`({Sent: document.querySelector('#sent-area').innerText, Delivery: document.querySelector('#delivery').textContent, SendHidden: document.querySelector('#send-feedback').hidden})`, &restored)
-	if !strings.Contains(restored.Sent, "Un database locale") || !strings.Contains(restored.Sent, "Inviato prima della pausa") || restored.Delivery != returnedText || !restored.SendHidden {
+	if !strings.Contains(restored.Sent, "Un database locale") || !strings.Contains(restored.Sent, "Inviato prima della pausa") || restored.Delivery != blindText || !restored.SendHidden {
 		t.Fatalf("reloaded with nobody on the port: %+v", restored)
 	}
 
@@ -383,8 +383,14 @@ func TestPageReopenedAfterReturnedDoesNotClaimUncertain(t *testing.T) {
 }
 
 func TestPageTabsDoNotCarryADeliveredBatch(t *testing.T) {
+	// This owns cross-tab draft delivery, not rich-frame layout.
+	const choices = `# Decidere
+## Dove salviamo lo stato? {id="storage"}
+- [file] Un file per sessione
+- [db] Un database locale
+`
 	environ := env(t, "LAVAGNA_SESSION=tabs")
-	first := startRound(t, environ, richRound)
+	first := startRound(t, environ, choices)
 	b := cdptest.Start(t)
 	one := b.Open(first.url, 1280, 900)
 	roundShown(one, "1")
@@ -402,7 +408,7 @@ func TestPageTabsDoNotCarryADeliveredBatch(t *testing.T) {
 	}
 	time.Sleep(time.Second)
 
-	second := startRound(t, environ, nextRound)
+	second := startRound(t, environ, choices)
 	for _, p := range []*cdptest.Page{one, other} {
 		roundShown(p, "2")
 		var next struct {

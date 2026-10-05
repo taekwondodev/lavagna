@@ -170,11 +170,14 @@ func TestFrameEscapesStayBlocked(t *testing.T) {
 	if errs != nil {
 		t.Fatal(errs)
 	}
-	s := newRound(o, "r1", "tok-1", r, files, nil, t.TempDir())
+	s := newRound(roundSpec{Origin: o, ID: "r1", Token: "tok-1", FrameKey: conversation.Secret(16), Round: r, Files: files, Images: t.TempDir()})
 	rec := &recorder{}
 	hs := &http.Server{Handler: rec.wrap(s.handler())}
 	go hs.Serve(ln)
-	defer stop(hs, s)
+	defer func() {
+		s.stop()
+		hs.Close()
+	}()
 
 	p := cdptest.Start(t).Open(o.URL(), 1280, 900)
 	p.WaitFor(`!document.querySelector('#feedback-form').hidden && document.querySelector('#content')`)

@@ -20,6 +20,7 @@ const (
 	lockName   = "lock"
 	tombstone  = "swept-"
 	imagesDir  = "images"
+	relayName  = "relay.sock"
 	idleAfter  = 7 * 24 * time.Hour
 	sweepGrace = 2 * time.Second
 	sweepRetry = 20 * time.Millisecond
@@ -59,6 +60,8 @@ func FromEnv(getenv func(string) string) (Conversation, error) {
 }
 
 func (c Conversation) Images() string { return filepath.Join(c.dir, imagesDir) }
+
+func (c Conversation) Relay() string { return filepath.Join(c.dir, relayName) }
 
 type Origin struct {
 	Port int    `json:"port"`

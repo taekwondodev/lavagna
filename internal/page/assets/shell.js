@@ -3,6 +3,11 @@
 const TEXT = {
   accepted: 'Ricevuto da lavagna · non ancora consegnato all’agente',
   returned: 'Consegnato al terminale',
+  received: 'Letto dall’agente · l’agente lavora',
+  read: 'Letto dall’agente',
+  unread: 'Consegnato al terminale, ma il turno si è interrotto prima che l’agente lo leggesse.',
+  ended: 'L’agente ti ha risposto nel terminale. Nulla è stato approvato.',
+  unwitnessed: 'stato in tempo reale non disponibile',
   detached: 'Questa scheda non è più collegata alla conversazione',
   uncertain: 'Consegna non riuscita: l’agente è stato interrotto. Il tuo invio è conservato, puoi reinviarlo.',
   carried: 'Bozza ripresa dal round precedente: rivedila prima di inviare.',
@@ -25,10 +30,14 @@ const PHASES = {
   accepted: { turn: 'Inviato', panel: 'sent', delivery: TEXT.accepted, lead: 'In consegna all’agente.' },
   returned: { turn: 'Inviato · consegnato al terminale', panel: 'sent', delivery: TEXT.returned },
   waiting: { turn: 'In attesa del prossimo round', panel: 'sent', delivery: TEXT.returned },
+  received: { turn: 'L’agente lavora', panel: 'sent', delivery: TEXT.received },
+  read: { turn: 'Letto dall’agente', panel: 'sent', delivery: TEXT.read },
+  unread: { turn: 'Turno interrotto', panel: 'sent', delivery: TEXT.unread, lead: 'Continua nel terminale.' },
+  ended: { turn: 'Risposta nel terminale', panel: 'sent', delivery: TEXT.ended, lead: 'Continua nel terminale.' },
   detached: { turn: 'Scheda non collegata', panel: 'detached', delivery: TEXT.detached },
   closed: { turn: 'Concluso', panel: 'draft' },
 };
-const STAGES = ['', 'accepted', 'returned'];
+const STAGES = ['', 'accepted', 'returned', 'received', 'unread', 'ended'];
 const RECORD_KEY = 'lavagna:' + location.pathname;
 const CACHE_NAME = 'lavagna:' + location.pathname;
 const RETRY_MS = 250;
@@ -60,7 +69,7 @@ let acceptedWhileLive = null;
 let leaving = false;
 
 function blank() {
-  return { choices: {}, comments: [], images: [], editor: '', anchor: null, editing: null, previous: null, next: 0, submission: null, stage: '', sent: null, uncertain: false, carried: false };
+  return { choices: {}, comments: [], images: [], editor: '', anchor: null, editing: null, previous: null, next: 0, submission: null, stage: '', unwitnessed: false, sent: null, uncertain: false, carried: false };
 }
 
 function stored() {
@@ -80,7 +89,7 @@ function withComments(target, comments) {
 
 function leftover(old, previous) {
   const outcome = previous && old.submission && previous.submission === old.submission ? previous.end : null;
-  if (old.stage === 'returned' || outcome === 'returned') return null;
+  if (delivered(old.stage) || outcome === 'returned') return null;
   if (old.stage === 'accepted') return outcome === 'uncertain' ? resend(old.sent) : null;
   const comments = old.comments.map(comment => ({ text: comment.text, anchor: comment.anchor }));
   const index = old.comments.findIndex(comment => comment.id === old.editing);
@@ -161,10 +170,14 @@ function commentBytes() {
 
 function sent() { return draft.stage !== ''; }
 
+function delivered(stage) { return STAGES.indexOf(stage) >= STAGES.indexOf('returned'); }
+
 function frozen() { return sent() || sending || detached || inactive; }
 
-function advance(stage) {
+function advance(receipt) {
+  const stage = receipt.stage;
   if (draft.uncertain) return;
+  if (receipt.unwitnessed) draft.unwitnessed = true;
   if (STAGES.indexOf(stage) > STAGES.indexOf(draft.stage)) {
     draft.stage = stage;
     draft.carried = false;
@@ -206,6 +219,7 @@ function phase() {
   if (detached) return 'detached';
   if (!view) return 'connecting';
   if (draft.stage === 'returned') return live ? 'returned' : 'waiting';
+  if (draft.stage === 'received') return live && !draft.unwitnessed ? 'received' : 'read';
   if (draft.stage === 'accepted' && !live && draft.submission !== acceptedWhileLive) return 'unconfirmed';
   if (draft.stage) return draft.stage;
   if (sending) return 'sending';
@@ -352,7 +366,8 @@ function updateTurn() {
 function updateControls() {
   updateTurn();
   if (!view) return;
-  const current = PHASES[phase()];
+  const name = phase();
+  const current = PHASES[name];
   const isSent = sent();
   const panelName = current.panel === 'detached' && isSent ? 'sent' : current.panel;
   const panel = PANELS[panelName];
@@ -398,12 +413,17 @@ function updateControls() {
   setText($('#send-hint'), isSent || sending || detached || inactive ? '' : blocked);
 
   const delivery = $('#delivery');
-  const message = current.delivery || refusal || (draft.uncertain ? TEXT.uncertain : '');
+  const message = deliveryText(name, current) || refusal || (draft.uncertain ? TEXT.uncertain : '');
   setText(delivery, message);
   delivery.classList.toggle('refused', !current.delivery && Boolean(message) || current.panel === 'detached');
   delivery.dataset.stage = panelName === 'sent' && current.panel !== 'detached' ? draft.stage : '';
 
   updateMobileBar(answers, comments.length);
+}
+
+function deliveryText(name, current) {
+  const degraded = ['returned', 'waiting', 'read'].includes(name);
+  return draft.unwitnessed && degraded ? current.delivery + ' · ' + TEXT.unwitnessed : current.delivery;
 }
 
 function updateMobileBar(answers, count) {
@@ -749,7 +769,7 @@ async function send() {
     });
     const body = await response.json().catch(() => ({}));
     if (response.status === 202 || response.status === 200) {
-      advance(body.stage || 'accepted');
+      advance({ stage: 'accepted', ...body });
       withComments(draft, comments);
       draft.editing = null;
       draft.anchor = null;
@@ -939,7 +959,7 @@ function connect() {
   source.addEventListener('receipt', event => {
     const receipt = JSON.parse(event.data);
     if (!view || !draft || receipt.submission !== draft.submission) return;
-    advance(receipt.stage);
+    advance(receipt);
     noteAcceptedWhileLive();
     save();
     updateControls();
