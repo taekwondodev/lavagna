@@ -54,11 +54,12 @@ func (s stage) MarshalText() ([]byte, error) {
 }
 
 type view struct {
-	ID         string `json:"round"`
-	Token      string `json:"token"`
-	Limit      int    `json:"limit"`
-	ImageLimit int    `json:"imageLimit"`
-	ImageBytes int    `json:"imageBytes"`
+	ID         string                `json:"round"`
+	Token      string                `json:"token"`
+	Limit      int                   `json:"limit"`
+	ImageLimit int                   `json:"imageLimit"`
+	ImageBytes int                   `json:"imageBytes"`
+	Previous   *conversation.Outcome `json:"previous"`
 	round.Round
 }
 
@@ -107,10 +108,11 @@ type event struct {
 	data any
 }
 
-func newRound(o conversation.Origin, id, token string, r round.Round, imageDir string) *server {
+func newRound(o conversation.Origin, id, token string, r round.Round, previous *conversation.Outcome, imageDir string) *server {
 	s := newServer(o)
-	s.view = &view{ID: id, Token: token, Limit: maxCommentBytes, ImageLimit: maxImages, ImageBytes: maxImageBytes, Round: r}
+	s.view = &view{ID: id, Token: token, Limit: maxCommentBytes, ImageLimit: maxImages, ImageBytes: maxImageBytes, Previous: previous, Round: r}
 	s.imageDir = imageDir
+	s.loadUploads()
 	s.gate = gate{cap: o.Cap, round: id, token: token}
 	for _, q := range r.Questions {
 		s.options[q.ID] = map[string]bool{}
@@ -119,6 +121,25 @@ func newRound(o conversation.Origin, id, token string, r round.Round, imageDir s
 		}
 	}
 	return s
+}
+
+func (s *server) loadUploads() {
+	entries, err := os.ReadDir(s.imageDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !submissionPattern.MatchString("s-"+strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))) {
+			continue
+		}
+		ext := filepath.Ext(entry.Name())
+		contentType := map[string]string{".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}[ext]
+		if contentType == "" {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ext)
+		s.uploads[id] = upload{path: filepath.Join(s.imageDir, entry.Name()), contentType: contentType}
+	}
 }
 
 func newClose(o conversation.Origin) *server { return newServer(o) }
@@ -158,6 +179,7 @@ func (s *server) broadcast(e event) {
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /s/{cap}/{$}", s.capable(s.shell))
+	mux.HandleFunc("GET /s/{cap}/sw.js", s.capable(s.worker))
 	mux.HandleFunc("GET /s/{cap}/assets/{file...}", s.capable(s.asset))
 	mux.HandleFunc("GET /s/{cap}/events", s.capable(s.events))
 	mux.HandleFunc("POST /s/{cap}/send", s.send)
@@ -190,6 +212,11 @@ func (s *server) shell(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", shellCSP)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(page.Shell)
+}
+
+func (s *server) worker(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", page.ContentType("sw.js"))
+	w.Write(page.Worker)
 }
 
 func (s *server) asset(w http.ResponseWriter, r *http.Request) {

@@ -57,6 +57,20 @@ func text(p *cdptest.Page, selector string) string {
 	return s
 }
 
+func heldOnce(t *testing.T, p *cdptest.Page, what string) []string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(p.Held()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
+	held := p.Held()
+	if len(held) != 1 {
+		t.Fatalf("%s issued %d send requests, want 1", what, len(held))
+	}
+	return held
+}
+
 func feedbackTail(choice string, comments ...string) string {
 	var parts []string
 	for _, c := range comments {
@@ -74,11 +88,7 @@ func TestPageSendsOneBatchPerSend(t *testing.T) {
 
 	p.Hold("*/send")
 	p.ClickTimes("#send-feedback", 3)
-	time.Sleep(300 * time.Millisecond)
-	held := p.Held()
-	if len(held) != 1 {
-		t.Fatalf("the page issued %d send requests, want 1", len(held))
-	}
+	held := heldOnce(t, p, "three clicks")
 	p.Click(`input[value="file"]`)
 	p.Type("#comment-text", "scritto durante l'invio")
 	var frozen struct {
@@ -98,13 +108,10 @@ func TestPageSendsOneBatchPerSend(t *testing.T) {
 	}
 	p.WaitFor(`document.querySelector('#delivery').textContent === '` + returnedText + `'`)
 	time.Sleep(200 * time.Millisecond)
-	var after struct {
-		Disabled bool
-		Drafts   int
-	}
-	p.MustEval(`({Disabled: document.querySelector('#send-feedback').disabled, Drafts: Object.keys(localStorage).filter(k => k.startsWith('lavagna:draft:')).length})`, &after)
-	if !after.Disabled || after.Drafts != 0 {
-		t.Errorf("after the batch was returned: %+v, want send disabled and no stored draft", after)
+	var disabled bool
+	p.MustEval(`document.querySelector('#send-feedback').disabled`, &disabled)
+	if !disabled {
+		t.Error("send is enabled after the batch was returned")
 	}
 }
 
@@ -238,6 +245,17 @@ func TestPageShowsTheClosingPage(t *testing.T) {
 	if got := text(p, "#closed"); !strings.Contains(got, "Puoi chiudere questa scheda.") || text(p, "#turn") != "Concluso" {
 		t.Fatalf("closing page %q, turn %q", got, text(p, "#turn"))
 	}
+	var left struct{ Worker, Caches, Records int }
+	for range 40 {
+		p.MustEval(`(async () => ({Worker: (await navigator.serviceWorker.getRegistrations()).length, Caches: (await caches.keys()).length, Records: Object.keys(localStorage).filter(k => k.startsWith('lavagna:')).length}))()`, &left)
+		if left.Worker+left.Caches+left.Records == 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if left.Worker+left.Caches+left.Records != 0 {
+		t.Fatalf("the closed conversation left page state behind: %+v", left)
+	}
 }
 
 func TestPageGuidesTheTurn(t *testing.T) {
@@ -262,11 +280,7 @@ func TestPageGuidesTheTurn(t *testing.T) {
 	p.Hold("*/send")
 	p.Press("Enter", 13, 4)
 	p.WaitFor(`document.querySelector('#turn').textContent === 'Invio in corso…'`)
-	time.Sleep(300 * time.Millisecond)
-	held := p.Held()
-	if len(held) != 1 {
-		t.Fatalf("⌘+Invio issued %d send requests, want 1", len(held))
-	}
+	held := heldOnce(t, p, "⌘+Invio")
 	p.Release(held[0])
 	lines, code := c.finish()
 	if code != 0 || len(lines) != 1 || !strings.HasSuffix(lines[0], feedbackTail("db", "Serve un esempio")) {

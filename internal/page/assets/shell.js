@@ -4,6 +4,8 @@ const TEXT = {
   accepted: 'Ricevuto da lavagna · non ancora consegnato all’agente',
   returned: 'Consegnato al terminale',
   detached: 'Questa scheda non è più collegata alla conversazione',
+  uncertain: 'Consegna non riuscita: l’agente è stato interrotto. Il tuo invio è conservato, puoi reinviarlo.',
+  carried: 'Bozza ripresa dal round precedente: rivedila prima di inviare.',
 };
 const DRAFT_LEAD = 'Domande, dubbi e richieste: tutto in un solo invio.';
 const SENT_LEAD = 'La pagina si aggiorna da sola al prossimo round.';
@@ -18,6 +20,8 @@ const PHASES = {
   reconnecting: { turn: 'Riconnessione a lavagna…', panel: 'draft' },
   sending: { turn: 'Invio in corso…', panel: 'draft' },
   inactive: { turn: 'Round non più attivo', panel: 'draft' },
+  uncertain: { turn: 'Consegna non riuscita', panel: 'draft' },
+  unconfirmed: { turn: 'Riconnessione a lavagna…', panel: 'sent' },
   accepted: { turn: 'Inviato', panel: 'sent', delivery: TEXT.accepted, lead: 'In consegna all’agente.' },
   returned: { turn: 'Inviato · consegnato al terminale', panel: 'sent', delivery: TEXT.returned },
   waiting: { turn: 'In attesa del prossimo round', panel: 'sent', delivery: TEXT.returned },
@@ -25,7 +29,9 @@ const PHASES = {
   closed: { turn: 'Concluso', panel: 'draft' },
 };
 const STAGES = ['', 'accepted', 'returned'];
-const DRAFT_PREFIX = 'lavagna:draft:';
+const RECORD_KEY = 'lavagna:' + location.pathname;
+const CACHE_NAME = 'lavagna:' + location.pathname;
+const RETRY_MS = 250;
 const COUNTER_FROM = 0.75;
 const LINE_SEPARATORS = new RegExp('[' + String.fromCharCode(0x2028, 0x2029) + ']', 'g');
 
@@ -46,35 +52,73 @@ let feedbackVisible = false;
 let refusal = '';
 let uploading = 0;
 let imageRefusal = '';
+let acceptedWhileLive = null;
+let leaving = false;
 
-function storageKey() { return DRAFT_PREFIX + view.token; }
+function blank() {
+  return { choices: {}, comments: [], images: [], editor: '', editing: null, previous: null, next: 0, submission: null, stage: '', sent: null, uncertain: false, carried: false };
+}
 
-function load() {
+function stored() {
   try {
-    const stored = JSON.parse(localStorage.getItem(storageKey()));
-    if (stored) return stored;
+    const record = JSON.parse(localStorage.getItem(RECORD_KEY));
+    if (record && record.view && record.draft) return record;
   } catch { }
-  return { choices: {}, comments: [], images: [], editor: '', editing: null, previous: null, next: 0, submission: null, stage: '', sent: null };
+  return null;
+}
+
+function roundNumber(round) { return Number(round.replace(/^r/, '')); }
+
+function withComments(target, texts) {
+  target.comments = texts.map((text, index) => ({ id: index + 1, text }));
+  target.next = texts.length;
+}
+
+function leftover(old, previous) {
+  const outcome = previous && old.submission && previous.submission === old.submission ? previous.end : null;
+  if (old.stage === 'returned' || outcome === 'returned') return null;
+  if (old.stage === 'accepted') return outcome === 'uncertain' ? resend(old.sent) : null;
+  const texts = old.comments.map(comment => comment.text);
+  const index = old.comments.findIndex(comment => comment.id === old.editing);
+  if (index !== -1 && old.editor.trim()) texts[index] = old.editor.trim();
+  const editorText = index === -1 ? old.editor : old.previous || '';
+  return { texts, editor: editorText, choices: old.choices, images: old.images, uncertain: old.uncertain || outcome === 'uncertain' };
+}
+
+function resend(batch) {
+  return { texts: batch.comments, editor: '', choices: batch.choices, images: batch.images, uncertain: true };
+}
+
+function carry(old, next) {
+  const result = blank();
+  const batch = leftover(old, next.previous);
+  if (!batch) return result;
+  for (const question of next.questions) {
+    const option = batch.choices[question.id];
+    if (option && question.options.includes(option)) result.choices[question.id] = option;
+  }
+  withComments(result, batch.texts);
+  result.editor = batch.editor;
+  result.images = batch.images;
+  result.uncertain = batch.uncertain;
+  result.carried = batch.texts.length > 0 || Boolean(batch.editor.trim()) || Object.keys(result.choices).length > 0 || result.images.length > 0;
+  return result;
 }
 
 function save() {
   if (!view || !draft) return;
-  if (draft.stage === 'returned') {
-    forget();
-    return;
-  }
-  try { localStorage.setItem(storageKey(), JSON.stringify(draft)); } catch { }
+  try {
+    const record = stored();
+    if (record && record.view.token !== view.token && roundNumber(record.view.round) > roundNumber(view.round)) return;
+    localStorage.setItem(RECORD_KEY, JSON.stringify({ view, draft }));
+  } catch { }
 }
 
 function forget() {
-  try { localStorage.removeItem(storageKey()); } catch { }
-}
-
-function forgetAll() {
+  try { localStorage.removeItem(RECORD_KEY); } catch { }
   try {
-    for (const key of Object.keys(localStorage)) {
-      if (key.startsWith(DRAFT_PREFIX)) localStorage.removeItem(key);
-    }
+    navigator.serviceWorker.getRegistration().then(registration => registration && registration.unregister()).catch(() => { });
+    caches.delete(CACHE_NAME).catch(() => { });
   } catch { }
 }
 
@@ -115,9 +159,39 @@ function sent() { return draft.stage !== ''; }
 function frozen() { return sent() || sending || detached || inactive; }
 
 function advance(stage) {
+  if (draft.uncertain) return;
   if (STAGES.indexOf(stage) > STAGES.indexOf(draft.stage)) {
     draft.stage = stage;
+    draft.carried = false;
     refusal = '';
+  }
+}
+
+function noteAcceptedWhileLive() {
+  if (live && draft && draft.stage === 'accepted') acceptedWhileLive = draft.submission;
+}
+
+function markUncertain() {
+  if (!draft || draft.stage !== 'accepted' || draft.submission !== acceptedWhileLive) return;
+  const batch = resend(draft.sent);
+  draft.stage = '';
+  draft.uncertain = batch.uncertain;
+  draft.choices = { ...batch.choices };
+  withComments(draft, batch.texts);
+  draft.images = batch.images;
+  draft.editing = null;
+  draft.previous = null;
+  draft.editor = batch.editor;
+  draft.sent = null;
+  editor.value = '';
+  syncChoices();
+  renderImages();
+  save();
+}
+
+function syncChoices() {
+  for (const input of document.querySelectorAll('#document input[type=radio]')) {
+    input.checked = draft.choices[input.dataset.question] === input.value;
   }
 }
 
@@ -126,10 +200,12 @@ function phase() {
   if (detached) return 'detached';
   if (!view) return 'connecting';
   if (draft.stage === 'returned') return live ? 'returned' : 'waiting';
+  if (draft.stage === 'accepted' && !live && draft.submission !== acceptedWhileLive) return 'unconfirmed';
   if (draft.stage) return draft.stage;
   if (sending) return 'sending';
   if (inactive) return 'inactive';
-  return live ? 'user' : 'reconnecting';
+  if (live) return 'user';
+  return draft.uncertain ? 'uncertain' : 'reconnecting';
 }
 
 function kilobytes(bytes) {
@@ -177,7 +253,7 @@ function reviewItems(comments) {
 function sentItems(batch) {
   const items = view.questions.filter(question => batch.choices[question.id])
     .map(question => choiceItem(question, batch.choices[question.id]));
-  for (const text of batch.comments) items.push(element('li', text, 'review-comment'));
+  for (const comment of batch.comments) items.push(element('li', typeof comment === 'string' ? comment : comment.text, 'review-comment'));
   if (batch.images.length) items.push(element('li', batch.images.length + ' screenshot', 'review-comment'));
   return items;
 }
@@ -246,9 +322,9 @@ function updateControls() {
   setText($('#send-hint'), isSent || sending || detached || inactive ? '' : blocked);
 
   const delivery = $('#delivery');
-  const message = current.delivery || refusal;
+  const message = current.delivery || refusal || (draft.uncertain ? TEXT.uncertain : '');
   setText(delivery, message);
-  delivery.classList.toggle('refused', !current.delivery && Boolean(refusal) || current.panel === 'detached');
+  delivery.classList.toggle('refused', !current.delivery && Boolean(message) || current.panel === 'detached');
   delivery.dataset.stage = panelName === 'sent' && current.panel !== 'detached' ? draft.stage : '';
 
   updateMobileBar(answers, comments.length);
@@ -384,6 +460,7 @@ function refuseLinks() {
 
 function changed() {
   draft.editor = editor.value;
+  draft.carried = false;
   if (!sent()) draft.submission = null;
   if (!inactive) refusal = '';
   save();
@@ -428,8 +505,10 @@ function updateRoute() {
 }
 
 function render(next) {
+  const record = stored();
+  const own = record && record.view.token === next.token;
+  draft = own ? record.draft : record ? carry(record.draft, next) : blank();
   view = next;
-  draft = load();
   sending = false;
   inactive = false;
   refusal = '';
@@ -445,7 +524,7 @@ function render(next) {
     });
   }
   editor.value = draft.editor;
-  $('#editor-status').textContent = '';
+  $('#editor-status').textContent = draft.carried ? TEXT.carried : '';
   $('#waiting').hidden = true;
   $('#closed').hidden = true;
   form.hidden = false;
@@ -453,6 +532,7 @@ function render(next) {
   renderRoute();
   renderComments();
   renderImages();
+  if (!own) save();
   updateControls();
 }
 
@@ -467,7 +547,9 @@ async function send() {
   const comments = collectComments().map(comment => comment.text);
   const choices = { ...draft.choices };
   const images = draft.images.map(image => image.id);
-  draft.sent = { choices, comments, images };
+  draft.sent = { choices, comments, images: draft.images.map(image => ({ ...image })) };
+  draft.uncertain = false;
+  acceptedWhileLive = draft.submission;
   sending = true;
   refusal = '';
   save();
@@ -482,7 +564,7 @@ async function send() {
     const body = await response.json().catch(() => ({}));
     if (response.status === 202 || response.status === 200) {
       advance(body.stage || 'accepted');
-      draft.comments = comments.map((text, index) => ({ id: index + 1, text }));
+      withComments(draft, comments);
       draft.editing = null;
       editor.value = '';
       draft.editor = '';
@@ -496,6 +578,7 @@ async function send() {
     if (!sent()) refusal = 'Invio non riuscito: lavagna non risponde. La bozza è conservata.';
   } finally {
     sending = false;
+    if (!live) markUncertain();
     save();
     renderComments();
     updateControls();
@@ -603,7 +686,7 @@ new ResizeObserver(() => {
 function showClosed() {
   closed = true;
   live = false;
-  forgetAll();
+  forget();
   view = null;
   form.hidden = true;
   $('#waiting').hidden = true;
@@ -619,18 +702,32 @@ function showDetachedWaiting() {
   setText($('#waiting .muted'), 'Riapri la pagina dal link nel terminale.');
 }
 
+function adopt() {
+  const record = stored();
+  if (!view || !record || record.view.token !== view.token) return;
+  draft = record.draft;
+  editor.value = draft.editor;
+  syncChoices();
+  noteAcceptedWhileLive();
+  renderComments();
+  renderImages();
+  updateControls();
+}
+
 function connect() {
   const source = new EventSource('events');
   source.addEventListener('round', event => {
     const next = JSON.parse(event.data);
     live = true;
     if (!view || view.token !== next.token) render(next);
-    else updateControls();
+    noteAcceptedWhileLive();
+    updateControls();
   });
   source.addEventListener('receipt', event => {
     const receipt = JSON.parse(event.data);
     if (!view || !draft || receipt.submission !== draft.submission) return;
     advance(receipt.stage);
+    noteAcceptedWhileLive();
     save();
     updateControls();
   });
@@ -639,8 +736,14 @@ function connect() {
     showClosed();
   });
   source.addEventListener('error', () => {
+    if (leaving) return;
     live = false;
     if (source.readyState === EventSource.CLOSED) detached = true;
+    else {
+      source.close();
+      setTimeout(connect, RETRY_MS);
+    }
+    if (view && !sending) markUncertain();
     if (view) {
       renderComments();
       updateControls();
@@ -651,4 +754,14 @@ function connect() {
   });
 }
 
+window.addEventListener('pagehide', () => { leaving = true; });
+window.addEventListener('pageshow', () => { leaving = false; });
+
+window.addEventListener('storage', event => {
+  if (event.key === RECORD_KEY) adopt();
+});
+
+try { navigator.serviceWorker.register('sw.js').catch(() => { }); } catch { }
+const restored = stored();
+if (restored) render(restored.view);
 connect();
