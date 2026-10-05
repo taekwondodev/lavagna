@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -286,6 +288,78 @@ func TestEscLeavesNoRelayAndTheNextCallRebinds(t *testing.T) {
 	syscall.Kill(-third.cmd.Process.Pid, syscall.SIGKILL)
 	groupGone(t, third)
 	unreachable(t, third.origin)
+}
+
+func TestRelayStopsWhenTheHarnessQuitsMidTurn(t *testing.T) {
+	pi := newPiSession(t, "answered")
+	dir := t.TempDir()
+	src := filepath.Join(dir, "round.md")
+	finished := filepath.Join(dir, "finished")
+	if err := os.WriteFile(src, []byte(decision), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Job control models the harness: a persistent parent outside the call's
+	// process group. The shell survives the call, then quits mid-turn.
+	cmd := exec.Command("bash", "-c", `set -m
+"$1" round < "$2" &
+child=$!
+wait "$child" || exit
+printf '%s' "$child" > "$3"
+read -r hold
+`, "harness", binary, src, finished)
+	cmd.Env = env(t, pi.env()...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	out := bufio.NewReader(stdout)
+	first, err := out.ReadString('\n')
+	c := &call{t: t}
+	c.status(first)
+	if err != nil || c.url == "" {
+		t.Fatalf("status %q: %v", first, err)
+	}
+	ch := receipts(t, c.url)
+	r, token := c.view()
+	const submission = "s-111111111111111111111111"
+	if code := c.post(c.url+"send", c.origin, "application/json", batch(r, token, submission)); code != http.StatusAccepted {
+		t.Fatalf("send: status %d", code)
+	}
+	var pid int
+	for range 200 {
+		b, _ := os.ReadFile(finished)
+		pid, _ = strconv.Atoi(string(b))
+		if pid > 0 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if pid <= 0 {
+		t.Fatal("round did not return to the harness")
+	}
+	t.Cleanup(func() { syscall.Kill(-pid, syscall.SIGKILL) })
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.cmd = &exec.Cmd{Process: process}
+	pi.append(submission, 1)
+	awaitReceipt(t, ch, receiptEvent{Submission: submission, Stage: "received"})
+	groupAlive(t, c)
+	cmd.Process.Kill()
+	cmd.Wait()
+	awaitReceipt(t, ch, receiptEvent{Submission: submission, Stage: "received", Unwitnessed: true})
+	groupGone(t, c)
+	unreachable(t, c.origin)
 }
 
 func deliveryIs(p *cdptest.Page, text string) {

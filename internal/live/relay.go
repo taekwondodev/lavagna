@@ -37,6 +37,7 @@ type relayed struct {
 	Round      roundSpec
 	Submission string
 	Session    witness.Session
+	Owner      relayOwner
 }
 
 func handOver(getenv func(string) string, errw io.Writer, sock string, ln net.Listener, spec roundSpec, submission string) bool {
@@ -48,7 +49,11 @@ func handOver(getenv func(string) string, errw io.Writer, sock string, ln net.Li
 	if err != nil {
 		return false
 	}
-	if err := spawnRelay(sock, ln, relayed{Round: spec, Submission: submission, Session: session}); err != nil {
+	owner, err := findRelayOwner()
+	if err == nil {
+		err = spawnRelay(sock, ln, relayed{Round: spec, Submission: submission, Session: session, Owner: owner})
+	}
+	if err != nil {
 		fmt.Fprintf(errw, "lavagna: cannot keep the page connected during the agent's turn (%v); live status is unavailable\n", err)
 		return false
 	}
@@ -185,7 +190,13 @@ func Relay(errw io.Writer) int {
 	select {
 	case <-h.taken:
 		close(stop)
+	case <-r.Owner.follow(stop):
+		close(stop)
+		srv.unwitness()
+		h.settle(srv)
+		h.release()
 	case e := <-end:
+		close(stop)
 		switch e {
 		case witness.Unread:
 			srv.advance(unread)
