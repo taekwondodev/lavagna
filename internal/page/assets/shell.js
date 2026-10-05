@@ -44,6 +44,8 @@ let closed = false;
 let inactive = false;
 let feedbackVisible = false;
 let refusal = '';
+let uploading = 0;
+let imageRefusal = '';
 
 function storageKey() { return DRAFT_PREFIX + view.token; }
 
@@ -52,7 +54,7 @@ function load() {
     const stored = JSON.parse(localStorage.getItem(storageKey()));
     if (stored) return stored;
   } catch { }
-  return { choices: {}, comments: [], editor: '', editing: null, previous: null, next: 0, submission: null, stage: '', sent: null };
+  return { choices: {}, comments: [], images: [], editor: '', editing: null, previous: null, next: 0, submission: null, stage: '', sent: null };
 }
 
 function save() {
@@ -134,6 +136,11 @@ function kilobytes(bytes) {
   return (bytes / 1024).toFixed(1).replace('.', ',') + ' KB';
 }
 
+function size(bytes) {
+  if (bytes < 1024 * 1024) return kilobytes(bytes);
+  return (bytes / 1024 / 1024).toLocaleString('it-IT', { maximumFractionDigits: 1 }) + ' MB';
+}
+
 function countLabel(count) {
   return count + (count === 1 ? ' commento' : ' commenti');
 }
@@ -163,6 +170,7 @@ function reviewItems(comments) {
     if (comment.id === 'draft') item.append(element('span', 'nell’editor', 'review-marker'));
     items.push(item);
   }
+  if (draft.images.length) items.push(element('li', draft.images.length + ' screenshot', 'review-comment'));
   return items;
 }
 
@@ -170,14 +178,16 @@ function sentItems(batch) {
   const items = view.questions.filter(question => batch.choices[question.id])
     .map(question => choiceItem(question, batch.choices[question.id]));
   for (const text of batch.comments) items.push(element('li', text, 'review-comment'));
+  if (batch.images.length) items.push(element('li', batch.images.length + ' screenshot', 'review-comment'));
   return items;
 }
 
 function sendBlocker(over, count, answers) {
   if (!live) return 'Lavagna non è collegata: il feedback resta in bozza.';
   if (draft.editing !== null) return 'Salva o annulla la modifica per inviare.';
+  if (uploading) return 'Attendi il caricamento degli screenshot.';
   if (over) return 'Accorcia i commenti per inviare.';
-  if (!answers && count === 0) return 'Scegli un’opzione o scrivi un commento per inviare.';
+  if (!answers && count === 0 && !draft.images.length) return 'Scegli un’opzione, scrivi un commento o allega uno screenshot per inviare.';
   return '';
 }
 
@@ -211,6 +221,8 @@ function updateControls() {
   setText($('#add-comment'), draft.editing === null ? 'Aggiungi commento' : 'Salva modifica');
   $('#cancel-edit').hidden = draft.editing === null;
   $('#cancel-edit').disabled = isSent || sending;
+  for (const remove of document.querySelectorAll('#images button')) remove.disabled = locked;
+  setText($('#image-refusal'), imageRefusal);
 
   const counter = $('#comment-counter');
   counter.hidden = bytes < view.limit * COUNTER_FROM;
@@ -250,6 +262,7 @@ function updateMobileBar(answers, count) {
   const parts = [];
   if (answers) parts.push(answers + (answers === 1 ? ' risposta' : ' risposte'));
   if (count) parts.push(countLabel(count));
+  if (draft.images.length) parts.push(draft.images.length + ' screenshot');
   setText($('#mobile-summary'), !sent() && parts.length ? parts.join(' · ') + ' in bozza' : PHASES[phase()].turn);
 }
 
@@ -285,6 +298,88 @@ function renderComments() {
     item.append(actions);
     list.append(item);
   }
+}
+
+function renderImages() {
+  $('#images').replaceChildren(...draft.images.map((image, index) => {
+    const name = 'Screenshot ' + (index + 1);
+    const item = element('li', undefined, 'shot');
+    const preview = element('img');
+    preview.src = 'images/' + image.id;
+    preview.alt = name;
+    const remove = element('button', 'Rimuovi');
+    remove.type = 'button';
+    remove.disabled = frozen();
+    remove.addEventListener('click', () => {
+      draft.images = draft.images.filter(other => other.id !== image.id);
+      imageRefusal = '';
+      $('#editor-status').textContent = 'Screenshot rimosso dalla bozza.';
+      changed();
+      renderImages();
+    });
+    item.append(preview, element('span', name + ' · ' + size(image.bytes)), remove);
+    return item;
+  }));
+}
+
+function imageProblem(files) {
+  const total = draft.images.length + uploading + files.length;
+  if (total > view.imageLimit) {
+    return `Al massimo ${view.imageLimit} screenshot per invio: con questi sarebbero ${total}. Nessuno è stato aggiunto.`;
+  }
+  const large = files.find(file => file.size > view.imageBytes);
+  if (large) return `«${large.name}» supera ${size(view.imageBytes)}. Nessuno screenshot è stato aggiunto.`;
+  return '';
+}
+
+async function upload(file) {
+  const response = await fetch('images', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', 'Lavagna-Round': view.round, 'Lavagna-Token': view.token },
+    body: file,
+  }).catch(() => { throw new Error('lavagna non risponde'); });
+  const body = await response.json().catch(() => ({}));
+  if (response.status === 415) throw new Error(`«${file.name}» non è un’immagine PNG, JPEG, WebP o GIF`);
+  if (response.status !== 201) throw new Error(body.error || String(response.status));
+  return { id: body.image, bytes: file.size };
+}
+
+async function attach(files) {
+  if (!view || frozen()) return;
+  imageRefusal = imageProblem(files);
+  if (imageRefusal) {
+    updateControls();
+    return;
+  }
+  const target = draft;
+  uploading += files.length;
+  $('#editor-status').textContent = 'Caricamento degli screenshot…';
+  updateControls();
+  const added = [];
+  let problem = '';
+  try {
+    for (const file of files) added.push(await upload(file));
+  } catch (error) {
+    problem = error.message + '. Nessuno screenshot è stato aggiunto.';
+  } finally {
+    uploading -= files.length;
+  }
+  if (draft !== target) {
+    updateControls();
+    return;
+  }
+  imageRefusal = problem;
+  if (!imageRefusal) target.images.push(...added);
+  $('#editor-status').textContent = imageRefusal ? '' : added.length === 1
+    ? 'Screenshot nella bozza. Non è stato inviato.'
+    : `${added.length} screenshot nella bozza. Non sono stati inviati.`;
+  changed();
+  renderImages();
+}
+
+function refuseLinks() {
+  imageRefusal = 'Link e percorsi non vengono caricati: incolla o trascina l’immagine stessa.';
+  updateControls();
 }
 
 function changed() {
@@ -340,6 +435,7 @@ function render(next) {
   refusal = '';
   $('#document').innerHTML = view.html;
   setText($('#round-label'), 'Round ' + view.round.replace(/^r/, ''));
+  setText($('#image-help'), `Incolla o trascina qui fino a ${view.imageLimit} screenshot: PNG, JPEG, WebP o GIF, ${size(view.imageBytes)} ciascuno.`);
   document.title = 'lavagna · round ' + view.round.replace(/^r/, '');
   for (const input of document.querySelectorAll('#document input[type=radio]')) {
     input.checked = draft.choices[input.dataset.question] === input.value;
@@ -353,8 +449,10 @@ function render(next) {
   $('#waiting').hidden = true;
   $('#closed').hidden = true;
   form.hidden = false;
+  imageRefusal = '';
   renderRoute();
   renderComments();
+  renderImages();
   updateControls();
 }
 
@@ -368,7 +466,8 @@ async function send() {
   draft.submission = draft.submission || newSubmission();
   const comments = collectComments().map(comment => comment.text);
   const choices = { ...draft.choices };
-  draft.sent = { choices, comments };
+  const images = draft.images.map(image => image.id);
+  draft.sent = { choices, comments, images };
   sending = true;
   refusal = '';
   save();
@@ -378,7 +477,7 @@ async function send() {
     const response = await fetch('send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ round: view.round, token: view.token, submission: draft.submission, choices, comments: comments.map(text => ({ text })) }),
+      body: JSON.stringify({ round: view.round, token: view.token, submission: draft.submission, choices, comments: comments.map(text => ({ text })), images }),
     });
     const body = await response.json().catch(() => ({}));
     if (response.status === 202 || response.status === 200) {
@@ -431,6 +530,46 @@ $('#add-comment').addEventListener('click', () => {
   renderComments();
   editor.focus();
 });
+
+editor.addEventListener('paste', event => {
+  const files = [...event.clipboardData.files];
+  if (!files.length) return;
+  event.preventDefault();
+  attach(files);
+});
+
+function carriesFiles(event) {
+  return event.dataTransfer && event.dataTransfer.types.includes('Files');
+}
+
+$('#feedback').addEventListener('dragover', event => {
+  if (!carriesFiles(event) && !event.dataTransfer.types.includes('text/uri-list')) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = frozen() ? 'none' : 'copy';
+  $('#feedback').classList.toggle('dropping', !frozen());
+});
+
+$('#feedback').addEventListener('dragleave', event => {
+  if (!$('#feedback').contains(event.relatedTarget)) $('#feedback').classList.remove('dropping');
+});
+
+$('#feedback').addEventListener('drop', event => {
+  $('#feedback').classList.remove('dropping');
+  const files = [...event.dataTransfer.files];
+  if (files.length) {
+    event.preventDefault();
+    attach(files);
+  } else if (event.dataTransfer.types.includes('text/uri-list')) {
+    event.preventDefault();
+    refuseLinks();
+  }
+});
+
+for (const type of ['dragover', 'drop']) {
+  window.addEventListener(type, event => {
+    if (carriesFiles(event) && !$('#feedback').contains(event.target)) event.preventDefault();
+  });
+}
 
 $('#cancel-edit').addEventListener('click', () => {
   restorePrevious();

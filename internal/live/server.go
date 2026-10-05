@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -22,6 +24,8 @@ const (
 	maxCommentBytes = 32 << 10
 	maxResultBytes  = 48 << 10
 	maxBody         = 256 << 10
+	maxImages       = 8
+	maxImageBytes   = 10 << 20
 	retryMillis     = 250
 	inactive        = "Questo round non è più attivo."
 )
@@ -29,6 +33,13 @@ const (
 const shellCSP = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 var submissionPattern = regexp.MustCompile(`^s-[0-9a-f]{8,64}$`)
+
+var imageExtensions = map[string]string{
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/webp": ".webp",
+	"image/gif":  ".gif",
+}
 
 type stage int
 
@@ -43,9 +54,11 @@ func (s stage) MarshalText() ([]byte, error) {
 }
 
 type view struct {
-	ID    string `json:"round"`
-	Token string `json:"token"`
-	Limit int    `json:"limit"`
+	ID         string `json:"round"`
+	Token      string `json:"token"`
+	Limit      int    `json:"limit"`
+	ImageLimit int    `json:"imageLimit"`
+	ImageBytes int    `json:"imageBytes"`
 	round.Round
 }
 
@@ -59,6 +72,12 @@ type batch struct {
 	submission string
 	choices    map[string]string
 	comments   []comment
+	images     []string
+}
+
+type upload struct {
+	path        string
+	contentType string
 }
 
 type comment struct {
@@ -72,6 +91,8 @@ type server struct {
 	gate     gate
 	view     *view
 	options  map[string]map[string]bool
+	imageDir string
+	uploads  map[string]upload
 	stage    stage
 	streams  map[chan event]struct{}
 	accepted chan batch
@@ -86,9 +107,10 @@ type event struct {
 	data any
 }
 
-func newRound(o conversation.Origin, id, token string, r round.Round) *server {
+func newRound(o conversation.Origin, id, token string, r round.Round, imageDir string) *server {
 	s := newServer(o)
-	s.view = &view{ID: id, Token: token, Limit: maxCommentBytes, Round: r}
+	s.view = &view{ID: id, Token: token, Limit: maxCommentBytes, ImageLimit: maxImages, ImageBytes: maxImageBytes, Round: r}
+	s.imageDir = imageDir
 	s.gate = gate{cap: o.Cap, round: id, token: token}
 	for _, q := range r.Questions {
 		s.options[q.ID] = map[string]bool{}
@@ -105,6 +127,7 @@ func newServer(o conversation.Origin) *server {
 	return &server{
 		origin:   o,
 		options:  map[string]map[string]bool{},
+		uploads:  map[string]upload{},
 		streams:  map[chan event]struct{}{},
 		accepted: make(chan batch, 1),
 		seen:     make(chan struct{}),
@@ -138,6 +161,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /s/{cap}/assets/{file...}", s.capable(s.asset))
 	mux.HandleFunc("GET /s/{cap}/events", s.capable(s.events))
 	mux.HandleFunc("POST /s/{cap}/send", s.send)
+	mux.HandleFunc("POST /s/{cap}/images", s.capable(s.attachImage))
+	mux.HandleFunc("GET /s/{cap}/images/{id}", s.capable(s.image))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Cache-Control", "no-store")
@@ -255,6 +280,7 @@ type sendBody struct {
 	Comments   []struct {
 		Text string `json:"text"`
 	} `json:"comments"`
+	Images []string `json:"images"`
 }
 
 func reply(w http.ResponseWriter, status int, body any) {
@@ -269,13 +295,20 @@ func refuse(w http.ResponseWriter, status int, message string) {
 	}{message})
 }
 
-func (s *server) send(w http.ResponseWriter, r *http.Request) {
+func (s *server) fromPage(w http.ResponseWriter, r *http.Request, mediaType string) bool {
 	if r.Header.Get("Origin") != "http://"+s.origin.Host() {
 		refuse(w, http.StatusForbidden, "origin")
-		return
+		return false
 	}
-	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
+	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != mediaType {
 		refuse(w, http.StatusUnsupportedMediaType, "content type")
+		return false
+	}
+	return true
+}
+
+func (s *server) send(w http.ResponseWriter, r *http.Request) {
+	if !s.fromPage(w, r, "application/json") {
 		return
 	}
 	var in sendBody
@@ -323,7 +356,7 @@ func (s *server) send(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) validate(in sendBody) (batch, int, string) {
-	b := batch{round: in.Round, submission: in.Submission, choices: map[string]string{}, comments: []comment{}}
+	b := batch{round: in.Round, submission: in.Submission, choices: map[string]string{}, comments: []comment{}, images: []string{}}
 	for q, opt := range in.Choices {
 		if !s.options[q][opt] {
 			return b, http.StatusBadRequest, "unknown choice"
@@ -341,7 +374,19 @@ func (s *server) validate(in sendBody) (batch, int, string) {
 	if total > maxCommentBytes {
 		return b, http.StatusRequestEntityTooLarge, fmt.Sprintf("comment text exceeds %d bytes", maxCommentBytes)
 	}
-	if len(b.choices) == 0 && len(b.comments) == 0 {
+	if len(in.Images) > maxImages {
+		return b, http.StatusRequestEntityTooLarge, fmt.Sprintf("more than %d images", maxImages)
+	}
+	attached := map[string]bool{}
+	for _, id := range in.Images {
+		u, ok := s.uploads[id]
+		if !ok || attached[id] {
+			return b, http.StatusBadRequest, "unknown image"
+		}
+		attached[id] = true
+		b.images = append(b.images, u.path)
+	}
+	if len(b.choices) == 0 && len(b.comments) == 0 && len(b.images) == 0 {
 		return b, http.StatusBadRequest, "empty batch"
 	}
 	if encodedLen(b.line()) > maxResultBytes {
@@ -356,4 +401,84 @@ func encodedLen(v any) int {
 	enc.SetEscapeHTML(false)
 	enc.Encode(v)
 	return buf.Len() - len("\n")
+}
+
+func (s *server) attachImage(w http.ResponseWriter, r *http.Request) {
+	if !s.fromPage(w, r, "application/octet-stream") || !s.open(w, r) {
+		return
+	}
+	b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxImageBytes))
+	var tooLarge *http.MaxBytesError
+	switch {
+	case errors.As(err, &tooLarge):
+		refuse(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("image exceeds %d bytes", maxImageBytes))
+		return
+	case err != nil:
+		refuse(w, http.StatusBadRequest, "malformed image")
+		return
+	}
+	contentType := http.DetectContentType(b)
+	ext, ok := imageExtensions[contentType]
+	if !ok {
+		refuse(w, http.StatusUnsupportedMediaType, "not a PNG, JPEG, WebP or GIF image")
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.openLocked(w, r) {
+		return
+	}
+	id := conversation.Secret(16)
+	path := filepath.Join(s.imageDir, id+ext)
+	if err := store(path, b); err != nil {
+		refuse(w, http.StatusInternalServerError, "image not stored")
+		return
+	}
+	s.uploads[id] = upload{path: path, contentType: contentType}
+	reply(w, http.StatusCreated, struct {
+		Image string `json:"image"`
+	}{id})
+}
+
+func (s *server) open(w http.ResponseWriter, r *http.Request) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.openLocked(w, r)
+}
+
+func (s *server) openLocked(w http.ResponseWriter, r *http.Request) bool {
+	if s.view == nil || !s.gate.open(r.Header.Get("Lavagna-Round"), r.Header.Get("Lavagna-Token")) {
+		refuse(w, http.StatusConflict, inactive)
+		return false
+	}
+	return true
+}
+
+func store(path string, b []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		os.Remove(path)
+		return err
+	}
+	return f.Close()
+}
+
+func (s *server) image(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	u, ok := s.uploads[r.PathValue("id")]
+	s.mu.Unlock()
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", u.contentType)
+	http.ServeFile(w, r, u.path)
 }

@@ -1,8 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
+	"fmt"
+	"image"
+	"image/gif"
+	"image/jpeg"
+	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -235,7 +244,7 @@ func TestPageGuidesTheTurn(t *testing.T) {
 	c, p := openRound(t, richRound, 1280)
 	var start struct{ Turn, Hint string }
 	p.MustEval(`({Turn: document.querySelector('#turn').textContent, Hint: document.querySelector('#send-hint').textContent})`, &start)
-	if start.Turn != "Tocca a te" || start.Hint != "Scegli un’opzione o scrivi un commento per inviare." {
+	if start.Turn != "Tocca a te" || start.Hint != "Scegli un’opzione, scrivi un commento o allega uno screenshot per inviare." {
 		t.Fatalf("before any feedback: %+v", start)
 	}
 
@@ -393,5 +402,113 @@ func TestPageDetachedTabAfterSendingStaysSent(t *testing.T) {
 	p.MustEval(`({Eyebrow: document.querySelector('#feedback-eyebrow').textContent, Delivery: document.querySelector('#delivery').textContent, Sent: document.querySelector('#sent-area').innerText})`, &tab)
 	if tab.Eyebrow != "Feedback inviato" || tab.Delivery != "Questa scheda non è più collegata alla conversazione" || !strings.Contains(tab.Sent, "Un database locale") {
 		t.Fatalf("detached after sending: %+v", tab)
+	}
+}
+
+const webp = "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA=="
+
+func writeFile(t *testing.T, name string, b []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+const shots = `document.querySelectorAll('#images li').length`
+
+func TestPageAttachesPastedAndDroppedScreenshots(t *testing.T) {
+	c, p := openRound(t, richRound, 1280)
+	png := screenshot(t)
+	jpg := encoded(t, func(w io.Writer, m image.Image) error { return jpeg.Encode(w, m, nil) })
+	gifImage := encoded(t, func(w io.Writer, m image.Image) error { return gif.Encode(w, m, nil) })
+	webpImage, _ := base64.StdEncoding.DecodeString(webp)
+
+	p.Drop("#comment-text", []string{writeFile(t, "shot.png", png), writeFile(t, "photo.jpg", jpg)})
+	p.WaitFor(shots + ` === 2`)
+	p.Click("#comment-text")
+	p.Paste("image/png", png)
+	p.WaitFor(shots + ` === 3`)
+	p.Drop("#draft-area", []string{writeFile(t, "anim.gif", gifImage), writeFile(t, "pic.webp", webpImage)})
+	p.WaitFor(shots + ` === 5`)
+	p.WaitFor(`[...document.querySelectorAll('#images img')].every(img => img.complete && img.naturalWidth > 0)`)
+
+	p.Click("#images li:nth-child(2) button")
+	p.WaitFor(shots + ` === 4`)
+	var draft struct {
+		Review, Refusal, Editor string
+		Disabled                bool
+	}
+	p.MustEval(`({Review: document.querySelector('#review-list').innerText, Refusal: document.querySelector('#image-refusal').textContent, Editor: document.querySelector('#comment-text').value, Disabled: document.querySelector('#send-feedback').disabled})`, &draft)
+	if !strings.Contains(draft.Review, "4 screenshot") || draft.Refusal != "" || draft.Editor != "" || draft.Disabled {
+		t.Fatalf("draft with screenshots: %+v", draft)
+	}
+
+	p.Reload()
+	p.WaitFor(formShown + ` && ` + shots + ` === 4 && !document.querySelector('#send-feedback').disabled`)
+	p.MustEval(`document.querySelector('#comment-text').focus()`, nil)
+	p.Press("Enter", 13, 4)
+	p.WaitFor(`document.querySelector('#feedback').dataset.phase === 'sent'`)
+	lines, code := c.finish()
+	if code != 0 || len(lines) != 1 {
+		t.Fatalf("exit %d, output %q", code, lines)
+	}
+	got := images(t, lines[0])
+	if len(got) != 4 {
+		t.Fatalf("images %q, want 4", got)
+	}
+	for i, want := range [][]byte{png, nil, gifImage, webpImage} {
+		b, err := os.ReadFile(got[i])
+		switch {
+		case !filepath.IsAbs(got[i]) || err != nil:
+			t.Errorf("image %d at %q: %v", i, got[i], err)
+		case want == nil && !bytes.HasPrefix(b, []byte("\x89PNG\r\n\x1a\n")):
+			t.Errorf("pasted image %d is not a PNG: % x", i, b[:min(8, len(b))])
+		case want != nil && !bytes.Equal(b, want):
+			t.Errorf("image %d differs from the dropped file", i)
+		}
+	}
+	p.WaitFor(`document.querySelector('#sent-list').innerText.includes('4 screenshot')`)
+}
+
+func TestPageRefusesScreenshotsOutsideTheBounds(t *testing.T) {
+	c, p := openRound(t, richRound, 390)
+	png := screenshot(t)
+	refusal := func(contains string, want int) {
+		t.Helper()
+		p.WaitFor(`document.querySelector('#image-refusal').textContent.includes(` + fmt.Sprintf("%q", contains) + `) && document.querySelector('#image-refusal').checkVisibility()`)
+		var n int
+		p.MustEval(shots, &n)
+		if n != want {
+			t.Fatalf("after the refusal %q, %d screenshots are in the draft, want %d", contains, n, want)
+		}
+	}
+	nine := make([]string, 9)
+	for i := range nine {
+		nine[i] = writeFile(t, fmt.Sprintf("shot-%d.png", i), png)
+	}
+
+	p.Drop("#comment-text", []string{writeFile(t, "shot.png", png), writeFile(t, "note.png", []byte("not an image"))})
+	refusal("«note.png» non è un’immagine PNG, JPEG, WebP o GIF", 0)
+	p.Drop("#comment-text", nil, cdptest.DragItem{MimeType: "text/uri-list", Data: "https://example.com/shot.png"})
+	refusal("Link e percorsi non vengono caricati", 0)
+	p.Drop("#comment-text", nine)
+	refusal("Al massimo 8 screenshot per invio", 0)
+	p.Drop("#comment-text", nil, cdptest.DragItem{MimeType: "text/uri-list", Data: "file:///Users/me/Desktop/shot.png"})
+	refusal("Link e percorsi non vengono caricati", 0)
+	p.Drop("#comment-text", []string{writeFile(t, "huge.png", append(png, make([]byte, 10<<20-len(png)+1)...))})
+	refusal("«huge.png» supera 10 MB", 0)
+
+	p.Drop("#comment-text", nine[:8])
+	p.WaitFor(shots + ` === 8 && document.querySelector('#image-refusal').textContent === ''`)
+	p.Drop("#comment-text", nine[8:])
+	refusal("con questi sarebbero 9", 8)
+	p.MustEval(`window.scrollTo({top: 0, behavior: 'instant'})`, nil)
+	p.WaitFor(`scrollY === 0 && document.querySelector('#mobile-summary').textContent === '8 screenshot in bozza'`)
+	p.Click("#send-feedback")
+	lines, code := c.finish()
+	if code != 0 || len(lines) != 1 || len(images(t, lines[0])) != 8 {
+		t.Fatalf("exit %d, output %q", code, lines)
 	}
 }

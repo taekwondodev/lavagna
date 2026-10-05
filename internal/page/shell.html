@@ -39,14 +39,17 @@
       </header>
       <div class="feedback-body" id="draft-area">
         <label for="comment-text">Che cosa vuoi chiarire o cambiare?</label>
-        <textarea id="comment-text" aria-describedby="comment-counter editor-help" placeholder="Scrivi qui una domanda o un commento."></textarea>
+        <textarea id="comment-text" aria-describedby="comment-counter editor-help image-help" placeholder="Scrivi qui una domanda o un commento."></textarea>
         <p class="counter" id="comment-counter" aria-live="polite" hidden></p>
         <div class="editor-actions">
           <button type="button" id="add-comment" disabled>Aggiungi commento</button>
           <button type="button" id="cancel-edit" hidden>Annulla modifica</button>
         </div>
         <p class="editor-help" id="editor-help">Per più commenti separati usa «Aggiungi commento». <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Invio</kbd> invia.</p>
+        <p class="editor-help" id="image-help"></p>
         <p class="live-status" id="editor-status" role="status" aria-live="polite"></p>
+        <p class="attach-refusal" id="image-refusal" role="alert"></p>
+        <ol class="image-list" id="images" aria-label="Screenshot nella bozza"></ol>
         <ol class="note-list" id="comments" aria-label="Commenti nella bozza"></ol>
       </div>
       <div class="feedback-body sent-area" id="sent-area" tabindex="-1" hidden>

@@ -43,7 +43,7 @@ type feedbackLine struct {
 func (b batch) line() feedbackLine {
 	return feedbackLine{
 		Lavagna: "feedback", Round: b.round, Submission: b.submission,
-		Choices: b.choices, Comments: b.comments, Images: []string{},
+		Choices: b.choices, Comments: b.comments, Images: b.images,
 	}
 }
 
@@ -95,6 +95,7 @@ func Check(getenv func(string) string, out, errw io.Writer) int {
 		fmt.Fprintln(errw, "lavagna:", err)
 		return exitInvalid
 	}
+	conversation.Sweep(c, time.Now())
 	fmt.Fprintln(out, "lavagna: conversation", c.Key)
 	return exitOK
 }
@@ -104,6 +105,7 @@ func Round(getenv func(string) string, src io.Reader, out, errw io.Writer) int {
 	if err != nil {
 		return invalid(out, err.Error())
 	}
+	conversation.Sweep(c, time.Now())
 	b, err := io.ReadAll(io.LimitReader(src, round.MaxBytes+1))
 	if err != nil {
 		return failure(out, err)
@@ -136,7 +138,7 @@ func Round(getenv func(string) string, src io.Reader, out, errw io.Writer) int {
 		return failure(out, err)
 	}
 
-	srv := newRound(origin, st.Live, conversation.Secret(16), r)
+	srv := newRound(origin, st.Live, conversation.Secret(16), r, c.Images())
 	hs := &http.Server{Handler: srv.handler(), ReadHeaderTimeout: 10 * time.Second}
 	go hs.Serve(ln)
 	fmt.Fprintf(out, "lavagna · round %s · %s · Esc per interrompere\n", st.Live, origin.URL())
@@ -156,6 +158,7 @@ func Close(getenv func(string) string, out io.Writer) int {
 	if err != nil {
 		return invalid(out, err.Error())
 	}
+	conversation.Sweep(c, time.Now())
 	lease, err := conversation.Acquire(c)
 	if errors.Is(err, conversation.ErrBusy) {
 		return busy(out, c)

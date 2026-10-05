@@ -238,15 +238,20 @@ func (p *Page) Click(selector string) {
 	p.ClickTimes(selector, 1)
 }
 
-func (p *Page) ClickTimes(selector string, n int) {
+func (p *Page) center(selector string) (pt struct{ X, Y float64 }) {
 	p.t.Helper()
-	var pt struct{ X, Y float64 }
 	p.MustEval(fmt.Sprintf(`(() => {
 		const el = document.querySelector(%q);
 		el.scrollIntoView({block: 'center'});
 		const r = el.getBoundingClientRect();
 		return {X: r.left + r.width / 2, Y: r.top + r.height / 2};
 	})()`, selector), &pt)
+	return pt
+}
+
+func (p *Page) ClickTimes(selector string, n int) {
+	p.t.Helper()
+	pt := p.center(selector)
 	for i := 0; i < n; i++ {
 		for _, typ := range []string{"mousePressed", "mouseReleased"} {
 			p.b.must(nil, p.session, "Input.dispatchMouseEvent",
@@ -302,4 +307,33 @@ func (p *Page) Wheel(deltaY float64) {
 	p.t.Helper()
 	p.b.must(nil, p.session, "Input.dispatchMouseEvent",
 		map[string]any{"type": "mouseWheel", "x": 200, "y": 400, "deltaX": 0, "deltaY": deltaY})
+}
+
+type DragItem struct {
+	MimeType string `json:"mimeType"`
+	Data     string `json:"data"`
+}
+
+func (p *Page) Drop(selector string, files []string, items ...DragItem) {
+	p.t.Helper()
+	pt := p.center(selector)
+	data := map[string]any{"items": append([]DragItem{}, items...), "files": append([]string{}, files...), "dragOperationsMask": 1}
+	for _, typ := range []string{"dragEnter", "dragOver", "drop"} {
+		p.b.must(nil, p.session, "Input.dispatchDragEvent", map[string]any{"type": typ, "x": pt.X, "y": pt.Y, "data": data})
+	}
+}
+
+func (p *Page) Paste(mimeType string, data []byte) {
+	p.t.Helper()
+	p.b.must(nil, "", "Browser.grantPermissions", map[string]any{"permissions": []string{"clipboardReadWrite", "clipboardSanitizedWrite"}})
+	p.b.must(nil, p.session, "Emulation.setFocusEmulationEnabled", map[string]any{"enabled": true})
+	encoded, _ := json.Marshal(data)
+	p.MustEval(fmt.Sprintf(`(async () => {
+		const bytes = Uint8Array.from(atob(%s), c => c.charCodeAt(0));
+		await navigator.clipboard.write([new ClipboardItem({%q: new Blob([bytes], {type: %q})})]);
+	})()`, encoded, mimeType, mimeType), nil)
+	for _, typ := range []string{"rawKeyDown", "keyUp"} {
+		p.b.must(nil, p.session, "Input.dispatchKeyEvent",
+			map[string]any{"type": typ, "key": "v", "code": "KeyV", "windowsVirtualKeyCode": 86, "modifiers": 4, "commands": []string{"paste"}})
+	}
 }

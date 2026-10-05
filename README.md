@@ -16,7 +16,9 @@ The binary uses only the Go standard library and embeds the page, the v3 stylesh
 
 - `lavagna check` exits 0 when the conversation identity is bindable, otherwise non-zero with the reason.
 - `lavagna round < round.md` presents a text-only round in the browser and blocks until the user sends one feedback batch. Pass no timeout; Esc interrupts.
-- `lavagna close` shows "Frontiera chiusa, torna al terminale", deletes the conversation's lavagna state and releases its page origin.
+- `lavagna close` shows "Frontiera chiusa, torna al terminale", deletes the conversation's lavagna state and screenshots and releases its page origin.
+
+Every `check`, `round` and `close` also removes the lavagna directories of other conversations untouched for 7 days, skipping any whose call is still live.
 
 Identity is `PI_SESSION_ID` plus `PI_SESSION_FILE`, otherwise `LAVAGNA_SESSION`. Another harness opts in by exporting `LAVAGNA_SESSION`. The page opens through `$BROWSER` when set, otherwise `open`. `$BROWSER` is split on whitespace into a command and its arguments, and the URL is appended; when it cannot start, lavagna says so on stderr and keeps waiting on the status-line URL.
 
@@ -26,13 +28,13 @@ Identity is `PI_SESSION_ID` plus `PI_SESSION_FILE`, otherwise `LAVAGNA_SESSION`.
 
 | Outcome | Last line | Exit |
 |---|---|---|
-| feedback | `{"lavagna":"feedback","round":"r3","submission":"s-…","choices":{"storage":"b"},"comments":[{"anchor":null,"text":"…"}],"images":[]}` | 0 |
+| feedback | `{"lavagna":"feedback","round":"r3","submission":"s-…","choices":{"storage":"b"},"comments":[{"anchor":null,"text":"…"}],"images":["/…/lavagna/<key>/images/….png"]}` | 0 |
 | closed | `{"lavagna":"closed","page":"shown"}` or `"page":"not-connected"` | 0 |
 | invalid | `{"lavagna":"invalid","errors":["round.md:12: unknown block ::: card"]}` | 2 |
 | busy | `{"lavagna":"busy","round":"r3"}` | 3 |
 | error | `{"lavagna":"error","message":"…"}` | 1 |
 
-Esc prints nothing. Comment text is capped at 32 KiB per batch, measured as it is encoded in the result line; the page refuses more with a live counter and never truncates. The server also refuses a batch whose result line would exceed 48 KiB, so the line stays inside the 50 KB tail a harness shows the model.
+Esc prints nothing. `images` holds the absolute paths of the batch's screenshots, in the order they appear in the draft. Comment text is capped at 32 KiB per batch, measured as it is encoded in the result line; the page refuses more with a live counter and never truncates. The server also refuses a batch whose result line would exceed 48 KiB, so the line stays inside the 50 KB tail a harness shows the model.
 
 ## Round format
 
@@ -55,6 +57,8 @@ Esc prints nothing. Comment text is capped at 32 KiB per batch, measured as it i
 - **Send gate.** The feedback endpoint takes only POST with the page's Origin, a JSON body and the round token. A pure gate answers accept, duplicate (same receipt, never delivered twice), answered, stale or foreign (409). Host and capability checks guard every request.
 - **Delivery stages.** The page shows Accepted on the server's reply and Returned once the result line is written. Stages only move forward, because the event stream and the send reply race. The page sends only while its event stream is live; when the stream fails for good it says the tab is no longer connected and keeps the draft.
 - **Drafts.** Drafts live in the tab's `localStorage`, keyed by the round token, so a later conversation that reuses the port never sees them. A changed draft gets a new submission ID; the draft is frozen while a send is in flight. Drafts are deleted when their batch is returned or the conversation closes.
+- **Screenshots.** The user pastes or drops screenshots into the feedback area; each uploads on its own to `POST …/images` with the page's Origin, `application/octet-stream` and the round token in `Lavagna-Round` and `Lavagna-Token`. The server accepts PNG, JPEG, WebP and GIF by magic bytes, whatever the file's name or declared type, at most 10 MiB each, and stores them in the conversation's `images/` directory (0600). The capability and round token are checked before the body is read. The send batch names them by ID, at most 8; lavagna never fetches a URL or reads a host path. A paste or drop that breaks a bound adds nothing and shows a refusal. Screenshots stay until `close` or the 7-day sweep, including ones removed from the draft.
+- **Sweep.** Taking a conversation's lease touches its directory. A start removes another conversation's directory only when it is still untouched for 7 days once its lock is held, so a live call is never swept: it renames the directory to a `swept-…` tombstone, releases the lock and deletes the tombstone; later sweeps finish any tombstone left behind. A call that meets a sweep of its own conversation waits up to 2 seconds for it and continues on a fresh directory instead of answering `busy`.
 - **Fonts.** The font response carries `Access-Control-Allow-Origin` for the opaque-origin content frame planned for rich rounds.
 
 ## Development

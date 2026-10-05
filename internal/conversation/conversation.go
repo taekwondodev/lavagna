@@ -10,18 +10,33 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"syscall"
+	"time"
 )
 
-const lockName = "lock"
+const (
+	lockName   = "lock"
+	tombstone  = "swept-"
+	imagesDir  = "images"
+	idleAfter  = 7 * 24 * time.Hour
+	sweepGrace = 2 * time.Second
+	sweepRetry = 20 * time.Millisecond
+)
+
+var keyPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+var errSwept = errors.New("conversation directory swept while locking")
 
 var errNoIdentity = errors.New("no conversation identity: set PI_SESSION_ID and PI_SESSION_FILE, or LAVAGNA_SESSION")
 
 var ErrBusy = errors.New("another lavagna call is live in this conversation")
 
 type Conversation struct {
-	Key string
-	dir string
+	Key  string
+	root string
+	dir  string
 }
 
 func FromEnv(getenv func(string) string) (Conversation, error) {
@@ -39,8 +54,11 @@ func FromEnv(getenv func(string) string) (Conversation, error) {
 	if err != nil {
 		return Conversation{}, fmt.Errorf("no cache directory for lavagna state: %w", err)
 	}
-	return Conversation{Key: key, dir: filepath.Join(cache, "lavagna", key)}, nil
+	root := filepath.Join(cache, "lavagna")
+	return Conversation{Key: key, root: root, dir: filepath.Join(root, key)}, nil
 }
+
+func (c Conversation) Images() string { return filepath.Join(c.dir, imagesDir) }
 
 type Origin struct {
 	Port int    `json:"port"`
@@ -63,21 +81,90 @@ type Lease struct {
 }
 
 func Acquire(c Conversation) (*Lease, error) {
-	if err := os.MkdirAll(c.dir, 0o700); err != nil {
-		return nil, err
+	deadline := time.Now().Add(sweepGrace)
+	for {
+		if err := os.MkdirAll(c.dir, 0o700); err != nil {
+			return nil, err
+		}
+		f, err := os.OpenFile(filepath.Join(c.dir, lockName), os.O_CREATE|os.O_RDWR, 0o600)
+		if err == nil {
+			err = hold(f)
+		}
+		swept := errors.Is(err, errSwept) || errors.Is(err, fs.ErrNotExist) || errors.Is(err, ErrBusy) && untouched(c.dir, time.Now())
+		if swept && time.Now().Before(deadline) {
+			time.Sleep(sweepRetry)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		now := time.Now()
+		if err := os.Chtimes(c.dir, now, now); err != nil {
+			f.Close()
+			return nil, err
+		}
+		return &Lease{conv: c, lock: f}, nil
 	}
-	f, err := os.OpenFile(filepath.Join(c.dir, lockName), os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
+}
+
+func hold(f *os.File) error {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, ErrBusy
+			return ErrBusy
 		}
-		return nil, err
+		return err
 	}
-	return &Lease{conv: c, lock: f}, nil
+	held, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if named, err := os.Stat(f.Name()); err != nil || !os.SameFile(held, named) {
+		f.Close()
+		return errSwept
+	}
+	return nil
+}
+
+func Sweep(c Conversation, now time.Time) {
+	entries, err := os.ReadDir(c.root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), tombstone) {
+			os.RemoveAll(filepath.Join(c.root, e.Name()))
+			continue
+		}
+		if !e.IsDir() || e.Name() == c.Key || !keyPattern.MatchString(e.Name()) {
+			continue
+		}
+		dir := filepath.Join(c.root, e.Name())
+		if !untouched(dir, now) {
+			continue
+		}
+		f, err := os.OpenFile(filepath.Join(dir, lockName), os.O_RDWR, 0)
+		if errors.Is(err, fs.ErrNotExist) {
+			os.Remove(dir)
+			continue
+		}
+		if err != nil || hold(f) != nil {
+			continue
+		}
+		buried := filepath.Join(c.root, tombstone+Secret(8))
+		if !untouched(dir, now) || os.Rename(dir, buried) != nil {
+			f.Close()
+			continue
+		}
+		f.Close()
+		os.RemoveAll(buried)
+	}
+}
+
+func untouched(dir string, now time.Time) bool {
+	info, err := os.Stat(dir)
+	return errors.Is(err, fs.ErrNotExist) || err == nil && now.Sub(info.ModTime()) >= idleAfter
 }
 
 func (l *Lease) Release() { l.lock.Close() }
