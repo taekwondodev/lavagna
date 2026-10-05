@@ -2,9 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -14,6 +20,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 )
 
 var binary string
@@ -322,5 +329,109 @@ func TestSendRefusesUnauthorizedBatches(t *testing.T) {
 	lines, code = b.finish()
 	if code != 0 || len(lines) != 1 || !strings.Contains(lines[0], `"submission":"s-00000000000000bb"`) {
 		t.Fatalf("b: exit %d, output %q", code, lines)
+	}
+}
+
+func encoded(t *testing.T, encode func(io.Writer, image.Image) error) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 4, 3))
+	img.Set(1, 1, color.RGBA{R: 18, G: 99, B: 91, A: 255})
+	var buf bytes.Buffer
+	if err := encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func screenshot(t *testing.T) []byte { return encoded(t, png.Encode) }
+
+func images(t *testing.T, line string) []string {
+	t.Helper()
+	var got struct{ Images []string }
+	if err := json.Unmarshal([]byte(line), &got); err != nil {
+		t.Fatalf("result %q: %v", line, err)
+	}
+	return got.Images
+}
+
+func (c *call) attach(round, token string, body []byte) string {
+	c.t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, c.url+"images", bytes.NewReader(body))
+	req.Header.Set("Origin", c.origin)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Lavagna-Round", round)
+	req.Header.Set("Lavagna-Token", token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct{ Image string }
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusCreated {
+		c.t.Fatalf("upload: status %d, %v", resp.StatusCode, err)
+	}
+	return out.Image
+}
+
+func sendScreenshot(t *testing.T, environ []string, shot []byte) string {
+	t.Helper()
+	c := startRound(t, environ, decision)
+	round, token := c.view()
+	id := c.attach(round, token, shot)
+	body := fmt.Sprintf(`{"round":%q,"token":%q,"submission":"s-0123456789abcdef","images":[%q]}`, round, token, id)
+	if status := c.post(c.url+"send", c.origin, "application/json", body); status != http.StatusAccepted {
+		t.Fatalf("send: %d", status)
+	}
+	lines, code := c.finish()
+	if code != 0 || len(lines) != 1 {
+		t.Fatalf("exit %d, output %q", code, lines)
+	}
+	got := images(t, lines[0])
+	if len(got) != 1 {
+		t.Fatalf("images %q, want one", got)
+	}
+	return got[0]
+}
+
+func TestCloseDeletesTheConversationScreenshots(t *testing.T) {
+	environ := env(t, "LAVAGNA_SESSION=shots")
+	shot := screenshot(t)
+	path := sendScreenshot(t, environ, shot)
+	if b, err := os.ReadFile(path); !filepath.IsAbs(path) || err != nil || !bytes.Equal(b, shot) {
+		t.Fatalf("returned image %q: %v, want an absolute path to the pasted bytes", path, err)
+	}
+	if lines, code := run(t, environ, "", "close"); code != 0 {
+		t.Fatalf("close: exit %d, output %q", code, lines)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the screenshot survived close: %v", err)
+	}
+}
+
+func TestAnyStartSweepsIdleConversations(t *testing.T) {
+	home := t.TempDir()
+	environ := func(session string) []string {
+		return []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "BROWSER=true", "LAVAGNA_SESSION=" + session}
+	}
+	conversationDir := func(session string, age time.Duration) string {
+		dir := filepath.Dir(filepath.Dir(sendScreenshot(t, environ(session), screenshot(t))))
+		then := time.Now().Add(-age)
+		if err := os.Chtimes(dir, then, then); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	idle := conversationDir("idle", 8*24*time.Hour)
+	recent := conversationDir("recent", 6*24*time.Hour)
+	cmd := exec.Command(binary, "check")
+	cmd.Env = environ("other")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("check: %v %s", err, out)
+	}
+	if _, err := os.Stat(idle); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a conversation untouched for 8 days survived a start: %v", err)
+	}
+	if _, err := os.Stat(recent); err != nil {
+		t.Errorf("a conversation untouched for 6 days was removed: %v", err)
 	}
 }

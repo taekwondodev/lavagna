@@ -3,8 +3,11 @@ package live
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,7 +26,7 @@ func serve(t *testing.T) (*server, func(body string) int) {
 	if errs != nil {
 		t.Fatal(errs)
 	}
-	s := newRound(o, "r1", "tok-1", r, nil)
+	s := newRound(o, "r1", "tok-1", r, nil, t.TempDir())
 	hs := &http.Server{Handler: s.handler()}
 	go hs.Serve(ln)
 	t.Cleanup(func() { hs.Close() })
@@ -100,5 +103,194 @@ func TestSendKeepsTheResultLineInsideTheTail(t *testing.T) {
 	body := `{"round":"r1","token":"tok-1","submission":"s-00000000000000aa","comments":[` + comments + `]}`
 	if status := post(body); status != http.StatusRequestEntityTooLarge {
 		t.Fatalf("2000 one-byte comments: status %d, want 413", status)
+	}
+}
+
+var screenshots = map[string]string{
+	"png":  "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR",
+	"jpeg": "\xff\xd8\xff\xe0\x00\x10JFIF\x00",
+	"webp": "RIFF\x24\x00\x00\x00WEBPVP8 ",
+	"gif":  "GIF89a\x01\x00\x01\x00",
+}
+
+func postImage(t *testing.T, s *server, body string, edits ...func(*http.Request)) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, s.origin.URL()+"images", strings.NewReader(body))
+	req.Header.Set("Origin", "http://"+s.origin.Host())
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Lavagna-Round", "r1")
+	req.Header.Set("Lavagna-Token", "tok-1")
+	for _, edit := range edits {
+		edit(req)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct{ Image string }
+	json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out.Image
+}
+
+func imageBatch(submission string, ids ...string) string {
+	b, _ := json.Marshal(ids)
+	return fmt.Sprintf(`{"round":"r1","token":"tok-1","submission":%q,"images":%s}`, submission, b)
+}
+
+func TestUploadAcceptsScreenshotsByMagicBytes(t *testing.T) {
+	s, _ := serve(t)
+	for name, body := range screenshots {
+		if status, id := postImage(t, s, body); status != http.StatusCreated || id == "" {
+			t.Errorf("%s: status %d, image %q, want 201 with an image", name, status, id)
+		}
+	}
+	for name, body := range map[string]string{
+		"text":       "not an image",
+		"svg":        `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
+		"pdf":        "%PDF-1.7\n",
+		"bmp":        "BM\x36\x00\x00\x00\x00\x00",
+		"empty":      "",
+		"remote URL": "https://example.com/shot.png",
+		"host path":  "/Users/me/Desktop/shot.png",
+	} {
+		if status, _ := postImage(t, s, body); status != http.StatusUnsupportedMediaType {
+			t.Errorf("%s: status %d, want 415", name, status)
+		}
+	}
+}
+
+func TestUploadRefusesImagesOverTenMiB(t *testing.T) {
+	s, _ := serve(t)
+	png := screenshots["png"]
+	if status, _ := postImage(t, s, png+strings.Repeat("\x00", 10<<20-len(png))); status != http.StatusCreated {
+		t.Fatalf("10 MiB: status %d, want 201", status)
+	}
+	if status, _ := postImage(t, s, png+strings.Repeat("\x00", 10<<20-len(png)+1)); status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("10 MiB + 1 byte: status %d, want 413", status)
+	}
+}
+
+func TestUploadRefusesUnauthorizedImages(t *testing.T) {
+	s, post := serve(t)
+	png := screenshots["png"]
+	header := func(name, value string) func(*http.Request) {
+		return func(r *http.Request) {
+			if value == "" {
+				r.Header.Del(name)
+			} else {
+				r.Header.Set(name, value)
+			}
+		}
+	}
+	cases := []struct {
+		name   string
+		edit   func(*http.Request)
+		status int
+	}{
+		{"missing Origin", header("Origin", ""), http.StatusForbidden},
+		{"foreign Origin", header("Origin", "http://evil.example"), http.StatusForbidden},
+		{"simple content type", header("Content-Type", "text/plain"), http.StatusUnsupportedMediaType},
+		{"missing token", header("Lavagna-Token", ""), http.StatusConflict},
+		{"stale token", header("Lavagna-Token", "tok-0"), http.StatusConflict},
+		{"stale round", header("Lavagna-Round", "r0"), http.StatusConflict},
+		{"foreign capability", func(r *http.Request) { r.URL.Path = "/s/cap-b/images" }, http.StatusForbidden},
+	}
+	for _, c := range cases {
+		if status, _ := postImage(t, s, png, c.edit); status != c.status {
+			t.Errorf("%s: status %d, want %d", c.name, status, c.status)
+		}
+	}
+	if status := post(sendBatch("s-00000000000000aa", "ok")); status != http.StatusAccepted {
+		t.Fatalf("send: %d", status)
+	}
+	if status, _ := postImage(t, s, png); status != http.StatusConflict {
+		t.Fatalf("after the batch was accepted: status %d, want 409", status)
+	}
+}
+
+func TestSendReturnsAttachedImagesAsAbsolutePaths(t *testing.T) {
+	s, post := serve(t)
+	_, png := postImage(t, s, screenshots["png"])
+	_, gif := postImage(t, s, screenshots["gif"])
+	postImage(t, s, screenshots["jpeg"])
+	if status := post(imageBatch("s-00000000000000aa", gif, png)); status != http.StatusAccepted {
+		t.Fatalf("send: %d", status)
+	}
+	got := (<-s.accepted).line()
+	if len(got.Images) != 2 {
+		t.Fatalf("images %q, want two paths", got.Images)
+	}
+	for i, want := range []string{screenshots["gif"], screenshots["png"]} {
+		b, err := os.ReadFile(got.Images[i])
+		if !filepath.IsAbs(got.Images[i]) || err != nil || string(b) != want {
+			t.Errorf("image %d at %q: %v, content %q, want an absolute path to %q", i, got.Images[i], err, b, want)
+		}
+	}
+}
+
+func TestUploadedImagesRemainValidAcrossRoundServers(t *testing.T) {
+	s, _ := serve(t)
+	_, id := postImage(t, s, screenshots["png"])
+	next := newRound(s.origin, "r2", "tok-2", s.view.Round, nil, s.imageDir)
+	u, ok := next.uploads[id]
+	if !ok {
+		t.Fatalf("new server did not restore image reference %q", id)
+	}
+	b, err := os.ReadFile(u.path)
+	if err != nil || string(b) != screenshots["png"] {
+		t.Fatalf("restored image bytes %q, error %v", b, err)
+	}
+}
+
+func TestImagesAreServedOnlyAsTheirSniffedType(t *testing.T) {
+	s, _ := serve(t)
+	_, id := postImage(t, s, screenshots["webp"])
+	get := func(url string) (int, string, string) {
+		resp, err := http.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header.Get("Content-Type") + " " + resp.Header.Get("X-Content-Type-Options"), string(b)
+	}
+	if status, headers, body := get(s.origin.URL() + "images/" + id); status != http.StatusOK || headers != "image/webp nosniff" || body != screenshots["webp"] {
+		t.Errorf("own image: %d %q %q", status, headers, body)
+	}
+	if status, _, _ := get(s.origin.URL() + "images/0123456789abcdef0123456789abcdef"); status != http.StatusNotFound {
+		t.Errorf("unknown image: %d, want 404", status)
+	}
+	foreign := strings.Replace(s.origin.URL(), "/cap-a/", "/cap-b/", 1)
+	if status, _, _ := get(foreign + "images/" + id); status != http.StatusForbidden {
+		t.Errorf("foreign capability: %d, want 403", status)
+	}
+}
+
+func TestSendRefusesImagesOutsideTheBounds(t *testing.T) {
+	s, post := serve(t)
+	var ids []string
+	for range 9 {
+		_, id := postImage(t, s, screenshots["png"])
+		ids = append(ids, id)
+	}
+	cases := []struct {
+		name   string
+		ids    []string
+		status int
+	}{
+		{"nine images", ids, http.StatusRequestEntityTooLarge},
+		{"unknown image", []string{"0123456789abcdef0123456789abcdef"}, http.StatusBadRequest},
+		{"host path", []string{"/etc/hosts"}, http.StatusBadRequest},
+		{"remote URL", []string{"https://example.com/shot.png"}, http.StatusBadRequest},
+		{"same image twice", []string{ids[0], ids[0]}, http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		if status := post(imageBatch("s-00000000000000aa", c.ids...)); status != c.status {
+			t.Errorf("%s: status %d, want %d", c.name, status, c.status)
+		}
+	}
+	if status := post(imageBatch("s-00000000000000aa", ids[:8]...)); status != http.StatusAccepted {
+		t.Fatalf("eight images: status %d, want 202", status)
 	}
 }

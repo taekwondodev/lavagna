@@ -256,6 +256,15 @@ dialog::backdrop { background: rgb(37 43 40 / .35); }
 .feedback[data-phase="sent"] .feedback-heading p, .feedback[data-phase="sent"] .feedback-heading .eyebrow { color: var(--information); }
 .feedback[data-phase="detached"] .feedback-heading { background: var(--analysis-soft); color: var(--analysis); border-bottom: 1px solid var(--analysis-border); }
 .feedback[data-phase="detached"] .feedback-heading p, .feedback[data-phase="detached"] .feedback-heading .eyebrow { color: var(--analysis); }
+.image-list { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 8px; }
+.image-list:empty { display: none; }
+.shot { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: 10px; font-size: 13px; }
+.shot img { width: 56px; height: 42px; object-fit: cover; border: 1px solid var(--line); border-radius: 4px; background: var(--neutral-soft); }
+.shot span { overflow-wrap: anywhere; }
+.shot button { font-size: 11px; padding: 6px 9px; }
+.attach-refusal { margin: 10px 0 0; padding: 9px 11px; border-radius: 6px; font-size: 12px; font-weight: 650; color: var(--analysis); background: var(--analysis-soft); border: 1px solid var(--analysis-border); overflow-wrap: anywhere; }
+.attach-refusal:empty { display: none; }
+.feedback.dropping #draft-area { outline: 2px dashed var(--accent); outline-offset: -6px; background: var(--accent-soft); }
 .counter { font-size: 12px; color: var(--muted); margin: 9px 0 0; font-variant-numeric: tabular-nums; }
 .counter.over { color: var(--analysis); font-weight: 700; }
 .editor-help kbd { font: inherit; font-size: 11px; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--neutral-soft); }

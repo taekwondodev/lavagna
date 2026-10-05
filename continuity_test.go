@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -229,6 +231,10 @@ func TestPageShowsUncertainWhenTheCallDiesBeforeReturning(t *testing.T) {
 	roundShown(p, "1")
 	p.Click(`input[value="db"]`)
 	p.Type("#comment-text", "Da non perdere")
+	p.WaitFor(controlled)
+	png := screenshot(t)
+	p.Drop("#comment-text", []string{writeFile(t, "interrupted.png", png)})
+	p.WaitFor(shots + ` === 1 && document.querySelector('#images img').naturalWidth > 0`)
 	p.Click("#send-feedback")
 	p.WaitFor(`document.querySelector('#delivery').textContent === '` + acceptedText + `'`)
 	time.Sleep(500 * time.Millisecond)
@@ -248,6 +254,9 @@ func TestPageShowsUncertainWhenTheCallDiesBeforeReturning(t *testing.T) {
 		t.Fatalf("after Esc between Accepted and Returned: %+v", kept)
 	}
 
+	p.Reload()
+	roundShown(p, "1")
+	p.WaitFor(shots + ` === 1 && document.querySelector('#images img').naturalWidth > 0`)
 	second := startRound(t, environ, nextRound)
 	if second.url != first.url {
 		t.Fatalf("the call after Esc serves %s, want the recorded origin %s", second.url, first.url)
@@ -257,10 +266,27 @@ func TestPageShowsUncertainWhenTheCallDiesBeforeReturning(t *testing.T) {
 	if kept.Delivery != uncertainText || !strings.Contains(kept.Comments, "Da non perdere") || !kept.Choice {
 		t.Fatalf("round 2 offers the uncertain batch for resend: %+v", kept)
 	}
+	p.WaitFor(shots + ` === 1 && !document.querySelector('#send-feedback').disabled`)
 	p.Click("#send-feedback")
 	lines, code := second.finish()
-	if code != 0 || !strings.HasPrefix(lines[0], `{"lavagna":"feedback","round":"r2"`) || !strings.HasSuffix(lines[0], feedbackTail("db", "Da non perdere")) {
+	if code != 0 || len(lines) != 1 {
 		t.Fatalf("resend: exit %d, output %q", code, lines)
+	}
+	var feedback struct {
+		Round    string
+		Choices  map[string]string
+		Comments []struct{ Text string }
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &feedback); err != nil || feedback.Round != "r2" || feedback.Choices["storage"] != "db" || len(feedback.Comments) != 1 || feedback.Comments[0].Text != "Da non perdere" {
+		t.Fatalf("resent feedback %s: %v", lines[0], err)
+	}
+	paths := images(t, lines[0])
+	if len(paths) != 1 {
+		t.Fatalf("resent images %q, want one", paths)
+	}
+	got, err := os.ReadFile(paths[0])
+	if err != nil || !bytes.Equal(got, png) {
+		t.Fatalf("resent image at %q has bytes % x, error %v", paths[0], got[:min(8, len(got))], err)
 	}
 }
 
