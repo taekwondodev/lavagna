@@ -76,13 +76,19 @@ func startBlocked(t *testing.T, environ []string, src string, args ...string) (*
 	}
 	cmd := command(environ, src, args...)
 	cmd.Stdout = w
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	c := &call{t: t, cmd: cmd}
 	t.Cleanup(func() { c.esc(); r.Close(); w.Close() })
 	out := bufio.NewReader(r)
-	first, err := out.ReadString('\n')
+	status := bufio.NewReader(stderr)
+	first, err := status.ReadString('\n')
+	go io.Copy(io.Discard, status)
 	c.status(first)
 	if err != nil || c.url == "" {
 		t.Fatalf("status line %q: %v", first, err)

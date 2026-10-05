@@ -66,8 +66,8 @@ func exists(path string) bool {
 func TestSweepRemovesOnlyIdleConversations(t *testing.T) {
 	inCache(t)
 	own := used(t, "own", 30*day)
-	stale := used(t, "stale", 7*day)
-	fresh := used(t, "fresh", 7*day-time.Minute)
+	stale := used(t, "stale", day+time.Minute)
+	fresh := used(t, "fresh", day-time.Minute)
 	live := used(t, "live", 30*day)
 	held, err := os.OpenFile(filepath.Join(live.dir, lockName), os.O_RDWR, 0)
 	if err != nil || hold(held) != nil {

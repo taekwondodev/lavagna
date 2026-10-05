@@ -62,6 +62,7 @@ let live = false;
 let detached = false;
 let closed = false;
 let inactive = false;
+const renders = new Set();
 let feedbackVisible = false;
 let refusal = '';
 let picking = false;
@@ -132,12 +133,35 @@ function save() {
   } catch { }
 }
 
-function forget() {
-  try { localStorage.removeItem(RECORD_KEY); } catch { }
+function drainWorker(worker) {
+  return new Promise((resolve, reject) => {
+    const channel = new MessageChannel();
+    const finish = error => {
+      clearTimeout(timer);
+      channel.port1.close();
+      if (error) reject(error); else resolve();
+    };
+    const timer = setTimeout(() => finish(new Error('Worker cleanup unconfirmed')), 1500);
+    channel.port1.onmessage = () => finish();
+    worker.postMessage({ lavagna: 'close' }, [channel.port2]);
+  });
+}
+
+async function forget() {
+  await Promise.allSettled([...renders]);
+  let clean = true;
+  try { localStorage.removeItem(RECORD_KEY); } catch { clean = false; }
   try {
-    navigator.serviceWorker.getRegistration().then(registration => registration && registration.unregister()).catch(() => { });
-    caches.delete(CACHE_NAME).catch(() => { });
-  } catch { }
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (registration) {
+      const workers = new Set([registration.installing, registration.waiting, registration.active].filter(Boolean));
+      const drained = await Promise.allSettled([...workers].map(drainWorker));
+      if (drained.some(result => result.status === 'rejected')) clean = false;
+      await registration.unregister();
+    }
+    await caches.delete(CACHE_NAME);
+  } catch { clean = false; }
+  return clean;
 }
 
 function element(tag, text, className) {
@@ -687,7 +711,14 @@ async function cacheFrame(next) {
   return URL.createObjectURL(new Blob(['<!doctype html>' + doc.documentElement.outerHTML], { type: 'text/html' }));
 }
 
-async function render(next) {
+function render(next) {
+  if (closed) return;
+  const task = renderRound(next);
+  renders.add(task);
+  task.then(() => renders.delete(task), () => renders.delete(task));
+}
+
+async function renderRound(next) {
   const record = stored();
   const own = record && record.view.token === next.token;
   draft = own ? record.draft : record ? carry(record.draft, next) : blank();
@@ -784,6 +815,7 @@ async function send() {
       body: JSON.stringify({ round: view.round, token: view.token, submission: draft.submission, choices, comments, images }),
     });
     const body = await response.json().catch(() => ({}));
+    if (closed) return;
     if (response.status === 202 || response.status === 200) {
       advance({ stage: 'accepted', ...body });
       withComments(draft, comments);
@@ -798,8 +830,9 @@ async function send() {
       refusal = 'Invio rifiutato da lavagna: ' + (body.error || response.status) + '. La bozza è conservata.';
     }
   } catch {
-    if (!sent()) refusal = 'Invio non riuscito: lavagna non risponde. La bozza è conservata.';
+    if (!closed && !sent()) refusal = 'Invio non riuscito: lavagna non risponde. La bozza è conservata.';
   } finally {
+    if (closed) return;
     sending = false;
     if (!live) markUncertain();
     save();
@@ -932,11 +965,20 @@ new ResizeObserver(() => {
   document.documentElement.style.setProperty('--header-height', $('#topbar').getBoundingClientRect().height + 'px');
 }).observe($('#topbar'));
 
-function showClosed() {
+async function showClosed(token) {
   closed = true;
   live = false;
-  forget();
+  leaving = true;
   view = null;
+  draft = null;
+  $('#document').replaceChildren();
+  for (const id of ['images', 'comments', 'sent-list', 'review-list']) $('#' + id).replaceChildren();
+  editor.value = '';
+  acceptedWhileLive = null;
+  picking = false;
+  chapterTops = {};
+  if (snapshotURL) URL.revokeObjectURL(snapshotURL);
+  snapshotURL = null;
   form.hidden = true;
   $('#waiting').hidden = true;
   $('#closed').hidden = false;
@@ -944,6 +986,14 @@ function showClosed() {
   setText($('#round-label'), '');
   $('#mobile-bar').hidden = true;
   updateTurn();
+  if (await forget()) {
+    try {
+      await fetch(new URL('close-ack', location.href), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+    } catch { }
+  }
 }
 
 function showDetachedWaiting() {
@@ -964,8 +1014,10 @@ function adopt() {
 }
 
 function connect() {
+  if (closed) return;
   const source = new EventSource('events');
   source.addEventListener('round', event => {
+    if (closed) return;
     const next = JSON.parse(event.data);
     live = true;
     if (!view || view.token !== next.token) render(next);
@@ -980,9 +1032,11 @@ function connect() {
     save();
     updateControls();
   });
-  source.addEventListener('closed', () => {
+  source.addEventListener('closed', event => {
     source.close();
-    showClosed();
+    let token;
+    try { token = JSON.parse(event.data).token; } catch { return; }
+    showClosed(token);
   });
   source.addEventListener('error', () => {
     if (leaving) return;
@@ -1004,7 +1058,7 @@ function connect() {
 }
 
 window.addEventListener('pagehide', () => { leaving = true; });
-window.addEventListener('pageshow', () => { leaving = false; });
+window.addEventListener('pageshow', () => { leaving = closed; });
 
 window.addEventListener('storage', event => {
   if (event.key === RECORD_KEY) adopt();

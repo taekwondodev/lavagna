@@ -36,6 +36,8 @@ Browser tests use [`internal/cdptest`](../internal/cdptest) to drive headless Ch
 
 For documentation-only work, inspect the full Markdown diff, verify local links and reading triggers, and confirm any documented commands or behavior against their owning source. Keep run-specific results in the issue or PR rather than this reusable guide.
 
+For agent-context changes, run `uv run scripts/measure-context.py`. This optional tool builds the frozen pre-change baseline and the current checkout, drives local rounds with fixed inputs, then counts authored input, command arguments and both output streams using the pinned `tiktoken` package and `o200k_base` encoding. It normalizes random capability URLs and ports only. Fixtures cover minimal help, two rounds sharing content, small feedback, selective large feedback and full reads. It reports tokens separately from bytes; it does not estimate reasoning, harness wrappers, image tokens or every model's tokenizer. Tokenization is a development-only dependency, not part of the binary.
+
 ## Documentation ownership
 
 | Artifact | Owns |

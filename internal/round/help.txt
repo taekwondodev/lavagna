@@ -1,74 +1,20 @@
-lavagna round: present one round and wait for one feedback batch.
+lavagna round [--reuse rN] [DIR] < round.md
+Wait for one feedback batch; no timeout. Esc interrupts.
+DIR supplies round.md and local assets. --reuse keeps rN's content snapshot;
+supply only new # Decidere on stdin (no DIR), never inherited choices.
+Stdout: one JSON result. URL/status: stderr. Small feedback is inline;
+deferred:true means more data is retained; see lavagna feedback --help.
+Omitted/cleared choices are unanswered, not approved.
+Feedback is not completion: continue with round; only close ends the phase.
+Read needed feedback/images before close: it deletes phase data.
 
-  lavagna round < round.md     text from stdin
-  lavagna round DIR            DIR/round.md plus the .js, .css and image files beside it
-
-DIR holds at most 32 files and 4 MiB, rendered excerpts included: round.md, .js,
-.css, .png, .jpg, .jpeg, .gif, .webp and .svg files under relative paths, with no
-symlinks; .lavagna is reserved. Every .css file is linked and every .js file
-runs, in path order.
-Any other construct is invalid, with line-numbered errors before the page opens.
-
-Chapters, in this order, each at most once:
-  # Capire   # Confrontare   # Decidere
-Capire and Confrontare render in a sandboxed frame; Decidere renders in the page.
-
-Blocks:
-  ## Heading, ### Heading
-  Paragraph lines, joined until a blank line
-  - item / 1. item           lines indented by two spaces continue the item
-  | A | B |                  table: header row, | --- | :-: | --: | row, body rows;
-  | --- | --- |              the first column heads its row; \| is a literal pipe
-  ::: info [Label]           information             (default "Informazione")
-  ::: proposal [Label]       proposal, unapproved    (default "Proposta · non approvata")
-  ::: why [Label]            why this representation (default "Perché questa forma")
-  ::: boundary [Label]       scope or limit          (default "Confine")
-  ::: steps [Label]          only list items: first line title, indented lines detail
-  ::: evidence               only items - [observed|unverified|outside [Label]] text
-  ::: excerpt path:12-30     lines 12-30 of a file under the git root, at most 64 KiB;
-                             the body is an optional caption
-  :::                        closes a block; blocks do not nest; ## is not allowed inside
-  <tag ...> ...              raw HTML or SVG until a blank line, Capire and Confrontare
-                             only; src and href name round files (./ and #id allowed),
-                             data: images or #ids, and the frame blocks anything else;
-                             inline <script>, on* handlers and style attributes do not run
-
-Inline, anywhere: **bold** and `code`; everything else shows as written.
-
-Anchors, Capire and Confrontare only: end a heading, paragraph, list item, table
-cell or ::: line with {ref="Label"}, or write data-ref="Label" in raw HTML. Labels
-are unique, at most 80 characters. A comment the user links to one returns
-"anchor":"Label"; a general comment returns "anchor":null.
-
-Decisions, under # Decidere after any introduction:
-  ## Question {id="storage"}  one question; ids match [a-z0-9][a-z0-9_-]{0,39}
-  Introduction text           optional, before the options
-  - [file] Option label       at least two options; indented lines are the detail
-
-Example (DIR/round.md, with DIR/flow.svg and DIR/demo.js):
-
-# Capire
-## Il problema {ref="Problema"}
-Due sessioni scrivono lo stesso file di stato.
-::: excerpt internal/state/store.go:40-58
-La scrittura non prende un lock.
-:::
-
-# Confrontare
-| Criterio | File per sessione | Database |
-| --- | --- | --- |
-| Contesa | nessuna {ref="File · contesa"} | gestita dal database |
-::: proposal
-Un file per sessione: nessuna dipendenza nuova.
-:::
-::: evidence
-- [observed] Oggi un solo file. {ref="Stato attuale"}
-- [unverified] La pulizia dei file vecchi.
-:::
-<img src="flow.svg" alt="Flusso delle scritture" data-ref="Flusso">
-
+Minimal round (multiple questions allowed; choices are optional):
 # Decidere
-## Dove salviamo lo stato? {id="storage"}
-- [file] Un file per sessione
-  Nessuna contesa, più file da pulire.
-- [db] Un database locale
+## Where? {id="storage"}
+- [file] Per-session files
+- [db] Database
+
+Add # Capire, then # Confrontare before # Decidere when useful, not by default.
+Text: paragraphs, ##/### headings, - lists, **bold**, `code`.
+Anchor content with {ref="Name"}; comments return that name, or null.
+More: lavagna round --help grammar (components, tables, excerpts, HTML, assets).

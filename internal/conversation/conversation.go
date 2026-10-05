@@ -17,13 +17,14 @@ import (
 )
 
 const (
-	lockName   = "lock"
-	tombstone  = "swept-"
-	imagesDir  = "images"
-	relayName  = "relay.sock"
-	idleAfter  = 7 * 24 * time.Hour
-	sweepGrace = 2 * time.Second
-	sweepRetry = 20 * time.Millisecond
+	lockName     = "lock"
+	tombstone    = "swept-"
+	imagesDir    = "images"
+	artifactsDir = "artifacts"
+	relayName    = "relay.sock"
+	idleAfter    = 24 * time.Hour
+	sweepGrace   = 2 * time.Second
+	sweepRetry   = 20 * time.Millisecond
 )
 
 var keyPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
