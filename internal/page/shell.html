@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>lavagna</title>
+  <link rel="stylesheet" href="assets/lavagna.css">
+  <script src="assets/shell.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">lavagna<span id="round-label"></span></div>
+      <p class="connection" id="connection" role="status" aria-live="polite">Collegamento a lavagna…</p>
+    </div>
+    <nav aria-label="Percorso di lettura"><ol class="route" id="route"></ol></nav>
+  </header>
+
+  <section class="notice" id="waiting">
+    <p>In attesa del round dall’agente.</p>
+  </section>
+
+  <section class="notice" id="closed" hidden>
+    <h1>Frontiera chiusa, torna al terminale</h1>
+    <p>Il confronto nel browser è concluso. L’agente continua nel terminale.</p>
+  </section>
+
+  <form id="feedback-form" class="layout" hidden>
+    <main class="document" id="document"></main>
+
+    <aside class="feedback" id="feedback" aria-labelledby="feedback-title">
+      <header class="feedback-heading">
+        <div class="eyebrow">Qui agisci tu · bozza non inviata</div>
+        <h2 id="feedback-title">Il tuo feedback</h2>
+        <p>Un solo posto per domande e commenti.</p>
+      </header>
+      <div class="feedback-body">
+        <label for="comment-text">Che cosa vuoi chiarire o cambiare?</label>
+        <textarea id="comment-text" aria-describedby="comment-counter" placeholder="Scrivi qui una domanda o un commento."></textarea>
+        <p class="counter" id="comment-counter" aria-live="polite"></p>
+        <div class="editor-actions">
+          <button type="button" id="add-comment" disabled>Aggiungi commento</button>
+          <button type="button" id="cancel-edit" hidden>Annulla modifica</button>
+        </div>
+        <p class="editor-help">Aggiungi il commento se vuoi scriverne un altro; Invia include anche quello che stai scrivendo.</p>
+        <p class="live-status" id="editor-status" role="status" aria-live="polite"></p>
+        <ol class="note-list" id="comments" aria-label="Commenti nella bozza"></ol>
+      </div>
+      <footer class="send-area">
+        <p class="send-summary" id="send-summary" aria-live="polite">Nessuna scelta o commento preparato.</p>
+        <button type="submit" id="send-feedback" class="primary" disabled>Invia feedback</button>
+        <p class="delivery" id="delivery" role="status" aria-live="polite"></p>
+      </footer>
+    </aside>
+  </form>
+</body>
+</html>
