@@ -156,7 +156,7 @@ func TestRelayReportsTheAgentsTurn(t *testing.T) {
 		steps  []step
 	}{
 		{"answered", []step{{1, "received", false}, {1, "ended", false}}},
-		{"unread", []step{{2, "unread", false}}},
+		{"unread", []step{{2, "unread-aborted", false}}},
 		{"unrecognized", []step{{1, "received", false}, {1, "received", true}}},
 		{"retry", []step{{1, "received", false}, {1, "received", true}}},
 	}
@@ -366,38 +366,47 @@ func deliveryIs(p *cdptest.Page, text string) {
 	p.WaitFor(`document.querySelector('#delivery').textContent === '` + text + `'`)
 }
 
-func TestPageShowsTheAgentsTurn(t *testing.T) {
-	const (
-		receivedText = "Letto dall’agente · l’agente lavora"
-		endedText    = "L’agente ti ha risposto nel terminale. Nulla è stato approvato."
-	)
-	pi := newPiSession(t, "answered")
-	environ := env(t, pi.env()...)
-	first, p, submission := sentAndReturned(t, environ)
-	turnIs(p, "Inviato · consegnato al terminale")
-
-	pi.append(submission, 1)
-	deliveryIs(p, receivedText)
-	turnIs(p, "L’agente lavora")
-	p.Reload()
-	roundShown(p, "1")
-	deliveryIs(p, receivedText)
-
-	pi.append(submission, 1)
-	deliveryIs(p, endedText)
-	turnIs(p, "Risposta nel terminale")
-	groupGone(t, first)
-	p.Reload()
-	roundShown(p, "1")
-	deliveryIs(p, endedText)
-
-	second := startRound(t, environ, nextRound)
-	if second.url != first.url {
-		t.Fatalf("round 2 serves %s, want the recorded origin %s", second.url, first.url)
+func TestPageKeepsGrillingOpenAfterTheAgentsTurn(t *testing.T) {
+	cases := []struct {
+		reason, turn, delivery string
+	}{
+		{"stop", "Grilling ancora aperto", "L’agente ha terminato il turno prima di chiudere la frontiera. Il tuo feedback è conservato."},
+		{"aborted", "Turno interrotto", "Il turno dell’agente è stato interrotto. La frontiera non è stata chiusa e il tuo feedback è conservato."},
 	}
-	roundShown(p, "2")
-	turnIs(p, "Tocca a te")
-	second.esc()
+	for _, tc := range cases {
+		t.Run(tc.reason, func(t *testing.T) {
+			const receivedText = "Letto dall’agente · l’agente lavora"
+			pi := newPiSession(t, "answered")
+			pi.appends[1] = bytes.ReplaceAll(pi.appends[1], []byte(`"stopReason":"stop"`), []byte(`"stopReason":"`+tc.reason+`"`))
+			environ := env(t, pi.env()...)
+			first, p, submission := sentAndReturned(t, environ)
+			turnIs(p, "Inviato · consegnato al terminale")
+
+			pi.append(submission, 1)
+			deliveryIs(p, receivedText)
+			turnIs(p, "L’agente lavora")
+			p.Reload()
+			roundShown(p, "1")
+			deliveryIs(p, receivedText)
+
+			pi.append(submission, 1)
+			deliveryIs(p, tc.delivery)
+			turnIs(p, tc.turn)
+			p.WaitFor(`document.querySelector('#feedback-lead').textContent === 'Il grilling resta aperto. Questa pagina si aggiornerà al prossimo round.'`)
+			groupGone(t, first)
+			p.Reload()
+			roundShown(p, "1")
+			deliveryIs(p, tc.delivery)
+
+			second := startRound(t, environ, nextRound)
+			if second.url != first.url {
+				t.Fatalf("round 2 serves %s, want the recorded origin %s", second.url, first.url)
+			}
+			roundShown(p, "2")
+			turnIs(p, "Tocca a te")
+			second.esc()
+		})
+	}
 }
 
 func sentAndReturned(t *testing.T, environ []string) (*call, *cdptest.Page, string) {
@@ -420,12 +429,23 @@ func sentAndReturned(t *testing.T, environ []string) (*call, *cdptest.Page, stri
 }
 
 func TestPageShowsATurnThatEndedBeforeReading(t *testing.T) {
-	pi := newPiSession(t, "unread")
-	c, p, submission := sentAndReturned(t, env(t, pi.env()...))
-	pi.append(submission, 2)
-	deliveryIs(p, "Consegnato al terminale, ma il turno si è interrotto prima che l’agente lo leggesse.")
-	turnIs(p, "Turno interrotto")
-	groupGone(t, c)
+	cases := []struct {
+		reason, turn, delivery string
+	}{
+		{"stop", "Grilling ancora aperto", "Consegnato al terminale, ma il turno è terminato prima che l’agente lo leggesse."},
+		{"aborted", "Turno interrotto", "Consegnato al terminale, ma il turno si è interrotto prima che l’agente lo leggesse."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.reason, func(t *testing.T) {
+			pi := newPiSession(t, "unread")
+			pi.appends[1] = bytes.ReplaceAll(pi.appends[1], []byte(`"stopReason":"aborted"`), []byte(`"stopReason":"`+tc.reason+`"`))
+			c, p, submission := sentAndReturned(t, env(t, pi.env()...))
+			pi.append(submission, 2)
+			deliveryIs(p, tc.delivery)
+			turnIs(p, tc.turn)
+			groupGone(t, c)
+		})
+	}
 }
 
 func TestPageStopsClaimingTheAgentWorksWhenTheWitnessGivesUp(t *testing.T) {

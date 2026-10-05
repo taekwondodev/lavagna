@@ -55,10 +55,12 @@ const (
 	received
 	unread
 	ended
+	aborted
+	unreadAborted
 )
 
 func (s stage) MarshalText() ([]byte, error) {
-	return []byte([...]string{"", "accepted", "returned", "received", "unread", "ended"}[s]), nil
+	return []byte([...]string{"", "accepted", "returned", "received", "unread", "ended", "aborted", "unread-aborted"}[s]), nil
 }
 
 type view struct {

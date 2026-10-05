@@ -284,7 +284,7 @@ dialog::backdrop { background: rgb(37 43 40 / .35); }
 .send-hint:empty { display: none; }
 .delivery { font-size: 14px; color: var(--ink); margin: 11px 0 0; overflow-wrap: anywhere; }
 .delivery:empty { display: none; }
-.delivery[data-stage="accepted"], .delivery[data-stage="returned"], .delivery[data-stage="received"], .delivery[data-stage="unread"], .delivery[data-stage="ended"] { margin-top: 0; padding: 11px 13px; border-radius: 6px; font-weight: 650; color: var(--information); background: var(--information-soft); border: 1px solid var(--information-border); }
+.delivery[data-stage="accepted"], .delivery[data-stage="returned"], .delivery[data-stage="received"], .delivery[data-stage="unread"], .delivery[data-stage="ended"], .delivery[data-stage="aborted"], .delivery[data-stage="unread-aborted"] { margin-top: 0; padding: 11px 13px; border-radius: 6px; font-weight: 650; color: var(--information); background: var(--information-soft); border: 1px solid var(--information-border); }
 .delivery.refused { padding: 11px 13px; border-radius: 6px; color: var(--analysis); font-weight: 650; background: var(--analysis-soft); border: 1px solid var(--analysis-border); }
 .notice { max-width: 740px; margin: 60px auto; padding: 30px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .notice p:last-child { margin-bottom: 0; }

@@ -35,7 +35,7 @@ The listener moves to the relay as an inherited descriptor, then to the next `ro
 
 Without a relay, the next call rebinds the recorded port. The public fallback and collision behavior is in [Rounds](rounds.md#recover-an-interrupted-round).
 
-The witness reads `$PI_SESSION_FILE` from the offset where the call returned. A tool result carrying the batch's submission ID establishes Received. A `stop` or `aborted` assistant message establishes Not read before receipt, or Turn ended after receipt. Unknown evidence ends observation without inventing a receipt. Before stopping, the relay gives the page up to two seconds to connect so an immediately ended turn can still be reported. Exact accepted session shapes belong to [`internal/witness`](../internal/witness), not a second schema in this guide.
+The witness reads `$PI_SESSION_FILE` from the offset where the call returned. A tool result carrying the batch's submission ID establishes Received. A `stop` or `aborted` assistant message establishes Not read before receipt, retaining whether the turn ended or was interrupted. After receipt, `stop` establishes Turn ended and `aborted` establishes Turn interrupted; neither establishes frontier closure. Unknown evidence ends observation without inventing a receipt. Before stopping, the relay gives the page up to two seconds to connect so an immediately ended turn can still be reported. Exact accepted session shapes belong to [`internal/witness`](../internal/witness), not a second schema in this guide.
 
 ## Feedback and rendering
 

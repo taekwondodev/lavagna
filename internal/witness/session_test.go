@@ -48,7 +48,7 @@ func TestSessionFollowsWhatPiAppends(t *testing.T) {
 		}, true, Unwitnessed},
 		{"unread", "unread", time.Minute, func(t *testing.T, path string, after [][]byte) {
 			write(t, path, after...)
-		}, false, Unread},
+		}, false, UnreadAborted},
 		{"file shrinks", "answered", time.Minute, func(t *testing.T, path string, after [][]byte) {
 			os.Truncate(path, 10)
 		}, false, Unwitnessed},
