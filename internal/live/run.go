@@ -129,26 +129,35 @@ func Round(getenv func(string) string, src io.Reader, out, errw io.Writer) int {
 	if err != nil {
 		return failure(out, err)
 	}
-	st.Origin = &origin
-	st.Rounds++
-	st.Live = fmt.Sprintf("r%d", st.Rounds)
+	st = st.Step(conversation.RoundStarted{Origin: origin})
 	if err := lease.Save(st); err != nil {
 		return failure(out, err)
 	}
 
-	srv := newRound(origin, st.Live, conversation.Secret(16), r)
+	srv := newRound(origin, st.Live, conversation.Secret(16), r, st.Previous)
 	hs := &http.Server{Handler: srv.handler(), ReadHeaderTimeout: 10 * time.Second}
 	go hs.Serve(ln)
 	fmt.Fprintf(out, "lavagna · round %s · %s · Esc per interrompere\n", st.Live, origin.URL())
 	go reveal(getenv, errw, origin.URL(), fresh, srv.seen)
 
 	got := <-srv.accepted
+	st = st.Step(conversation.BatchAccepted{Submission: got.submission})
+	record(errw, lease, st)
 	code := result(out, exitOK, got.line())
+	if code != exitOK {
+		return code
+	}
+	st = st.Step(conversation.BatchReturned{})
+	record(errw, lease, st)
 	srv.returned()
 	stop(hs, srv)
-	st.Live = ""
-	lease.Save(st)
 	return code
+}
+
+func record(errw io.Writer, lease *conversation.Lease, st conversation.State) {
+	if err := lease.Save(st); err != nil {
+		fmt.Fprintf(errw, "lavagna: cannot record the delivery stage (%v); the next round cannot tell the page how this one ended\n", err)
+	}
 }
 
 func Close(getenv func(string) string, out io.Writer) int {

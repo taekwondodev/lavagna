@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -64,11 +65,24 @@ type call struct {
 
 var statusLine = regexp.MustCompile(`^lavagna · round (r\d+) · (http://127\.0\.0\.1:\d+)(/s/[0-9a-f]{64}/) · Esc per interrompere$`)
 
-func spawn(t *testing.T, environ []string, src string) *call {
-	t.Helper()
+func command(environ []string, src string) *exec.Cmd {
 	cmd := exec.Command(binary, "round")
 	cmd.Env = environ
 	cmd.Stdin = strings.NewReader(src)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return cmd
+}
+
+func (c *call) status(first string) {
+	c.first = strings.TrimRight(first, "\n")
+	if m := statusLine.FindStringSubmatch(c.first); m != nil {
+		c.origin, c.url = m[2], m[2]+m[3]
+	}
+}
+
+func spawn(t *testing.T, environ []string, src string) *call {
+	t.Helper()
+	cmd := command(environ, src)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -76,16 +90,13 @@ func spawn(t *testing.T, environ []string, src string) *call {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
 	c := &call{t: t, cmd: cmd, out: bufio.NewReader(stdout)}
+	t.Cleanup(c.esc)
 	first, err := c.out.ReadString('\n')
 	if err != nil {
 		t.Fatalf("no first line: %v", err)
 	}
-	c.first = strings.TrimRight(first, "\n")
-	if m := statusLine.FindStringSubmatch(c.first); m != nil {
-		c.origin, c.url = m[2], m[2]+m[3]
-	}
+	c.status(first)
 	return c
 }
 
@@ -96,6 +107,14 @@ func startRound(t *testing.T, environ []string, src string) *call {
 		t.Fatalf("status line %q", c.first)
 	}
 	return c
+}
+
+func (c *call) esc() {
+	if c.cmd.ProcessState != nil {
+		return
+	}
+	syscall.Kill(-c.cmd.Process.Pid, syscall.SIGKILL)
+	c.cmd.Wait()
 }
 
 func (c *call) finish() ([]string, int) {

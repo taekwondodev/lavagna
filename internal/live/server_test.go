@@ -23,7 +23,7 @@ func serve(t *testing.T) (*server, func(body string) int) {
 	if errs != nil {
 		t.Fatal(errs)
 	}
-	s := newRound(o, "r1", "tok-1", r)
+	s := newRound(o, "r1", "tok-1", r, nil)
 	hs := &http.Server{Handler: s.handler()}
 	go hs.Serve(ln)
 	t.Cleanup(func() { hs.Close() })
