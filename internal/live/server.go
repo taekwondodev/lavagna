@@ -43,9 +43,10 @@ func (s stage) MarshalText() ([]byte, error) {
 }
 
 type view struct {
-	ID    string `json:"round"`
-	Token string `json:"token"`
-	Limit int    `json:"limit"`
+	ID       string                `json:"round"`
+	Token    string                `json:"token"`
+	Limit    int                   `json:"limit"`
+	Previous *conversation.Outcome `json:"previous"`
 	round.Round
 }
 
@@ -86,9 +87,9 @@ type event struct {
 	data any
 }
 
-func newRound(o conversation.Origin, id, token string, r round.Round) *server {
+func newRound(o conversation.Origin, id, token string, r round.Round, previous *conversation.Outcome) *server {
 	s := newServer(o)
-	s.view = &view{ID: id, Token: token, Limit: maxCommentBytes, Round: r}
+	s.view = &view{ID: id, Token: token, Limit: maxCommentBytes, Previous: previous, Round: r}
 	s.gate = gate{cap: o.Cap, round: id, token: token}
 	for _, q := range r.Questions {
 		s.options[q.ID] = map[string]bool{}
@@ -135,6 +136,7 @@ func (s *server) broadcast(e event) {
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /s/{cap}/{$}", s.capable(s.shell))
+	mux.HandleFunc("GET /s/{cap}/sw.js", s.capable(s.worker))
 	mux.HandleFunc("GET /s/{cap}/assets/{file...}", s.capable(s.asset))
 	mux.HandleFunc("GET /s/{cap}/events", s.capable(s.events))
 	mux.HandleFunc("POST /s/{cap}/send", s.send)
@@ -165,6 +167,11 @@ func (s *server) shell(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", shellCSP)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(page.Shell)
+}
+
+func (s *server) worker(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", page.ContentType("sw.js"))
+	w.Write(page.Worker)
 }
 
 func (s *server) asset(w http.ResponseWriter, r *http.Request) {

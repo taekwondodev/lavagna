@@ -9,6 +9,9 @@ import (
 //go:embed shell.html
 var Shell []byte
 
+//go:embed sw.js
+var Worker []byte
+
 //go:embed assets
 var assets embed.FS
 
