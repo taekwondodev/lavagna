@@ -22,7 +22,9 @@ type End int
 const (
 	Stopped End = iota
 	Unread
+	UnreadAborted
 	Answered
+	Aborted
 	Unwitnessed
 )
 
@@ -92,8 +94,12 @@ func (s Session) follow(w *witness, poll, idle time.Duration, stop <-chan struct
 					read()
 				case unread:
 					return Unread
+				case unreadAborted:
+					return UnreadAborted
 				case answered:
 					return Answered
+				case aborted:
+					return Aborted
 				case unrecognized:
 					return Unwitnessed
 				}

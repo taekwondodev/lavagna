@@ -11,7 +11,9 @@ const (
 	watching verdict = iota
 	received
 	unread
+	unreadAborted
 	answered
+	aborted
 	unrecognized
 )
 
@@ -82,10 +84,16 @@ func (w *witness) entry(line []byte) verdict {
 		switch *m.StopReason {
 		case "toolUse", "deferred":
 		case "stop", "aborted":
-			if w.received {
-				return answered
+			if !w.received {
+				if *m.StopReason == "aborted" {
+					return unreadAborted
+				}
+				return unread
 			}
-			return unread
+			if *m.StopReason == "aborted" {
+				return aborted
+			}
+			return answered
 		default:
 			return unrecognized
 		}

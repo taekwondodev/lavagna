@@ -16,7 +16,7 @@ func TestWitnessReadsRecordedPiSessions(t *testing.T) {
 		{"answered", []verdict{received, answered}},
 		{"next-round", []verdict{received, watching}},
 		{"close", []verdict{received, watching, watching, answered}},
-		{"unread", []verdict{watching, unread}},
+		{"unread", []verdict{watching, unreadAborted}},
 		{"unrecognized", []verdict{received, unrecognized}},
 		{"retry", []verdict{received, unrecognized, watching, watching, answered}},
 	}

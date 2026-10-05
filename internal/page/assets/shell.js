@@ -5,8 +5,10 @@ const TEXT = {
   returned: 'Consegnato al terminale',
   received: 'Letto dall’agente · l’agente lavora',
   read: 'Letto dall’agente',
-  unread: 'Consegnato al terminale, ma il turno si è interrotto prima che l’agente lo leggesse.',
-  ended: 'L’agente ti ha risposto nel terminale. Nulla è stato approvato.',
+  unread: 'Consegnato al terminale, ma il turno è terminato prima che l’agente lo leggesse.',
+  'unread-aborted': 'Consegnato al terminale, ma il turno si è interrotto prima che l’agente lo leggesse.',
+  ended: 'L’agente ha terminato il turno prima di chiudere la frontiera. Il tuo feedback è conservato.',
+  aborted: 'Il turno dell’agente è stato interrotto. La frontiera non è stata chiusa e il tuo feedback è conservato.',
   unwitnessed: 'stato in tempo reale non disponibile',
   detached: 'Questa scheda non è più collegata alla conversazione',
   uncertain: 'Consegna non riuscita: l’agente è stato interrotto. Il tuo invio è conservato, puoi reinviarlo.',
@@ -32,12 +34,14 @@ const PHASES = {
   waiting: { turn: 'In attesa del prossimo round', panel: 'sent', delivery: TEXT.returned },
   received: { turn: 'L’agente lavora', panel: 'sent', delivery: TEXT.received },
   read: { turn: 'Letto dall’agente', panel: 'sent', delivery: TEXT.read },
-  unread: { turn: 'Turno interrotto', panel: 'sent', delivery: TEXT.unread, lead: 'Continua nel terminale.' },
-  ended: { turn: 'Risposta nel terminale', panel: 'sent', delivery: TEXT.ended, lead: 'Continua nel terminale.' },
+  unread: { turn: 'Grilling ancora aperto', panel: 'sent', delivery: TEXT.unread, lead: 'Il grilling resta aperto. Questa pagina si aggiornerà al prossimo round.' },
+  'unread-aborted': { turn: 'Turno interrotto', panel: 'sent', delivery: TEXT['unread-aborted'], lead: 'Il grilling resta aperto. Questa pagina si aggiornerà al prossimo round.' },
+  ended: { turn: 'Grilling ancora aperto', panel: 'sent', delivery: TEXT.ended, lead: 'Il grilling resta aperto. Questa pagina si aggiornerà al prossimo round.' },
+  aborted: { turn: 'Turno interrotto', panel: 'sent', delivery: TEXT.aborted, lead: 'Il grilling resta aperto. Questa pagina si aggiornerà al prossimo round.' },
   detached: { turn: 'Scheda non collegata', panel: 'detached', delivery: TEXT.detached },
   closed: { turn: 'Concluso', panel: 'draft' },
 };
-const STAGES = ['', 'accepted', 'returned', 'received', 'unread', 'ended'];
+const STAGES = ['', 'accepted', 'returned', 'received', 'unread', 'ended', 'aborted', 'unread-aborted'];
 const RECORD_KEY = 'lavagna:' + location.pathname;
 const CACHE_NAME = 'lavagna:' + location.pathname;
 const RETRY_MS = 250;

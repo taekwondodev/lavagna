@@ -200,8 +200,12 @@ func Relay(errw io.Writer) int {
 		switch e {
 		case witness.Unread:
 			srv.advance(unread)
+		case witness.UnreadAborted:
+			srv.advance(unreadAborted)
 		case witness.Answered:
 			srv.advance(ended)
+		case witness.Aborted:
+			srv.advance(aborted)
 		case witness.Unwitnessed, witness.Stopped:
 			srv.unwitness()
 		}

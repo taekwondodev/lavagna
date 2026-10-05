@@ -50,7 +50,9 @@ Comment text is capped at 32 KiB per batch, measured as encoded in the result li
 
 ## Interpret delivery status
 
-The page shows Accepted on the server's reply and Returned once the result line is written. With a Pi session witness it can then show Received, Not read or Turn ended in the terminal. These are delivery observations, not proof that the agent understood the feedback.
+The page shows Accepted on the server's reply and Returned once the result line is written. With a Pi session witness it can then show Received, Not read, Turn ended before frontier closure or Turn interrupted. These are delivery observations, not proof that the agent understood the feedback or that the frontier is settled.
+
+A stopped or interrupted agent turn does not close the browser phase. The page keeps the submitted feedback and reconnects to the next round without directing the user back to the terminal. Only `close` shows the completion message. Lavagna does not restart the agent: the invoking workflow must continue after feedback, present explanations and remaining decisions in subsequent rounds, and close only after a clean final confirmation. If the agent stops early, browser continuity alone cannot make it resume.
 
 Without `$PI_SESSION_FILE`, on an unsupported session version or shape, on an unrecognized stop reason, or after 30 minutes without a new session entry, receipts stop at their last witnessed stage and the page says live status is unavailable. A Received page then stops claiming the agent is working. Pi retries and compaction can continue the turn, so `error` and `length` stop reasons do not establish that it ended.
 
