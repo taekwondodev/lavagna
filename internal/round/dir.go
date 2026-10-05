@@ -21,6 +21,9 @@ import (
 //go:embed help.txt
 var Help string
 
+//go:embed grammar.txt
+var Grammar string
+
 var reserved = strings.TrimSuffix(page.FrameAsset, "/")
 
 const (

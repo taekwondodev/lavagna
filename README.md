@@ -18,7 +18,7 @@ lavagna round < round.md
 lavagna close
 ```
 
-Run these from the agent's invoking shell. `round` opens the browser and waits for explicit feedback; its last output line is the JSON result. Pass no timeout; Esc interrupts. Use `lavagna round --help` for the grammar and an example.
+Run these from the agent's invoking shell. `round` opens the browser and waits for explicit feedback; stdout is one JSON result and operational status goes to stderr. Pass no timeout; Esc interrupts. Start with `lavagna round --help` for the minimal contract and example; load `lavagna round --help grammar` only for richer content. Reuse an earlier content snapshot with `round --reuse rN` and new decisions. Read deferred feedback and needed images before `close`, which deletes the phase's retained data.
 
 The [round guide](docs/rounds.md) covers conversation identity, browser setup, commands, directory input, feedback limits, delivery status and recovery. Read [Security](SECURITY.md) before presenting sensitive material or scripted prototypes.
 

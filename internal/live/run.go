@@ -1,6 +1,7 @@
 package live
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,10 +11,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/taekwondodev/lavagna/internal/conversation"
 	"github.com/taekwondodev/lavagna/internal/round"
@@ -49,10 +52,14 @@ func (b batch) line() feedbackLine {
 	}
 }
 
-func result(w io.Writer, code int, line any) int {
+func encodeJSON(w io.Writer, value any) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	if enc.Encode(line) != nil {
+	return enc.Encode(value)
+}
+
+func result(w io.Writer, code int, line any) int {
+	if encodeJSON(w, line) != nil {
 		fmt.Fprintln(w, `{"lavagna":"error","message":"result encoding failed"}`)
 		return exitError
 	}
@@ -60,10 +67,32 @@ func result(w io.Writer, code int, line any) int {
 }
 
 func invalid(w io.Writer, errs ...string) int {
+	const maxErrors = 8
+	more := max(0, len(errs)-maxErrors)
+	shown := make([]string, 0, min(len(errs), maxErrors))
+	for _, err := range errs[:min(len(errs), maxErrors)] {
+		// Bound diagnostics, not valid feedback. Preserve the location and fix first.
+		original := err
+		if len(err) > 380 {
+			err = err[:380]
+			for !utf8.ValidString(err) {
+				err = err[:len(err)-1]
+			}
+		}
+		for encodedLen(err) > 380 {
+			_, size := utf8.DecodeLastRuneInString(err)
+			err = err[:len(err)-size]
+		}
+		if err != original {
+			err += "..."
+		}
+		shown = append(shown, err)
+	}
 	return result(w, exitInvalid, struct {
 		Lavagna string   `json:"lavagna"`
 		Errors  []string `json:"errors"`
-	}{"invalid", errs})
+		More    int      `json:"more,omitempty"`
+	}{"invalid", shown, more})
 }
 
 func failure(w io.Writer, err error) int {
@@ -91,38 +120,38 @@ func busy(w io.Writer, c conversation.Conversation) int {
 
 func Usage(out io.Writer, usage string) int { return invalid(out, usage) }
 
-func Check(getenv func(string) string, out, errw io.Writer) int {
+func Check(getenv func(string) string, out io.Writer) int {
 	c, err := conversation.FromEnv(getenv)
 	if err != nil {
-		fmt.Fprintln(errw, "lavagna:", err)
-		return exitInvalid
+		return invalid(out, err.Error())
 	}
 	conversation.Sweep(c, time.Now())
-	fmt.Fprintln(out, "lavagna: conversation", c.Key)
+	return result(out, exitOK, struct {
+		Lavagna string `json:"lavagna"`
+	}{"ready"})
+}
+
+func RoundHelp(out io.Writer, topic string) int {
+	switch topic {
+	case "":
+		io.WriteString(out, round.Help)
+	case "grammar":
+		io.WriteString(out, round.Grammar)
+	default:
+		return invalid(out, "unknown help topic; use: lavagna round --help [grammar]")
+	}
 	return exitOK
 }
 
-func RoundHelp(out io.Writer) int {
-	io.WriteString(out, round.Help)
-	return exitOK
-}
+var reuseID = regexp.MustCompile(`^r[1-9][0-9]{0,18}$`)
 
-func Round(getenv func(string) string, src io.Reader, dir string, out, errw io.Writer) int {
+func Round(getenv func(string) string, src io.Reader, dir, reuse string, out, errw io.Writer) int {
 	c, err := conversation.FromEnv(getenv)
 	if err != nil {
 		return invalid(out, err.Error())
 	}
 	conversation.Sweep(c, time.Now())
 	in, files, errs := input(src, dir)
-	if errs != nil {
-		return invalid(out, errs...)
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return failure(out, err)
-	}
-	in.Excerpt = round.Repository(wd)
-	r, errs := round.Parse(in)
 	if errs != nil {
 		return invalid(out, errs...)
 	}
@@ -139,13 +168,59 @@ func Round(getenv func(string) string, src io.Reader, dir string, out, errw io.W
 	if err != nil {
 		return failure(out, err)
 	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return failure(out, err)
+	}
+	var r round.Round
+	if reuse != "" {
+		if !reuseID.MatchString(reuse) {
+			return invalid(out, "invalid reuse round")
+		}
+		if dir != "" {
+			return invalid(out, "reused rounds accept decisions-only text, not a directory")
+		}
+		baseData, err := lease.ReadArtifact("round", reuse, round.MaxSnapshotBytes)
+		if err != nil {
+			return invalid(out, "reuse round not found")
+		}
+		base, baseFiles, err := round.DecodeSnapshot(baseData)
+		if err != nil {
+			return failure(out, errors.New("stored round snapshot is invalid"))
+		}
+		decisions, parseErrs := round.Parse(round.Input{Source: in.Source, Budget: round.MaxBytes, Excerpt: round.Repository(wd)})
+		if parseErrs != nil {
+			return invalid(out, parseErrs...)
+		}
+		r, err = round.Reuse(base, decisions)
+		if err != nil {
+			return invalid(out, err.Error())
+		}
+		files = baseFiles
+	} else {
+		in.Excerpt = round.Repository(wd)
+		r, errs = round.Parse(in)
+		if errs != nil {
+			return invalid(out, errs...)
+		}
+	}
+	snapshot, err := round.EncodeSnapshot(r, files)
+	if err != nil {
+		return invalid(out, err.Error())
+	}
 	ln, origin, fresh, err := bind(c, st.Origin)
 	if err != nil {
 		return failure(out, err)
 	}
+	defer ln.Close()
 	st = st.Step(conversation.RoundStarted{Origin: origin, Anchors: r.Anchors})
 	if err := lease.Save(st); err != nil {
 		return failure(out, err)
+	}
+	if r.Content != "" {
+		if err := lease.StoreArtifact("round", st.Live, snapshot); err != nil {
+			return failure(out, err)
+		}
 	}
 
 	spec := roundSpec{
@@ -157,20 +232,45 @@ func Round(getenv func(string) string, src io.Reader, dir string, out, errw io.W
 		srv.anchors[anchor] = true
 	}
 	h := listen(srv, ln)
-	fmt.Fprintf(out, "lavagna · round %s · %s · Esc per interrompere\n", st.Live, origin.URL())
+	defer h.stop()
+	fmt.Fprintf(errw, "lavagna · round %s · %s · Esc per interrompere\n", st.Live, origin.URL())
 	go reveal(getenv, errw, origin.URL(), fresh, srv.seen)
 
 	got := <-srv.accepted
 	st = st.Step(conversation.BatchAccepted{Submission: got.submission})
 	record(errw, lease, st)
-	code := result(out, exitOK, got.line())
+	line := got.line()
+	var full bytes.Buffer
+	if err := encodeJSON(&full, line); err != nil {
+		return failure(out, err)
+	}
+	encoded := bytes.TrimSuffix(full.Bytes(), []byte("\n"))
+	if err := lease.StoreArtifact("feedback", got.submission, encoded); err != nil {
+		return failure(out, err)
+	}
+	var response any = line
+	if len(encoded) > 2048 {
+		deferred := struct {
+			Lavagna    string `json:"lavagna"`
+			Round      string `json:"round"`
+			Submission string `json:"submission"`
+			Deferred   bool   `json:"deferred"`
+			Counts     struct {
+				Choices  int `json:"choices"`
+				Comments int `json:"comments"`
+				Images   int `json:"images"`
+			} `json:"counts"`
+		}{Lavagna: "feedback", Round: line.Round, Submission: line.Submission, Deferred: true}
+		deferred.Counts.Choices, deferred.Counts.Comments, deferred.Counts.Images = len(line.Choices), len(line.Comments), len(line.Images)
+		response = deferred
+	}
+	code := result(out, exitOK, response)
 	if code != exitOK {
 		return code
 	}
 	st = st.Step(conversation.BatchReturned{})
 	record(errw, lease, st)
 	srv.returned(handOver(getenv, errw, c.Relay(), ln, spec, got.submission))
-	h.stop()
 	return code
 }
 
@@ -234,10 +334,17 @@ func showClosed(c conversation.Conversation, origin conversation.Origin) string 
 	srv := newClose(origin)
 	h := listen(srv, ln)
 	defer h.stop()
+	timer := time.NewTimer(closeGrace)
+	defer timer.Stop()
 	select {
 	case <-srv.seen:
-		return "shown"
-	case <-time.After(closeGrace):
+		select {
+		case <-srv.cleaned:
+			return "cleaned"
+		case <-timer.C:
+			return "unconfirmed"
+		}
+	case <-timer.C:
 		return "not-connected"
 	}
 }

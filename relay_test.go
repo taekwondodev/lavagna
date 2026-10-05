@@ -301,7 +301,7 @@ func TestRelayStopsWhenTheHarnessQuitsMidTurn(t *testing.T) {
 	// Job control models the harness: a persistent parent outside the call's
 	// process group. The shell survives the call, then quits mid-turn.
 	cmd := exec.Command("bash", "-c", `set -m
-"$1" round < "$2" &
+"$1" round < "$2" 2>&1 &
 child=$!
 wait "$child" || exit
 printf '%s' "$child" > "$3"
@@ -474,7 +474,7 @@ func TestCloseTakesTheOriginFromTheRelay(t *testing.T) {
 	groupAlive(t, c)
 
 	lines, code := run(t, environ, "", "close")
-	if code != 0 || last(lines) != `{"lavagna":"closed","page":"shown"}` {
+	if code != 0 || last(lines) != `{"lavagna":"closed","page":"unconfirmed"}` {
 		t.Fatalf("close: exit %d, output %q", code, lines)
 	}
 	groupGone(t, c)

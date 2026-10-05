@@ -293,6 +293,7 @@ func TestPageShowsTheClosingPage(t *testing.T) {
 	c := startRound(t, environ, richRound)
 	p := cdptest.Start(t).Open(c.url, 1280, 900)
 	settled(t, p)
+	p.MustEval(`document.querySelector('#comment-text').value = 'Private closing feedback'; document.querySelector('#comment-text').dispatchEvent(new Event('input'))`, nil)
 	p.Click(`input[value="db"]`)
 	p.Click("#send-feedback")
 	if _, code := c.finish(); code != 0 {
@@ -301,7 +302,7 @@ func TestPageShowsTheClosingPage(t *testing.T) {
 	p.WaitFor(`document.querySelector('#delivery').textContent === '` + blindText + `' || document.querySelector('#delivery').textContent === '` + acceptedText + `'`)
 
 	lines, code := run(t, environ, "", "close")
-	if code != 0 || last(lines) != `{"lavagna":"closed","page":"shown"}` {
+	if code != 0 || last(lines) != `{"lavagna":"closed","page":"cleaned"}` {
 		t.Fatalf("close: exit %d, output %q", code, lines)
 	}
 	p.WaitFor(`!document.querySelector('#closed').hidden && document.querySelector('#feedback-form').hidden`)
@@ -311,16 +312,13 @@ func TestPageShowsTheClosingPage(t *testing.T) {
 	if got := text(p, "#closed"); !strings.Contains(got, "Puoi chiudere questa scheda.") || text(p, "#turn") != "Concluso" {
 		t.Fatalf("closing page %q, turn %q", got, text(p, "#turn"))
 	}
-	var left struct{ Worker, Caches, Records int }
-	for range 40 {
-		p.MustEval(`(async () => ({Worker: (await navigator.serviceWorker.getRegistrations()).length, Caches: (await caches.keys()).length, Records: Object.keys(localStorage).filter(k => k.startsWith('lavagna:')).length}))()`, &left)
-		if left.Worker+left.Caches+left.Records == 0 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
+	var left struct {
+		Worker, Caches, Records, Content int
+		Editor                           string
 	}
-	if left.Worker+left.Caches+left.Records != 0 {
-		t.Fatalf("the closed conversation left page state behind: %+v", left)
+	p.MustEval(`(async () => ({Worker: (await navigator.serviceWorker.getRegistrations()).length, Caches: (await caches.keys()).length, Records: Object.keys(localStorage).filter(k => k.startsWith('lavagna:')).length, Content: document.querySelectorAll('#document > *, #comments > *, #sent-list > *, #review-list > *, #images > *').length, Editor: document.querySelector('#comment-text').value}))()`, &left)
+	if left.Worker+left.Caches+left.Records+left.Content != 0 || left.Editor != "" {
+		t.Fatalf("acknowledged cleanup left page state behind: %+v", left)
 	}
 }
 

@@ -53,6 +53,44 @@ func sendBatch(submission, comment string) string {
 	return fmt.Sprintf(`{"round":"r1","token":"tok-1","submission":%q,"choices":{"storage":"db"},"comments":[{"text":%s}]}`, submission, c)
 }
 
+func TestCloseAcknowledgementRequiresOriginAndUnpredictableToken(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := conversation.Origin{Port: ln.Addr().(*net.TCPAddr).Port, Cap: "cap-a"}
+	s := newClose(o)
+	hs := &http.Server{Handler: s.handler()}
+	go hs.Serve(ln)
+	t.Cleanup(func() { hs.Close() })
+	post := func(origin, token string) int {
+		body, _ := json.Marshal(map[string]string{"token": token})
+		req, _ := http.NewRequest(http.MethodPost, o.URL()+"close-ack", strings.NewReader(string(body)))
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := post("http://"+o.Host(), "wrong"); got != http.StatusForbidden {
+		t.Fatalf("wrong token status %d", got)
+	}
+	if got := post("http://attacker.invalid", s.closeToken); got != http.StatusForbidden {
+		t.Fatalf("wrong origin status %d", got)
+	}
+	if got := post("http://"+o.Host(), s.closeToken); got != http.StatusNoContent {
+		t.Fatalf("valid acknowledgement status %d", got)
+	}
+	select {
+	case <-s.cleaned:
+	default:
+		t.Fatal("valid acknowledgement was not recorded")
+	}
+}
+
 func TestSendResolvesADuplicateOnce(t *testing.T) {
 	s, post := serve(t)
 	for _, step := range []struct {

@@ -21,6 +21,8 @@ The sandbox and CSP restrict storage, popups, form submission, navigation and re
 
 The CLI reads round files under bounded path rules. Code excerpts are read once from regular files under the working directory's Git root and included in the rendered frame. A round script cannot request arbitrary host files through this mechanism, but it can read content already included in its own frame.
 
+Rendered content snapshots, uploaded screenshots and exact feedback are retained in the private conversation directory for reuse and selective CLI reading. Feedback artifacts are not HTTP resources. They are scoped to the current conversation, deleted by `close`, or swept after one day of inactivity once their lease can be acquired. Source round directories are not deleted. Browser storage is a separate copy: `close` can confirm its cleanup only when a connected page acknowledges it. A disconnected browser may retain its offline copy. File permissions and deletion are not secure erasure and do not remove copies already present in a harness transcript.
+
 ## Accepted residual risk: WebRTC
 
 Chrome permits WebRTC traffic despite the frame's CSP, including `connect-src 'none'`. A round script can initiate UDP/STUN traffic to a reachable destination. JavaScript-level blocking is not a reliable boundary; the implementation investigation bypassed it through alternate document and frame contexts.

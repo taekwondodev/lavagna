@@ -123,6 +123,9 @@ type server struct {
 	seenOnce    sync.Once
 	done        chan struct{}
 	stopOnce    sync.Once
+	closeToken  string
+	cleaned     chan struct{}
+	cleanOnce   sync.Once
 }
 
 type event struct {
@@ -193,7 +196,12 @@ func (s *server) loadUploads() {
 	}
 }
 
-func newClose(o conversation.Origin) *server { return newServer(o) }
+func newClose(o conversation.Origin) *server {
+	s := newServer(o)
+	s.closeToken = conversation.Secret(32)
+	s.cleaned = make(chan struct{})
+	return s
+}
 
 func newServer(o conversation.Origin) *server {
 	return &server{
@@ -255,6 +263,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /s/{cap}/sw.js", s.capable(s.worker))
 	mux.HandleFunc("GET /s/{cap}/assets/{file...}", s.capable(s.asset))
 	mux.HandleFunc("GET /s/{cap}/events", s.capable(s.events))
+	mux.HandleFunc("POST /s/{cap}/close-ack", s.capable(s.closeAck))
 	mux.HandleFunc("POST /s/{cap}/send", s.send)
 	mux.HandleFunc("GET /f/{key}/{file...}", s.framed)
 	mux.HandleFunc("POST /s/{cap}/images", s.capable(s.attachImage))
@@ -346,7 +355,7 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	ch := make(chan event, 8)
 	s.mu.Lock()
 	s.streams[ch] = struct{}{}
-	first := []event{{"closed", struct{}{}}}
+	first := []event{{"closed", map[string]string{"token": s.closeToken}}}
 	if s.view != nil {
 		first = []event{{"round", s.view}}
 		if s.stage != pending {
@@ -391,6 +400,22 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+func (s *server) closeAck(w http.ResponseWriter, r *http.Request) {
+	if s.closeToken == "" || r.Header.Get("Origin") != "http://"+s.origin.Host() {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil || !same(body.Token, s.closeToken) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	s.cleanOnce.Do(func() { close(s.cleaned) })
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeEvent(w io.Writer, e event) error {
@@ -531,9 +556,7 @@ func (s *server) validate(in sendBody) (batch, int, string) {
 
 func encodedLen(v any) int {
 	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.Encode(v)
+	encodeJSON(&buf, v)
 	return buf.Len() - len("\n")
 }
 

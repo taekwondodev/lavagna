@@ -94,8 +94,16 @@ func (c *call) status(first string) {
 
 func spawn(t *testing.T, environ []string, src string, args ...string) *call {
 	t.Helper()
-	cmd := command(environ, src, args...)
+	return spawnCommand(t, command(environ, src, args...))
+}
+
+func spawnCommand(t *testing.T, cmd *exec.Cmd) *call {
+	t.Helper()
 	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,11 +112,17 @@ func spawn(t *testing.T, environ []string, src string, args ...string) *call {
 	}
 	c := &call{t: t, cmd: cmd, out: bufio.NewReader(stdout)}
 	t.Cleanup(c.esc)
-	first, err := c.out.ReadString('\n')
+	status := bufio.NewReader(stderr)
+	first, err := status.ReadString('\n')
+	if errors.Is(err, io.EOF) && first == "" {
+		// A refused round returns only a JSON outcome on stdout.
+		first, err = c.out.ReadString('\n')
+	}
 	if err != nil {
 		t.Fatalf("no first line: %v", err)
 	}
 	c.status(first)
+	go io.Copy(io.Discard, status)
 	return c
 }
 
@@ -246,7 +260,7 @@ func TestRoundRefusesInvalidInputBeforeServing(t *testing.T) {
 		t.Fatalf("exit %d, output %q", code, lines)
 	}
 	lines, code = run(t, env(t, "LAVAGNA_SESSION=a"), "", "round", "uno", "due")
-	if code != 2 || last(lines) != `{"lavagna":"invalid","errors":["usage: lavagna check | round [DIR | --help] | close"]}` {
+	if code != 2 || last(lines) != `{"lavagna":"invalid","errors":["usage: lavagna check | round [--reuse rN] [DIR] | round --help [grammar] | feedback SUBMISSION [--all | --comment N] [--offset N] | feedback --help | close"]}` {
 		t.Fatalf("exit %d, output %q", code, lines)
 	}
 }
@@ -256,9 +270,10 @@ func TestRoundDirRefusesBoundsBeforeServing(t *testing.T) {
 		files map[string]string
 		want  string
 	}{
-		"33 files":     {map[string]string{"round.md": decision}, `{"lavagna":"invalid","errors":["round: more than 32 files"]}`},
-		"4 MiB":        {map[string]string{"round.md": decision, "grande.png": strings.Repeat("x", 4<<20)}, fmt.Sprintf(`{"lavagna":"invalid","errors":["round: %d bytes exceed the 4194304 byte bound"]}`, 4<<20+len(decision))},
-		"missing file": {map[string]string{"round.md": "# Capire\n<img src=\"manca.png\" alt=\"\">\n"}, `{"lavagna":"invalid","errors":["round.md:2: src=\"manca.png\" is not a file of the round directory or a data: image"]}`},
+		"rendered snapshot": {map[string]string{"round.md": "# Capire\n" + strings.Repeat("&", 1<<20)}, `{"lavagna":"invalid","errors":["rendered content snapshot exceeds 6 MiB"]}`},
+		"33 files":          {map[string]string{"round.md": decision}, `{"lavagna":"invalid","errors":["round: more than 32 files"]}`},
+		"4 MiB":             {map[string]string{"round.md": decision, "grande.png": strings.Repeat("x", 4<<20)}, fmt.Sprintf(`{"lavagna":"invalid","errors":["round: %d bytes exceed the 4194304 byte bound"]}`, 4<<20+len(decision))},
+		"missing file":      {map[string]string{"round.md": "# Capire\n<img src=\"manca.png\" alt=\"\">\n"}, `{"lavagna":"invalid","errors":["round.md:2: src=\"manca.png\" is not a file of the round directory or a data: image"]}`},
 	}
 	for i := range 32 {
 		cases["33 files"].files[fmt.Sprintf("%02d.css", i)] = ""
@@ -285,7 +300,7 @@ func TestRoundDirRefusesBoundsBeforeServing(t *testing.T) {
 }
 
 func TestRoundHelpPrintsTheGrammarAndAnExample(t *testing.T) {
-	cmd := exec.Command(binary, "round", "--help")
+	cmd := exec.Command(binary, "round", "--help", "grammar")
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)
@@ -507,7 +522,7 @@ func TestAnyStartSweepsIdleConversations(t *testing.T) {
 		return dir
 	}
 	idle := conversationDir("idle", 8*24*time.Hour)
-	recent := conversationDir("recent", 6*24*time.Hour)
+	recent := conversationDir("recent", 23*time.Hour)
 	cmd := exec.Command(binary, "check")
 	cmd.Env = environ("other")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -517,6 +532,6 @@ func TestAnyStartSweepsIdleConversations(t *testing.T) {
 		t.Errorf("a conversation untouched for 8 days survived a start: %v", err)
 	}
 	if _, err := os.Stat(recent); err != nil {
-		t.Errorf("a conversation untouched for 6 days was removed: %v", err)
+		t.Errorf("a conversation untouched for 23 hours was removed: %v", err)
 	}
 }
