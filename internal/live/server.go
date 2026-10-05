@@ -52,10 +52,13 @@ const (
 	pending stage = iota
 	accepted
 	returned
+	received
+	unread
+	ended
 )
 
 func (s stage) MarshalText() ([]byte, error) {
-	return []byte([...]string{"", "accepted", "returned"}[s]), nil
+	return []byte([...]string{"", "accepted", "returned", "received", "unread", "ended"}[s]), nil
 }
 
 type view struct {
@@ -77,8 +80,9 @@ type frame struct {
 }
 
 type receipt struct {
-	Submission string `json:"submission"`
-	Stage      stage  `json:"stage"`
+	Submission  string `json:"submission"`
+	Stage       stage  `json:"stage"`
+	Unwitnessed bool   `json:"unwitnessed,omitempty"`
 }
 
 type batch struct {
@@ -100,22 +104,23 @@ type comment struct {
 }
 
 type server struct {
-	origin   conversation.Origin
-	mu       sync.Mutex
-	gate     gate
-	view     *view
-	frame    *frame
-	options  map[string]map[string]bool
-	anchors  map[string]bool
-	imageDir string
-	uploads  map[string]upload
-	stage    stage
-	streams  map[chan event]struct{}
-	accepted chan batch
-	seen     chan struct{}
-	seenOnce sync.Once
-	done     chan struct{}
-	stopOnce sync.Once
+	origin      conversation.Origin
+	mu          sync.Mutex
+	gate        gate
+	view        *view
+	frame       *frame
+	options     map[string]map[string]bool
+	anchors     map[string]bool
+	imageDir    string
+	uploads     map[string]upload
+	stage       stage
+	unwitnessed bool
+	streams     map[chan event]struct{}
+	accepted    chan batch
+	seen        chan struct{}
+	seenOnce    sync.Once
+	done        chan struct{}
+	stopOnce    sync.Once
 }
 
 type event struct {
@@ -123,16 +128,28 @@ type event struct {
 	data any
 }
 
-func newRound(o conversation.Origin, id, token string, r round.Round, files []round.File, previous *conversation.Outcome, imageDir string) *server {
-	s := newServer(o)
-	s.view = &view{ID: id, Token: token, Limit: maxCommentBytes, ImageLimit: maxImages, ImageBytes: maxImageBytes, Previous: previous, Round: r}
-	s.imageDir = imageDir
+type roundSpec struct {
+	Origin   conversation.Origin
+	ID       string
+	Token    string
+	FrameKey string
+	Round    round.Round
+	Files    []round.File
+	Previous *conversation.Outcome
+	Images   string
+}
+
+func newRound(spec roundSpec) *server {
+	r := spec.Round
+	s := newServer(spec.Origin)
+	s.view = &view{ID: spec.ID, Token: spec.Token, Limit: maxCommentBytes, ImageLimit: maxImages, ImageBytes: maxImageBytes, Previous: spec.Previous, Round: r}
+	s.imageDir = spec.Images
 	s.loadUploads()
-	s.gate = gate{cap: o.Cap, round: id, token: token}
+	s.gate = gate{cap: spec.Origin.Cap, round: spec.ID, token: spec.Token}
 	if r.Content != "" {
-		f := &frame{key: conversation.Secret(16), files: map[string]round.File{}}
+		f := &frame{key: spec.FrameKey, files: map[string]round.File{}}
 		var names []string
-		for _, file := range files {
+		for _, file := range spec.Files {
 			f.files[file.Name] = file
 			names = append(names, file.Name)
 		}
@@ -189,16 +206,37 @@ func newServer(o conversation.Origin) *server {
 	}
 }
 
-func (s *server) returned() {
+func (s *server) returned(witnessed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stage = returned
+	s.unwitnessed = !witnessed
 	s.broadcast(event{"receipt", s.receipt()})
+}
+
+func (s *server) advance(st stage) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stage = max(s.stage, st)
+	s.broadcast(event{"receipt", s.receipt()})
+}
+
+func (s *server) unwitness() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.unwitnessed = true
+	s.broadcast(event{"receipt", s.receipt()})
+}
+
+func (s *server) watched() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.streams) > 0
 }
 
 func (s *server) stop() { s.stopOnce.Do(func() { close(s.done) }) }
 
-func (s *server) receipt() receipt { return receipt{s.gate.admitted, s.stage} }
+func (s *server) receipt() receipt { return receipt{s.gate.admitted, s.stage, s.unwitnessed} }
 
 func (s *server) broadcast(e event) {
 	for ch := range s.streams {

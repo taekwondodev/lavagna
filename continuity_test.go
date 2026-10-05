@@ -156,7 +156,7 @@ func TestPageReloadBetweenRoundsUsesThePrecache(t *testing.T) {
 		SendHidden     bool
 	}
 	p.MustEval(`({Sent: document.querySelector('#sent-area').innerText, Delivery: document.querySelector('#delivery').textContent, SendHidden: document.querySelector('#send-feedback').hidden})`, &restored)
-	if !strings.Contains(restored.Sent, "Un database locale") || !strings.Contains(restored.Sent, "Inviato prima della pausa") || restored.Delivery != returnedText || !restored.SendHidden {
+	if !strings.Contains(restored.Sent, "Un database locale") || !strings.Contains(restored.Sent, "Inviato prima della pausa") || restored.Delivery != blindText || !restored.SendHidden {
 		t.Fatalf("reloaded with nobody on the port: %+v", restored)
 	}
 

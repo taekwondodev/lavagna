@@ -19,6 +19,8 @@ func main() {
 		os.Exit(live.RoundHelp(os.Stdout))
 	case len(args) == 2 && args[0] == "round" && !strings.HasPrefix(args[1], "-"):
 		os.Exit(live.Round(os.Getenv, os.Stdin, args[1], os.Stdout, os.Stderr))
+	case len(args) == 1 && args[0] == "relay":
+		os.Exit(live.Relay(os.Stderr))
 	case len(args) == 1 && args[0] == "close":
 		os.Exit(live.Close(os.Getenv, os.Stdout))
 	default:

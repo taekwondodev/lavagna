@@ -42,7 +42,12 @@ func TestMain(m *testing.M) {
 }
 
 func env(t *testing.T, vars ...string) []string {
-	return append([]string{"HOME=" + t.TempDir(), "PATH=" + os.Getenv("PATH"), "BROWSER=true"}, vars...)
+	home, err := os.MkdirTemp("/tmp", "lavagna-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
+	return append([]string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "BROWSER=true"}, vars...)
 }
 
 func run(t *testing.T, environ []string, stdin string, args ...string) (lines []string, code int) {
