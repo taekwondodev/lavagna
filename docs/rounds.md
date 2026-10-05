@@ -28,7 +28,7 @@ An excerpt reads `path:start-end` once, from a regular file under the Git root o
 
 ## Collect feedback
 
-The user can choose options, attach comments to authored anchors and paste or drop screenshots into the feedback area. Picking an anchor does not activate the prototype's controls, including on a double click. Earlier anchors remain valid in the same conversation so interrupted feedback can be resent.
+The user can choose one option per question, click the selected option again to clear it, attach comments to authored anchors and paste or drop screenshots into the feedback area. Choices are optional; a cleared question is omitted from the submitted choices. Picking an anchor does not activate the prototype's controls, including on a double click. Earlier anchors remain valid in the same conversation so interrupted feedback can be resent.
 
 PNG, JPEG, WebP and GIF screenshots are accepted by file signature, at most 10 MiB each and 8 per batch. Lavagna accepts uploaded bytes, never a URL to fetch or a host path to read. Screenshots remain until `close` or the 7-day sweep, including across interrupted rounds.
 
