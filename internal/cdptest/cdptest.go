@@ -178,6 +178,7 @@ func (b *Browser) must(into any, session, method string, params any) {
 type Page struct {
 	t       testing.TB
 	b       *Browser
+	target  string
 	session string
 }
 
@@ -191,13 +192,38 @@ func (b *Browser) Open(url string, width, height int) *Page {
 		SessionID string `json:"sessionId"`
 	}
 	b.must(&attached, "", "Target.attachToTarget", map[string]any{"targetId": target.TargetID, "flatten": true})
-	p := &Page{t: b.t, b: b, session: attached.SessionID}
+	p := &Page{t: b.t, b: b, target: target.TargetID, session: attached.SessionID}
 	b.must(nil, p.session, "Target.setAutoAttach",
 		map[string]any{"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true})
 	b.must(nil, p.session, "Emulation.setDeviceMetricsOverride",
 		map[string]any{"width": width, "height": height, "deviceScaleFactor": 1, "mobile": false})
 	b.must(nil, p.session, "Page.navigate", map[string]any{"url": url})
 	return p
+}
+
+func (p *Page) Close() {
+	p.t.Helper()
+	p.b.must(nil, "", "Target.closeTarget", map[string]any{"targetId": p.target})
+	deadline := time.Now().Add(callTimeout)
+	for {
+		var targets struct {
+			TargetInfos []struct {
+				TargetID string `json:"targetId"`
+			} `json:"targetInfos"`
+		}
+		p.b.must(&targets, "", "Target.getTargets", map[string]any{})
+		open := false
+		for _, info := range targets.TargetInfos {
+			open = open || info.TargetID == p.target
+		}
+		if !open {
+			return
+		}
+		if time.Now().After(deadline) {
+			p.t.Fatalf("target %s did not close", p.target)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func (p *Page) Reload() {
@@ -270,6 +296,7 @@ func (p *Page) Click(selector string) {
 
 func (p *Page) ClickTimes(selector string, n int) {
 	p.t.Helper()
+	p.b.must(nil, p.session, "Page.bringToFront", map[string]any{})
 	var pt point
 	p.MustEval(fmt.Sprintf(`(async () => {
 		const el = document.querySelector(%q);
@@ -376,6 +403,7 @@ func (f *Frame) WaitFor(expr string) {
 
 func (f *Frame) Click(selector string) {
 	f.p.t.Helper()
+	f.p.b.must(nil, f.p.session, "Page.bringToFront", map[string]any{})
 	var r struct{ X, Y, Width, Height float64 }
 	f.MustEval(fmt.Sprintf(`(() => {
 		const r = document.querySelector(%q).getBoundingClientRect();

@@ -15,6 +15,8 @@ Lavagna's shell owns decision controls, the feedback editor, send, the conversat
 
 The frame has its own per-round resource key, not the shell capability or feedback token. The shell accepts frame messages only from that frame's window; anchor selection must name an anchor defined by the round. The feedback endpoint requires POST, the shell's Origin and the round token. Round scripts cannot read the shell DOM or its editor, obtain its token through that DOM, or submit valid feedback on the user's behalf.
 
+For offline reloads, the shell caches the rendered frame and its named resources and reconstructs an in-memory blob document. It retains `sandbox="allow-scripts"`, embeds resource bytes as data URLs, and pins the copied scripts with CSP hashes and integrity attributes. The shell permits these local snapshot transports; the frame still cannot read the shell or make HTTP, fetch or WebSocket connections. This does not add a script opt-in or change the accepted WebRTC behavior.
+
 The sandbox and CSP restrict storage, popups, form submission, navigation and resource loading. Round resources and `data:` images are allowed; external HTTP resource loads and fetch, beacon and WebSocket connections are blocked by the policy. This is not a guarantee that all network traffic is blocked: WebRTC is an accepted exception below. The raw HTML resource check is a parser lint, not the isolation boundary; browser enforcement is the boundary.
 
 The CLI reads round files under bounded path rules. Code excerpts are read once from regular files under the working directory's Git root and included in the rendered frame. A round script cannot request arbitrary host files through this mechanism, but it can read content already included in its own frame.

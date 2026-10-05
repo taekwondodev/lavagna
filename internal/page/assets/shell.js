@@ -4,6 +4,8 @@ const TEXT = {
   accepted: 'Ricevuto da lavagna · non ancora consegnato all’agente',
   returned: 'Consegnato al terminale',
   detached: 'Questa scheda non è più collegata alla conversazione',
+  uncertain: 'Consegna non riuscita: l’agente è stato interrotto. Il tuo invio è conservato, puoi reinviarlo.',
+  carried: 'Bozza ripresa dal round precedente: rivedila prima di inviare.',
 };
 const DRAFT_LEAD = 'Domande, dubbi e richieste: tutto in un solo invio.';
 const SENT_LEAD = 'La pagina si aggiorna da sola al prossimo round.';
@@ -18,6 +20,8 @@ const PHASES = {
   reconnecting: { turn: 'Riconnessione a lavagna…', panel: 'draft' },
   sending: { turn: 'Invio in corso…', panel: 'draft' },
   inactive: { turn: 'Round non più attivo', panel: 'draft' },
+  uncertain: { turn: 'Consegna non riuscita', panel: 'draft' },
+  unconfirmed: { turn: 'Riconnessione a lavagna…', panel: 'sent' },
   accepted: { turn: 'Inviato', panel: 'sent', delivery: TEXT.accepted, lead: 'In consegna all’agente.' },
   returned: { turn: 'Inviato · consegnato al terminale', panel: 'sent', delivery: TEXT.returned },
   waiting: { turn: 'In attesa del prossimo round', panel: 'sent', delivery: TEXT.returned },
@@ -25,7 +29,9 @@ const PHASES = {
   closed: { turn: 'Concluso', panel: 'draft' },
 };
 const STAGES = ['', 'accepted', 'returned'];
-const DRAFT_PREFIX = 'lavagna:draft:';
+const RECORD_KEY = 'lavagna:' + location.pathname;
+const CACHE_NAME = 'lavagna:' + location.pathname;
+const RETRY_MS = 250;
 const COUNTER_FROM = 0.75;
 const MAX_FRAME_HEIGHT = 100000;
 const LINE_SEPARATORS = new RegExp('[' + String.fromCharCode(0x2028, 0x2029) + ']', 'g');
@@ -47,35 +53,74 @@ let feedbackVisible = false;
 let refusal = '';
 let picking = false;
 let chapterTops = {};
+let snapshotURL = null;
+let acceptedWhileLive = null;
+let leaving = false;
 
-function storageKey() { return DRAFT_PREFIX + view.token; }
+function blank() {
+  return { choices: {}, comments: [], editor: '', anchor: null, editing: null, previous: null, next: 0, submission: null, stage: '', sent: null, uncertain: false, carried: false };
+}
 
-function load() {
+function stored() {
   try {
-    const stored = JSON.parse(localStorage.getItem(storageKey()));
-    if (stored) return stored;
+    const record = JSON.parse(localStorage.getItem(RECORD_KEY));
+    if (record && record.view && record.draft) return record;
   } catch { }
-  return { choices: {}, comments: [], editor: '', anchor: null, editing: null, previous: null, next: 0, submission: null, stage: '', sent: null };
+  return null;
+}
+
+function roundNumber(round) { return Number(round.replace(/^r/, '')); }
+
+function withComments(target, comments) {
+  target.comments = comments.map((comment, index) => ({ id: index + 1, ...comment }));
+  target.next = comments.length;
+}
+
+function leftover(old, previous) {
+  const outcome = previous && old.submission && previous.submission === old.submission ? previous.end : null;
+  if (old.stage === 'returned' || outcome === 'returned') return null;
+  if (old.stage === 'accepted') return outcome === 'uncertain' ? resend(old.sent) : null;
+  const comments = old.comments.map(comment => ({ text: comment.text, anchor: comment.anchor }));
+  const index = old.comments.findIndex(comment => comment.id === old.editing);
+  if (index !== -1 && old.editor.trim()) comments[index] = { text: old.editor.trim(), anchor: old.anchor };
+  const editor = index === -1 ? { text: old.editor, anchor: old.anchor } : old.previous || { text: '', anchor: null };
+  return { comments, editor: editor.text, anchor: editor.anchor, choices: old.choices, uncertain: old.uncertain || outcome === 'uncertain' };
+}
+
+function resend(batch) {
+  return { comments: batch.comments, editor: '', anchor: null, choices: batch.choices, uncertain: true };
+}
+
+function carry(old, next) {
+  const result = blank();
+  const batch = leftover(old, next.previous);
+  if (!batch) return result;
+  for (const question of next.questions) {
+    const option = batch.choices[question.id];
+    if (option && question.options.includes(option)) result.choices[question.id] = option;
+  }
+  withComments(result, batch.comments);
+  result.editor = batch.editor;
+  result.anchor = batch.anchor;
+  result.uncertain = batch.uncertain;
+  result.carried = batch.comments.length > 0 || Boolean(batch.editor.trim()) || Object.keys(result.choices).length > 0;
+  return result;
 }
 
 function save() {
   if (!view || !draft) return;
-  if (draft.stage === 'returned') {
-    forget();
-    return;
-  }
-  try { localStorage.setItem(storageKey(), JSON.stringify(draft)); } catch { }
+  try {
+    const record = stored();
+    if (record && record.view.token !== view.token && roundNumber(record.view.round) > roundNumber(view.round)) return;
+    localStorage.setItem(RECORD_KEY, JSON.stringify({ view, draft }));
+  } catch { }
 }
 
 function forget() {
-  try { localStorage.removeItem(storageKey()); } catch { }
-}
-
-function forgetAll() {
+  try { localStorage.removeItem(RECORD_KEY); } catch { }
   try {
-    for (const key of Object.keys(localStorage)) {
-      if (key.startsWith(DRAFT_PREFIX)) localStorage.removeItem(key);
-    }
+    navigator.serviceWorker.getRegistration().then(registration => registration && registration.unregister()).catch(() => { });
+    caches.delete(CACHE_NAME).catch(() => { });
   } catch { }
 }
 
@@ -116,9 +161,38 @@ function sent() { return draft.stage !== ''; }
 function frozen() { return sent() || sending || detached || inactive; }
 
 function advance(stage) {
+  if (draft.uncertain) return;
   if (STAGES.indexOf(stage) > STAGES.indexOf(draft.stage)) {
     draft.stage = stage;
+    draft.carried = false;
     refusal = '';
+  }
+}
+
+function noteAcceptedWhileLive() {
+  if (live && draft && draft.stage === 'accepted') acceptedWhileLive = draft.submission;
+}
+
+function markUncertain() {
+  if (!draft || draft.stage !== 'accepted' || draft.submission !== acceptedWhileLive) return;
+  const batch = resend(draft.sent);
+  draft.stage = '';
+  draft.uncertain = batch.uncertain;
+  draft.choices = { ...batch.choices };
+  withComments(draft, batch.comments);
+  draft.anchor = batch.anchor;
+  draft.editing = null;
+  draft.previous = null;
+  draft.editor = batch.editor;
+  draft.sent = null;
+  editor.value = '';
+  syncChoices();
+  save();
+}
+
+function syncChoices() {
+  for (const input of document.querySelectorAll('#document input[type=radio]')) {
+    input.checked = draft.choices[input.dataset.question] === input.value;
   }
 }
 
@@ -127,10 +201,12 @@ function phase() {
   if (detached) return 'detached';
   if (!view) return 'connecting';
   if (draft.stage === 'returned') return live ? 'returned' : 'waiting';
+  if (draft.stage === 'accepted' && !live && draft.submission !== acceptedWhileLive) return 'unconfirmed';
   if (draft.stage) return draft.stage;
   if (sending) return 'sending';
   if (inactive) return 'inactive';
-  return live ? 'user' : 'reconnecting';
+  if (live) return 'user';
+  return draft.uncertain ? 'uncertain' : 'reconnecting';
 }
 
 function kilobytes(bytes) {
@@ -201,8 +277,8 @@ function setPicking(active) {
 
 function updateAnchor(locked) {
   const anchorable = Boolean(view.frame) && view.anchors.length > 0;
-  $('#anchor-line').hidden = !anchorable;
-  $('#pick-anchor').disabled = locked;
+  $('#anchor-line').hidden = !anchorable && !draft.anchor;
+  $('#pick-anchor').disabled = locked || !anchorable;
   $('#clear-anchor').hidden = !draft.anchor;
   $('#clear-anchor').disabled = locked;
   setText($('#anchor-label'), draft.anchor ? 'Riferimento: ' + draft.anchor : '');
@@ -307,9 +383,9 @@ function updateControls() {
   setText($('#send-hint'), isSent || sending || detached || inactive ? '' : blocked);
 
   const delivery = $('#delivery');
-  const message = current.delivery || refusal;
+  const message = current.delivery || refusal || (draft.uncertain ? TEXT.uncertain : '');
   setText(delivery, message);
-  delivery.classList.toggle('refused', !current.delivery && Boolean(refusal) || current.panel === 'detached');
+  delivery.classList.toggle('refused', !current.delivery && Boolean(message) || current.panel === 'detached');
   delivery.dataset.stage = panelName === 'sent' && current.panel !== 'detached' ? draft.stage : '';
 
   updateMobileBar(answers, comments.length);
@@ -364,6 +440,7 @@ function renderComments() {
 
 function changed() {
   draft.editor = editor.value;
+  draft.carried = false;
   if (!sent()) draft.submission = null;
   if (!inactive) refusal = '';
   save();
@@ -422,24 +499,107 @@ function chapterTop(id) {
   return section ? section.getBoundingClientRect().top : null;
 }
 
-function render(next) {
+function dataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function cacheFrame(next) {
+  await navigator.serviceWorker.ready;
+  const cache = await caches.open(CACHE_NAME);
+  const resources = new Map();
+  for (const path of next.resources) {
+    const url = new URL(path, location.origin).href;
+    let response = await cache.match(url);
+    if (!response) {
+      response = await fetch(url);
+      if (!response.ok) throw new Error('Round resource unavailable');
+      await cache.put(url, response.clone());
+    }
+    resources.set(url, response);
+  }
+  if (live) return null;
+  const encoded = new Map();
+  const scripts = new Map();
+  for (const [url, response] of resources) {
+    if (url.endsWith('.css') || url === new URL(next.frame, location.origin).href) continue;
+    const blob = await response.clone().blob();
+    encoded.set(url, await dataURL(blob));
+    if (url.endsWith('.js')) {
+      const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+      scripts.set(url, 'sha256-' + btoa(String.fromCharCode(...new Uint8Array(digest))));
+    }
+  }
+  for (const [url, response] of resources) {
+    if (!url.endsWith('.css')) continue;
+    const css = (await response.text()).replace(/url\(\s*(['"]?)([^)'"\s]+)\1\s*\)/g, (match, quote, path) => {
+      const data = encoded.get(new URL(path, url).href);
+      return data ? 'url("' + data + '")' : match;
+    });
+    encoded.set(url, await dataURL(new Blob([css], { type: 'text/css' })));
+  }
+  const url = new URL(next.frame, location.origin).href;
+  const response = resources.get(url);
+  const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+  for (const node of doc.querySelectorAll('[src], [href]')) {
+    for (const attr of ['src', 'href']) {
+      if (!node.hasAttribute(attr)) continue;
+      const resource = new URL(node.getAttribute(attr), url).href;
+      const data = encoded.get(resource);
+      if (data) node.setAttribute(attr, data);
+      if (node.tagName === 'SCRIPT' && scripts.has(resource)) node.setAttribute('integrity', scripts.get(resource));
+    }
+  }
+  const policy = doc.createElement('meta');
+  policy.httpEquiv = 'Content-Security-Policy';
+  // A meta policy cannot carry sandbox or frame-ancestors. The iframe keeps
+  // its sandbox attribute, and the shell restricts frame navigation.
+  policy.content = response.headers.get('Content-Security-Policy')
+    .replace(/(?:sandbox|frame-ancestors)[^;]*;?\s*/g, '')
+    .replace("script-src 'self'", 'script-src ' + [...scripts.values()].map(hash => "'" + hash + "'").join(' '))
+    .replace("style-src 'self'", "style-src 'self' data:")
+    .replace("font-src 'self'", "font-src 'self' data:");
+  doc.head.prepend(policy);
+  return URL.createObjectURL(new Blob(['<!doctype html>' + doc.documentElement.outerHTML], { type: 'text/html' }));
+}
+
+async function render(next) {
+  const record = stored();
+  const own = record && record.view.token === next.token;
+  draft = own ? record.draft : record ? carry(record.draft, next) : blank();
   view = next;
-  draft = load();
   sending = false;
   inactive = false;
   refusal = '';
   picking = false;
   chapterTops = {};
   $('#picker-hint').hidden = true;
+  let snapshot = null;
+  if (view.frame) {
+    try {
+      snapshot = await cacheFrame(next);
+    } catch { }
+    if (view !== next) {
+      if (snapshot) URL.revokeObjectURL(snapshot);
+      return;
+    }
+  }
   const area = $('#document');
   area.replaceChildren();
+  if (snapshotURL) URL.revokeObjectURL(snapshotURL);
+  snapshotURL = !live ? snapshot : null;
+  if (live && snapshot) URL.revokeObjectURL(snapshot);
   if (view.frame) {
     const content = document.createElement('iframe');
     content.id = 'content';
     content.className = 'content-frame';
     content.title = 'Contenuto del round';
     content.setAttribute('sandbox', 'allow-scripts');
-    content.src = view.frame;
+    content.src = snapshotURL || view.frame;
     area.append(content);
   }
   area.insertAdjacentHTML('beforeend', view.decide);
@@ -453,12 +613,13 @@ function render(next) {
     });
   }
   editor.value = draft.editor;
-  $('#editor-status').textContent = '';
+  $('#editor-status').textContent = draft.carried ? TEXT.carried : '';
   $('#waiting').hidden = true;
   $('#closed').hidden = true;
   form.hidden = false;
   renderRoute();
   renderComments();
+  if (!own) save();
   updateControls();
 }
 
@@ -473,6 +634,8 @@ async function send() {
   const comments = collectComments().map(comment => ({ text: comment.text, anchor: comment.anchor || null }));
   const choices = { ...draft.choices };
   draft.sent = { choices, comments };
+  draft.uncertain = false;
+  acceptedWhileLive = draft.submission;
   sending = true;
   refusal = '';
   save();
@@ -487,7 +650,7 @@ async function send() {
     const body = await response.json().catch(() => ({}));
     if (response.status === 202 || response.status === 200) {
       advance(body.stage || 'accepted');
-      draft.comments = comments.map((comment, index) => ({ id: index + 1, ...comment }));
+      withComments(draft, comments);
       draft.editing = null;
       draft.anchor = null;
       editor.value = '';
@@ -502,6 +665,7 @@ async function send() {
     if (!sent()) refusal = 'Invio non riuscito: lavagna non risponde. La bozza è conservata.';
   } finally {
     sending = false;
+    if (!live) markUncertain();
     save();
     renderComments();
     updateControls();
@@ -595,7 +759,7 @@ new ResizeObserver(() => {
 function showClosed() {
   closed = true;
   live = false;
-  forgetAll();
+  forget();
   view = null;
   form.hidden = true;
   $('#waiting').hidden = true;
@@ -611,18 +775,31 @@ function showDetachedWaiting() {
   setText($('#waiting .muted'), 'Riapri la pagina dal link nel terminale.');
 }
 
+function adopt() {
+  const record = stored();
+  if (!view || !record || record.view.token !== view.token) return;
+  draft = record.draft;
+  editor.value = draft.editor;
+  syncChoices();
+  noteAcceptedWhileLive();
+  renderComments();
+  updateControls();
+}
+
 function connect() {
   const source = new EventSource('events');
   source.addEventListener('round', event => {
     const next = JSON.parse(event.data);
     live = true;
     if (!view || view.token !== next.token) render(next);
-    else updateControls();
+    noteAcceptedWhileLive();
+    updateControls();
   });
   source.addEventListener('receipt', event => {
     const receipt = JSON.parse(event.data);
     if (!view || !draft || receipt.submission !== draft.submission) return;
     advance(receipt.stage);
+    noteAcceptedWhileLive();
     save();
     updateControls();
   });
@@ -631,8 +808,14 @@ function connect() {
     showClosed();
   });
   source.addEventListener('error', () => {
+    if (leaving) return;
     live = false;
     if (source.readyState === EventSource.CLOSED) detached = true;
+    else {
+      source.close();
+      setTimeout(connect, RETRY_MS);
+    }
+    if (view && !sending) markUncertain();
     if (view) {
       renderComments();
       updateControls();
@@ -643,4 +826,14 @@ function connect() {
   });
 }
 
+window.addEventListener('pagehide', () => { leaving = true; });
+window.addEventListener('pageshow', () => { leaving = false; });
+
+window.addEventListener('storage', event => {
+  if (event.key === RECORD_KEY) adopt();
+});
+
+try { navigator.serviceWorker.register('sw.js').catch(() => { }); } catch { }
+const restored = stored();
+if (restored) render(restored.view);
 connect();

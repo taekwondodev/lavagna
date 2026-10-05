@@ -52,9 +52,12 @@ func (o Origin) URL() string { return fmt.Sprintf("http://127.0.0.1:%d/s/%s/", o
 func (o Origin) Host() string { return fmt.Sprintf("127.0.0.1:%d", o.Port) }
 
 type State struct {
-	Origin *Origin `json:"origin,omitempty"`
-	Rounds int     `json:"rounds"`
-	Live   string  `json:"live,omitempty"`
+	Origin   *Origin  `json:"origin,omitempty"`
+	Rounds   int      `json:"rounds"`
+	Live     string   `json:"live,omitempty"`
+	Accepted string   `json:"accepted,omitempty"`
+	Previous *Outcome `json:"previous,omitempty"`
+	Anchors  []string `json:"anchors,omitempty"`
 }
 
 type Lease struct {

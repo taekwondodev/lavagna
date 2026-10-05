@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
+	"net/url"
 	"path"
 	"regexp"
 	"strings"
@@ -28,7 +29,7 @@ const (
 )
 
 const (
-	shellCSP = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	shellCSP = "default-src 'none'; script-src 'self' data:; style-src 'self' data:; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 	frameCSP = "sandbox allow-scripts; default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
 )
 
@@ -47,10 +48,12 @@ func (s stage) MarshalText() ([]byte, error) {
 }
 
 type view struct {
-	ID    string `json:"round"`
-	Token string `json:"token"`
-	Limit int    `json:"limit"`
-	Frame string `json:"frame"`
+	ID        string                `json:"round"`
+	Token     string                `json:"token"`
+	Limit     int                   `json:"limit"`
+	Frame     string                `json:"frame"`
+	Resources []string              `json:"resources"`
+	Previous  *conversation.Outcome `json:"previous"`
 	round.Round
 }
 
@@ -99,9 +102,9 @@ type event struct {
 	data any
 }
 
-func newRound(o conversation.Origin, id, token string, r round.Round, files []round.File) *server {
+func newRound(o conversation.Origin, id, token string, r round.Round, files []round.File, previous *conversation.Outcome) *server {
 	s := newServer(o)
-	s.view = &view{ID: id, Token: token, Limit: maxCommentBytes, Round: r}
+	s.view = &view{ID: id, Token: token, Limit: maxCommentBytes, Previous: previous, Round: r}
 	s.gate = gate{cap: o.Cap, round: id, token: token}
 	if r.Content != "" {
 		f := &frame{key: conversation.Secret(16), files: map[string]round.File{}}
@@ -113,6 +116,9 @@ func newRound(o conversation.Origin, id, token string, r round.Round, files []ro
 		f.doc = page.Frame(r.Content, names)
 		s.frame = f
 		s.view.Frame = "/f/" + f.key + "/"
+		for _, name := range append(names, "", page.FrameAsset+"lavagna.css", page.FrameAsset+"frame.js", page.FrameAsset+page.Font) {
+			s.view.Resources = append(s.view.Resources, s.view.Frame+(&url.URL{Path: name}).EscapedPath())
+		}
 	}
 	for _, a := range r.Anchors {
 		s.anchors[a] = true
@@ -163,6 +169,7 @@ func (s *server) broadcast(e event) {
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /s/{cap}/{$}", s.capable(s.shell))
+	mux.HandleFunc("GET /s/{cap}/sw.js", s.capable(s.worker))
 	mux.HandleFunc("GET /s/{cap}/assets/{file...}", s.capable(s.asset))
 	mux.HandleFunc("GET /s/{cap}/events", s.capable(s.events))
 	mux.HandleFunc("POST /s/{cap}/send", s.send)
@@ -194,6 +201,11 @@ func (s *server) shell(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", shellCSP)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(page.Shell)
+}
+
+func (s *server) worker(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", page.ContentType("sw.js"))
+	w.Write(page.Worker)
 }
 
 func (s *server) asset(w http.ResponseWriter, r *http.Request) {
