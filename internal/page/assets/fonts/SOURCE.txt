@@ -1,0 +1,12 @@
+Atkinson Hyperlegible Next, normal variable font, weights 200–800.
+Copyright 2020–2024 The Atkinson Hyperlegible Next Project Authors.
+License: SIL Open Font License 1.1; retained in OFL.txt beside the font.
+
+Retrieved from google/fonts at revision 95f4904fc8bcf26d3420fe315560c96417c6dec7:
+https://github.com/google/fonts/tree/95f4904fc8bcf26d3420fe315560c96417c6dec7/ofl/atkinsonhyperlegiblenext
+Upstream repository and source revision declared in METADATA.pb:
+https://github.com/googlefonts/atkinson-hyperlegible-next/tree/7925f50f649b3813257faf2f4c0b381011f434f1
+
+Original filename: AtkinsonHyperlegibleNext[wght].ttf
+Local filename: AtkinsonHyperlegibleNext.ttf
+No font modifications. Included locally so the prototype loads without a font CDN.
