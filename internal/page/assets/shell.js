@@ -5,18 +5,45 @@ const TEXT = {
   returned: 'Consegnato al terminale',
   detached: 'Questa scheda non è più collegata alla conversazione',
 };
+const DRAFT_LEAD = 'Domande, dubbi e richieste: tutto in un solo invio.';
+const SENT_LEAD = 'La pagina si aggiorna da sola al prossimo round.';
+const PANELS = {
+  draft: { eyebrow: 'Qui agisci tu · bozza non inviata', lead: DRAFT_LEAD },
+  sent: { eyebrow: 'Feedback inviato', lead: SENT_LEAD },
+  detached: { eyebrow: 'Bozza conservata · non inviata', lead: 'Copia il testo se ti serve: questa scheda non può più inviarlo.' },
+};
+const PHASES = {
+  connecting: { turn: 'Collegamento a lavagna…', panel: 'draft' },
+  user: { turn: 'Tocca a te', panel: 'draft' },
+  reconnecting: { turn: 'Riconnessione a lavagna…', panel: 'draft' },
+  sending: { turn: 'Invio in corso…', panel: 'draft' },
+  inactive: { turn: 'Round non più attivo', panel: 'draft' },
+  accepted: { turn: 'Inviato', panel: 'sent', delivery: TEXT.accepted, lead: 'In consegna all’agente.' },
+  returned: { turn: 'Inviato · consegnato al terminale', panel: 'sent', delivery: TEXT.returned },
+  waiting: { turn: 'In attesa del prossimo round', panel: 'sent', delivery: TEXT.returned },
+  detached: { turn: 'Scheda non collegata', panel: 'detached', delivery: TEXT.detached },
+  closed: { turn: 'Concluso', panel: 'draft' },
+};
 const STAGES = ['', 'accepted', 'returned'];
 const DRAFT_PREFIX = 'lavagna:draft:';
+const COUNTER_FROM = 0.75;
+const LINE_SEPARATORS = new RegExp('[' + String.fromCharCode(0x2028, 0x2029) + ']', 'g');
 
 const $ = selector => document.querySelector(selector);
 const form = $('#feedback-form');
 const editor = $('#comment-text');
 const encoder = new TextEncoder();
+const narrow = window.matchMedia('(max-width: 850px)');
 
 let view = null;
 let draft = null;
 let sending = false;
 let live = false;
+let detached = false;
+let closed = false;
+let inactive = false;
+let feedbackVisible = false;
+let refusal = '';
 
 function storageKey() { return DRAFT_PREFIX + view.token; }
 
@@ -25,7 +52,7 @@ function load() {
     const stored = JSON.parse(localStorage.getItem(storageKey()));
     if (stored) return stored;
   } catch { }
-  return { choices: {}, comments: [], editor: '', editing: null, previous: null, next: 0, submission: null, stage: '' };
+  return { choices: {}, comments: [], editor: '', editing: null, previous: null, next: 0, submission: null, stage: '', sent: null };
 }
 
 function save() {
@@ -56,6 +83,10 @@ function element(tag, text, className) {
   return node;
 }
 
+function setText(node, text) {
+  if (node.textContent !== text) node.textContent = text;
+}
+
 function collectComments() {
   const result = draft.comments.map(comment => ({ ...comment }));
   const text = editor.value.trim();
@@ -68,8 +99,6 @@ function collectComments() {
   return result;
 }
 
-const LINE_SEPARATORS = new RegExp('[' + String.fromCharCode(0x2028, 0x2029) + ']', 'g');
-
 function encodedBytes(text) {
   const separators = (text.match(LINE_SEPARATORS) || []).length;
   return encoder.encode(JSON.stringify(text)).length - 2 + 3 * separators;
@@ -81,50 +110,147 @@ function commentBytes() {
 
 function sent() { return draft.stage !== ''; }
 
-function frozen() { return sent() || sending; }
+function frozen() { return sent() || sending || detached || inactive; }
 
 function advance(stage) {
-  if (STAGES.indexOf(stage) > STAGES.indexOf(draft.stage)) draft.stage = stage;
+  if (STAGES.indexOf(stage) > STAGES.indexOf(draft.stage)) {
+    draft.stage = stage;
+    refusal = '';
+  }
+}
+
+function phase() {
+  if (closed) return 'closed';
+  if (detached) return 'detached';
+  if (!view) return 'connecting';
+  if (draft.stage === 'returned') return live ? 'returned' : 'waiting';
+  if (draft.stage) return draft.stage;
+  if (sending) return 'sending';
+  if (inactive) return 'inactive';
+  return live ? 'user' : 'reconnecting';
+}
+
+function kilobytes(bytes) {
+  return (bytes / 1024).toFixed(1).replace('.', ',') + ' KB';
+}
+
+function countLabel(count) {
+  return count + (count === 1 ? ' commento' : ' commenti');
+}
+
+function questionTitle(id) {
+  const legend = document.getElementById('q-' + id);
+  return legend ? legend.textContent : id;
+}
+
+function optionLabel(id, option) {
+  const input = document.querySelector(`#document input[data-question="${id}"][value="${option}"]`);
+  return input ? input.closest('label').querySelector('strong').textContent : option;
+}
+
+function choiceItem(question, option) {
+  const item = element('li', undefined, option ? 'review-choice' : 'review-choice missing');
+  item.append(element('span', questionTitle(question.id), 'review-question'));
+  item.append(element('span', option ? optionLabel(question.id, option) : 'nessuna scelta', 'review-answer'));
+  return item;
+}
+
+function reviewItems(comments) {
+  const items = view.questions.map(question => choiceItem(question, draft.choices[question.id]));
+  for (const comment of comments) {
+    const item = element('li', undefined, 'review-comment review-line');
+    item.append(element('span', comment.text, 'review-text'));
+    if (comment.id === 'draft') item.append(element('span', 'nell’editor', 'review-marker'));
+    items.push(item);
+  }
+  return items;
+}
+
+function sentItems(batch) {
+  const items = view.questions.filter(question => batch.choices[question.id])
+    .map(question => choiceItem(question, batch.choices[question.id]));
+  for (const text of batch.comments) items.push(element('li', text, 'review-comment'));
+  return items;
+}
+
+function sendBlocker(over, count, answers) {
+  if (!live) return 'Lavagna non è collegata: il feedback resta in bozza.';
+  if (draft.editing !== null) return 'Salva o annulla la modifica per inviare.';
+  if (over) return 'Accorcia i commenti per inviare.';
+  if (!answers && count === 0) return 'Scegli un’opzione o scrivi un commento per inviare.';
+  return '';
+}
+
+function updateTurn() {
+  const current = phase();
+  const turn = $('#turn');
+  turn.dataset.state = current;
+  setText(turn, PHASES[current].turn);
 }
 
 function updateControls() {
+  updateTurn();
   if (!view) return;
-  const text = editor.value.trim();
+  const current = PHASES[phase()];
+  const isSent = sent();
+  const panelName = current.panel === 'detached' && isSent ? 'sent' : current.panel;
+  const panel = PANELS[panelName];
   const locked = frozen();
-  editor.readOnly = locked;
-  for (const input of document.querySelectorAll('#document input[type=radio]')) input.disabled = locked;
-  $('#add-comment').disabled = locked || !text;
-  $('#add-comment').textContent = draft.editing === null ? 'Aggiungi commento' : 'Salva modifica';
-  $('#cancel-edit').hidden = draft.editing === null;
-
+  const comments = collectComments();
+  const answers = Object.keys(draft.choices).length;
   const bytes = commentBytes();
   const over = bytes > view.limit;
+
+  $('#feedback').dataset.phase = panelName;
+  setText($('#feedback-eyebrow'), panel.eyebrow);
+  setText($('#feedback-lead'), current.lead || panel.lead);
+
+  editor.readOnly = locked;
+  for (const input of document.querySelectorAll('#document input[type=radio]')) input.disabled = locked;
+  $('#add-comment').disabled = locked || !editor.value.trim();
+  setText($('#add-comment'), draft.editing === null ? 'Aggiungi commento' : 'Salva modifica');
+  $('#cancel-edit').hidden = draft.editing === null;
+  $('#cancel-edit').disabled = isSent || sending;
+
   const counter = $('#comment-counter');
+  counter.hidden = bytes < view.limit * COUNTER_FROM;
   counter.classList.toggle('over', over);
-  counter.textContent = over
-    ? `${bytes} di ${view.limit} byte: il testo supera il limite. Accorcia i commenti per inviare; nulla viene tagliato.`
-    : `${bytes} di ${view.limit} byte`;
+  setText(counter, over
+    ? `${kilobytes(bytes)} di ${kilobytes(view.limit)}: il testo supera il limite. Accorcia i commenti per inviare; nulla viene tagliato.`
+    : `${kilobytes(bytes)} di ${kilobytes(view.limit)} disponibili per i commenti`);
 
-  const count = collectComments().length;
-  const answers = Object.keys(draft.choices).length;
-  const summary = [];
-  if (answers) summary.push(answers + (answers === 1 ? ' risposta' : ' risposte'));
-  if (count) summary.push(count + (count === 1 ? ' commento' : ' commenti'));
-  $('#send-summary').textContent = sent() ? 'Feedback inviato per questo round.'
-    : sending ? 'Invio in corso…'
-    : draft.editing !== null ? 'Salva o annulla la modifica prima di inviare.'
-    : summary.length ? summary.join(' · ') + ' nel prossimo invio' : 'Nessuna scelta o commento preparato.';
-  $('#send-feedback').disabled = !live || locked || over || draft.editing !== null || (!answers && count === 0);
-}
+  const showSent = isSent && draft.sent;
+  $('#draft-area').hidden = showSent;
+  $('#sent-area').hidden = !showSent;
+  $('#review').hidden = isSent;
+  if (showSent) $('#sent-list').replaceChildren(...sentItems(draft.sent));
+  else $('#review-list').replaceChildren(...reviewItems(comments));
 
-function setDelivery(text, refused) {
+  const blocked = sendBlocker(over, comments.length, answers);
+  const button = $('#send-feedback');
+  button.disabled = locked || Boolean(blocked);
+  button.hidden = isSent;
+  setText(button, sending ? 'Invio in corso…' : 'Invia feedback');
+  setText($('#send-hint'), isSent || sending || detached || inactive ? '' : blocked);
+
   const delivery = $('#delivery');
-  delivery.textContent = text;
-  delivery.classList.toggle('refused', Boolean(refused));
+  const message = current.delivery || refusal;
+  setText(delivery, message);
+  delivery.classList.toggle('refused', !current.delivery && Boolean(refusal) || current.panel === 'detached');
+  delivery.dataset.stage = panelName === 'sent' && current.panel !== 'detached' ? draft.stage : '';
+
+  updateMobileBar(answers, comments.length);
 }
 
-function showStage() {
-  setDelivery(draft.stage ? TEXT[draft.stage] : '');
+function updateMobileBar(answers, count) {
+  const bar = $('#mobile-bar');
+  bar.hidden = !view || closed || !narrow.matches || feedbackVisible;
+  if (!view) return;
+  setText($('#to-feedback'), sent() ? 'Vedi riepilogo' : 'Rivedi e invia');
+  const parts = [];
+  if (answers) parts.push(answers + (answers === 1 ? ' risposta' : ' risposte'));
+  if (count) parts.push(countLabel(count));
+  setText($('#mobile-summary'), !sent() && parts.length ? parts.join(' · ') + ' in bozza' : PHASES[phase()].turn);
 }
 
 function renderComments() {
@@ -132,7 +258,6 @@ function renderComments() {
   list.replaceChildren();
   for (const comment of draft.comments) {
     const item = element('li', undefined, 'note' + (comment.id === draft.editing ? ' editing' : ''));
-    item.append(element('div', 'Sulla pagina nel suo insieme', 'ref'));
     item.append(element('p', comment.id === draft.editing ? 'Stai modificando questo commento nell’editor.' : comment.text));
     const actions = element('div', undefined, 'note-actions');
     const edit = element('button', 'Modifica');
@@ -165,6 +290,7 @@ function renderComments() {
 function changed() {
   draft.editor = editor.value;
   if (!sent()) draft.submission = null;
+  if (!inactive) refusal = '';
   save();
   updateControls();
 }
@@ -186,15 +312,34 @@ function renderRoute() {
     item.append(link);
     route.append(item);
   }
+  updateRoute();
+}
+
+function updateRoute() {
+  if (!view) return;
+  const offset = $('#topbar').getBoundingClientRect().height + 40;
+  const scrollable = document.documentElement.scrollHeight - window.innerHeight;
+  const progress = scrollable > 0 ? Math.min(1, window.scrollY / scrollable) : 0;
+  const line = offset + (window.innerHeight - offset) * progress;
+  let current = view.chapters.length ? view.chapters[0].id : '';
+  for (const chapter of view.chapters) {
+    const section = document.getElementById(chapter.id);
+    if (section && section.getBoundingClientRect().top <= line) current = chapter.id;
+  }
+  for (const link of document.querySelectorAll('#route a')) {
+    if (link.hash === '#' + current) link.setAttribute('aria-current', 'location');
+    else link.removeAttribute('aria-current');
+  }
 }
 
 function render(next) {
   view = next;
   draft = load();
   sending = false;
+  inactive = false;
+  refusal = '';
   $('#document').innerHTML = view.html;
-  renderRoute();
-  $('#round-label').textContent = 'Round ' + view.round.replace(/^r/, '');
+  setText($('#round-label'), 'Round ' + view.round.replace(/^r/, ''));
   document.title = 'lavagna · round ' + view.round.replace(/^r/, '');
   for (const input of document.querySelectorAll('#document input[type=radio]')) {
     input.checked = draft.choices[input.dataset.question] === input.value;
@@ -208,8 +353,8 @@ function render(next) {
   $('#waiting').hidden = true;
   $('#closed').hidden = true;
   form.hidden = false;
+  renderRoute();
   renderComments();
-  showStage();
   updateControls();
 }
 
@@ -221,9 +366,11 @@ function newSubmission() {
 async function send() {
   if (!view || $('#send-feedback').disabled) return;
   draft.submission = draft.submission || newSubmission();
-  const comments = collectComments().map(comment => ({ text: comment.text }));
-  const batch = { round: view.round, token: view.token, submission: draft.submission, choices: draft.choices, comments };
+  const comments = collectComments().map(comment => comment.text);
+  const choices = { ...draft.choices };
+  draft.sent = { choices, comments };
   sending = true;
+  refusal = '';
   save();
   renderComments();
   updateControls();
@@ -231,24 +378,23 @@ async function send() {
     const response = await fetch('send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(batch),
+      body: JSON.stringify({ round: view.round, token: view.token, submission: draft.submission, choices, comments: comments.map(text => ({ text })) }),
     });
     const body = await response.json().catch(() => ({}));
     if (response.status === 202 || response.status === 200) {
       advance(body.stage || 'accepted');
-      draft.comments = comments.map((comment, index) => ({ id: index + 1, text: comment.text }));
+      draft.comments = comments.map((text, index) => ({ id: index + 1, text }));
       draft.editing = null;
       editor.value = '';
       draft.editor = '';
-      renderComments();
-      showStage();
     } else if (response.status === 409) {
-      setDelivery(body.error || String(response.status), true);
+      inactive = true;
+      refusal = body.error || String(response.status);
     } else {
-      setDelivery('Invio rifiutato da lavagna: ' + (body.error || response.status) + '. La bozza è conservata.', true);
+      refusal = 'Invio rifiutato da lavagna: ' + (body.error || response.status) + '. La bozza è conservata.';
     }
   } catch {
-    setDelivery('Invio non riuscito: lavagna non risponde. La bozza è conservata.', true);
+    if (!sent()) refusal = 'Invio non riuscito: lavagna non risponde. La bozza è conservata.';
   } finally {
     sending = false;
     save();
@@ -260,6 +406,13 @@ async function send() {
 editor.addEventListener('input', () => {
   $('#editor-status').textContent = '';
   changed();
+});
+
+editor.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    send();
+  }
 });
 
 $('#add-comment').addEventListener('click', () => {
@@ -286,19 +439,52 @@ $('#cancel-edit').addEventListener('click', () => {
   renderComments();
 });
 
+$('#to-feedback').addEventListener('click', () => {
+  const button = $('#send-feedback');
+  const target = sent() ? $('#sent-area') : button.disabled ? $('#review') : button;
+  button.closest('.send-area').scrollIntoView({ block: 'end' });
+  target.focus({ preventScroll: true });
+});
+
 form.addEventListener('submit', event => {
   event.preventDefault();
   send();
 });
 
+window.addEventListener('scroll', updateRoute, { passive: true });
+narrow.addEventListener('change', () => updateControls());
+new IntersectionObserver(entries => {
+  feedbackVisible = entries[entries.length - 1].isIntersecting;
+  if (view) updateControls();
+}).observe($('#feedback'));
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty('--header-height', $('#topbar').getBoundingClientRect().height + 'px');
+}).observe($('#topbar'));
+
+function showClosed() {
+  closed = true;
+  live = false;
+  forgetAll();
+  view = null;
+  form.hidden = true;
+  $('#waiting').hidden = true;
+  $('#closed').hidden = false;
+  $('#route').replaceChildren();
+  setText($('#round-label'), '');
+  $('#mobile-bar').hidden = true;
+  updateTurn();
+}
+
+function showDetachedWaiting() {
+  setText($('#waiting .notice-lead'), TEXT.detached);
+  setText($('#waiting .muted'), 'Riapri la pagina dal link nel terminale.');
+}
+
 function connect() {
-  const connection = $('#connection');
   const source = new EventSource('events');
   source.addEventListener('round', event => {
     const next = JSON.parse(event.data);
     live = true;
-    connection.textContent = 'Collegato a lavagna';
-    connection.classList.remove('lost');
     if (!view || view.token !== next.token) render(next);
     else updateControls();
   });
@@ -307,30 +493,22 @@ function connect() {
     if (!view || !draft || receipt.submission !== draft.submission) return;
     advance(receipt.stage);
     save();
-    showStage();
     updateControls();
   });
   source.addEventListener('closed', () => {
     source.close();
-    live = false;
-    forgetAll();
-    view = null;
-    form.hidden = true;
-    $('#waiting').hidden = true;
-    $('#closed').hidden = false;
-    $('#route').replaceChildren();
-    $('#round-label').textContent = '';
-    connection.textContent = '';
+    showClosed();
   });
   source.addEventListener('error', () => {
     live = false;
-    if (source.readyState === EventSource.CLOSED) {
-      connection.textContent = TEXT.detached;
-      connection.classList.add('lost');
+    if (source.readyState === EventSource.CLOSED) detached = true;
+    if (view) {
+      renderComments();
+      updateControls();
     } else {
-      connection.textContent = draft && draft.stage === 'returned' ? 'In attesa del prossimo round' : 'Riconnessione a lavagna…';
+      if (detached) showDetachedWaiting();
+      updateTurn();
     }
-    updateControls();
   });
 }
 

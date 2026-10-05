@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -71,6 +72,7 @@ func Start(t testing.TB) *Browser {
 	cmd := exec.Command(path, "--headless=new", "--remote-debugging-pipe", "--use-mock-keychain", "--password-store=basic",
 		"--user-data-dir="+t.TempDir(), "--no-first-run", "--no-default-browser-check", "about:blank")
 	cmd.ExtraFiles = []*os.File{toChromeR, fromChromeW}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +80,7 @@ func Start(t testing.TB) *Browser {
 	fromChromeW.Close()
 	t.Cleanup(func() {
 		toChromeW.Close()
-		cmd.Process.Kill()
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		cmd.Wait()
 	})
 	b := &Browser{t: t, w: toChromeW, pending: map[int]chan message{}, paused: map[string][]string{}}
@@ -286,4 +288,18 @@ func (p *Page) Held() []string {
 func (p *Page) Release(id string) {
 	p.t.Helper()
 	p.b.must(nil, p.session, "Fetch.continueRequest", map[string]any{"requestId": id})
+}
+
+func (p *Page) Press(key string, keyCode, modifiers int) {
+	p.t.Helper()
+	for _, typ := range []string{"rawKeyDown", "keyUp"} {
+		p.b.must(nil, p.session, "Input.dispatchKeyEvent",
+			map[string]any{"type": typ, "key": key, "code": key, "windowsVirtualKeyCode": keyCode, "modifiers": modifiers})
+	}
+}
+
+func (p *Page) Wheel(deltaY float64) {
+	p.t.Helper()
+	p.b.must(nil, p.session, "Input.dispatchMouseEvent",
+		map[string]any{"type": "mouseWheel", "x": 200, "y": 400, "deltaX": 0, "deltaY": deltaY})
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -124,13 +126,18 @@ func TestPageKeepsTheDraftWithoutDuplicates(t *testing.T) {
 		t.Fatalf("restored draft %+v", restored)
 	}
 
-	p.Type("#comment-text", strings.Repeat("x", 32768))
+	var counterHidden bool
+	p.MustEval(`document.querySelector('#comment-counter').hidden`, &counterHidden)
+	if !counterHidden {
+		t.Error("the counter shows far from the limit")
+	}
+	p.Type("#comment-text", strings.Repeat("x ", 16384))
 	var over struct {
 		Over     bool
 		Disabled bool
 		Length   int
 	}
-	p.MustEval(`({Over: document.querySelector('#comment-counter').classList.contains('over'), Disabled: document.querySelector('#send-feedback').disabled, Length: document.querySelector('#comment-text').value.length})`, &over)
+	p.MustEval(`({Over: document.querySelector('#comment-counter').classList.contains('over') && !document.querySelector('#comment-counter').hidden, Disabled: document.querySelector('#send-feedback').disabled, Length: document.querySelector('#comment-text').value.length})`, &over)
 	if !over.Over || !over.Disabled || over.Length != len("Non ancora aggiunto")+32768 {
 		t.Fatalf("over the bound: %+v", over)
 	}
@@ -218,5 +225,173 @@ func TestPageShowsTheClosingPage(t *testing.T) {
 	p.WaitFor(`!document.querySelector('#closed').hidden && document.querySelector('#feedback-form').hidden`)
 	if got := text(p, "#closed h1"); got != "Frontiera chiusa, torna al terminale" {
 		t.Fatalf("closing page %q", got)
+	}
+	if got := text(p, "#closed"); !strings.Contains(got, "Puoi chiudere questa scheda.") || text(p, "#turn") != "Concluso" {
+		t.Fatalf("closing page %q, turn %q", got, text(p, "#turn"))
+	}
+}
+
+func TestPageGuidesTheTurn(t *testing.T) {
+	c, p := openRound(t, richRound, 1280)
+	var start struct{ Turn, Hint string }
+	p.MustEval(`({Turn: document.querySelector('#turn').textContent, Hint: document.querySelector('#send-hint').textContent})`, &start)
+	if start.Turn != "Tocca a te" || start.Hint != "Scegli un’opzione o scrivi un commento per inviare." {
+		t.Fatalf("before any feedback: %+v", start)
+	}
+
+	p.Click(`input[value="db"]`)
+	p.Type("#comment-text", "Serve un esempio")
+	var review struct {
+		Items   []string
+		Counter bool
+	}
+	p.MustEval(`({Items: [...document.querySelectorAll('#review-list li')].map(li => li.innerText.replace(/\s+/g, ' ').trim()), Counter: !document.querySelector('#comment-counter').hidden})`, &review)
+	if strings.Join(review.Items, "|") != "Dove salviamo lo stato? Un database locale|Serve un esempio nell’editor" || review.Counter {
+		t.Fatalf("review before sending: %+v", review)
+	}
+
+	p.Hold("*/send")
+	p.Press("Enter", 13, 4)
+	p.WaitFor(`document.querySelector('#turn').textContent === 'Invio in corso…'`)
+	time.Sleep(300 * time.Millisecond)
+	held := p.Held()
+	if len(held) != 1 {
+		t.Fatalf("⌘+Invio issued %d send requests, want 1", len(held))
+	}
+	p.Release(held[0])
+	lines, code := c.finish()
+	if code != 0 || len(lines) != 1 || !strings.HasSuffix(lines[0], feedbackTail("db", "Serve un esempio")) {
+		t.Fatalf("⌘+Invio: exit %d, output %q", code, lines)
+	}
+	p.WaitFor(`document.querySelector('#turn').textContent === 'In attesa del prossimo round'`)
+	var after struct {
+		Eyebrow, Sent string
+		Draft         bool
+		Actions       int
+	}
+	p.MustEval(`({Eyebrow: document.querySelector('#feedback-eyebrow').textContent, Sent: document.querySelector('#sent-area').innerText, Draft: !document.querySelector('#draft-area').hidden, Actions: [...document.querySelectorAll('.note-actions button')].filter(b => b.checkVisibility()).length})`, &after)
+	if after.Eyebrow != "Feedback inviato" || !strings.Contains(after.Sent, "Un database locale") || !strings.Contains(after.Sent, "Serve un esempio") || after.Draft || after.Actions != 0 {
+		t.Fatalf("after sending: %+v", after)
+	}
+}
+
+func TestPageRouteFollowsTheReading(t *testing.T) {
+	_, p := openRound(t, richRound, 1280)
+	current := `document.querySelector('#route a[aria-current="location"]')?.hash`
+	p.WaitFor(current + ` === '#capire'`)
+	seen := map[string]bool{}
+	for range 40 {
+		p.Wheel(150)
+		time.Sleep(30 * time.Millisecond)
+		var hash string
+		p.MustEval(current, &hash)
+		seen[hash] = true
+	}
+	if !seen["#confrontare"] || !seen["#decidere"] {
+		t.Fatalf("chapters highlighted while scrolling: %v", seen)
+	}
+}
+
+func TestPageMobileBarLeadsToTheFeedback(t *testing.T) {
+	c, p := openRound(t, richRound, 390)
+	barShows := func(summary, label string) {
+		t.Helper()
+		p.MustEval(`window.scrollTo({top: 0, behavior: 'instant'})`, nil)
+		p.WaitFor(`scrollY === 0 && !document.querySelector('#mobile-bar').hidden && document.querySelector('#mobile-summary').textContent === '` + summary + `' && document.querySelector('#to-feedback').textContent === '` + label + `'`)
+	}
+	follow := func(focus string) {
+		t.Helper()
+		p.Click("#to-feedback")
+		p.WaitFor(`document.querySelector('#mobile-bar').hidden`)
+		var focused string
+		p.MustEval(`document.activeElement.id`, &focused)
+		if focused != focus {
+			t.Fatalf("focus on %q after following the bar, want %q", focused, focus)
+		}
+	}
+
+	barShows("Tocca a te", "Rivedi e invia")
+	p.Click(`input[value="db"]`)
+	barShows("1 risposta in bozza", "Rivedi e invia")
+	follow("send-feedback")
+	var inView bool
+	p.MustEval(`(() => { const r = document.querySelector('#send-feedback').getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; })()`, &inView)
+	if !inView {
+		t.Fatal("the send button is not in view after following the bar")
+	}
+
+	p.Click("#send-feedback")
+	if _, code := c.finish(); code != 0 {
+		t.Fatalf("round exit %d", code)
+	}
+	barShows("In attesa del prossimo round", "Vedi riepilogo")
+	follow("sent-area")
+}
+
+func TestPageCounterAppearsNearTheLimit(t *testing.T) {
+	_, p := openRound(t, richRound, 1280)
+	counterShown := `!document.querySelector('#comment-counter').hidden`
+	p.Type("#comment-text", strings.Repeat("x ", 12287)+"x")
+	var shown bool
+	p.MustEval(counterShown, &shown)
+	if shown {
+		t.Fatal("the counter shows below 75% of the limit")
+	}
+	p.Insert("x")
+	p.WaitFor(counterShown)
+}
+
+func detach(t *testing.T, c *call) {
+	t.Helper()
+	c.cmd.Process.Kill()
+	c.cmd.Wait()
+	ln, err := net.Listen("tcp", strings.TrimPrefix(c.origin, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := &http.Server{Handler: http.NotFoundHandler()}
+	go foreign.Serve(ln)
+	t.Cleanup(func() { foreign.Close() })
+}
+
+func TestPageDetachedTabKeepsTheDraft(t *testing.T) {
+	c, p := openRound(t, richRound, 1280)
+	p.Type("#comment-text", "Commento salvato")
+	p.Click("#add-comment")
+	p.Type("#comment-text", "Bozza da non perdere")
+	p.Click(".note-actions button")
+	detach(t, c)
+
+	p.WaitFor(`document.querySelector('#turn').textContent === 'Scheda non collegata'`)
+	var tab struct {
+		Delivery, Eyebrow, Hint string
+		SendDisabled            bool
+	}
+	p.MustEval(`({Delivery: document.querySelector('#delivery').textContent, Eyebrow: document.querySelector('#feedback-eyebrow').textContent, Hint: document.querySelector('#send-hint').textContent, SendDisabled: document.querySelector('#send-feedback').disabled})`, &tab)
+	if tab.Delivery != "Questa scheda non è più collegata alla conversazione" || tab.Eyebrow != "Bozza conservata · non inviata" || tab.Hint != "" || !tab.SendDisabled {
+		t.Fatalf("detached tab: %+v", tab)
+	}
+	p.Click("#cancel-edit")
+	var editor string
+	p.MustEval(`document.querySelector('#comment-text').value`, &editor)
+	if editor != "Bozza da non perdere" {
+		t.Fatalf("editor after cancelling the edit: %q", editor)
+	}
+}
+
+func TestPageDetachedTabAfterSendingStaysSent(t *testing.T) {
+	c, p := openRound(t, richRound, 1280)
+	p.Click(`input[value="db"]`)
+	p.Click("#send-feedback")
+	if _, code := c.finish(); code != 0 {
+		t.Fatalf("round exit %d", code)
+	}
+	p.WaitFor(`document.querySelector('#turn').textContent === 'In attesa del prossimo round'`)
+	detach(t, c)
+	p.WaitFor(`document.querySelector('#turn').textContent === 'Scheda non collegata'`)
+	var tab struct{ Eyebrow, Delivery, Sent string }
+	p.MustEval(`({Eyebrow: document.querySelector('#feedback-eyebrow').textContent, Delivery: document.querySelector('#delivery').textContent, Sent: document.querySelector('#sent-area').innerText})`, &tab)
+	if tab.Eyebrow != "Feedback inviato" || tab.Delivery != "Questa scheda non è più collegata alla conversazione" || !strings.Contains(tab.Sent, "Un database locale") {
+		t.Fatalf("detached after sending: %+v", tab)
 	}
 }
