@@ -16,6 +16,31 @@ const (
 	formShown    = `!document.querySelector('#feedback-form').hidden`
 )
 
+func settled(t *testing.T, p *cdptest.Page) {
+	t.Helper()
+	p.WaitFor(formShown)
+	var framed bool
+	p.MustEval(`Boolean(document.querySelector('#content'))`, &framed)
+	if !framed {
+		return
+	}
+	f := p.Frame("#content")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var inner, outer int
+		f.WaitFor(`document.readyState === 'complete' && document.fonts.status === 'loaded'`)
+		f.MustEval(`document.body.scrollHeight`, &inner)
+		p.MustEval(`document.querySelector('#content').offsetHeight`, &outer)
+		if inner == outer && inner > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the content frame is %dpx tall in the page, its document %dpx", outer, inner)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 const richRound = `# Capire
 ## Il problema
 Lo stato vive in un solo file.
@@ -38,7 +63,7 @@ func openRound(t *testing.T, src string, width int) (*call, *cdptest.Page) {
 	t.Helper()
 	c := startRound(t, env(t, "LAVAGNA_SESSION=page"), src)
 	p := cdptest.Start(t).Open(c.url, width, 900)
-	p.WaitFor(formShown)
+	settled(t, p)
 	return c, p
 }
 
@@ -112,7 +137,7 @@ func TestPageKeepsTheDraftWithoutDuplicates(t *testing.T) {
 	p.Click(`input[value="file"]`)
 
 	p.Reload()
-	p.WaitFor(formShown)
+	settled(t, p)
 	if got := text(p, "#comments"); !strings.Contains(got, "Corretto") || strings.Contains(got, "Da correggere") {
 		t.Fatalf("restored comments %q", got)
 	}
@@ -174,33 +199,40 @@ const pageFacts = `(async () => {
   };
 })()`
 
+type facts struct {
+	Worst           float64
+	Where           string
+	Font, Overflow  bool
+	Indexes, Labels []string
+	Editors, Sends  int
+}
+
 func TestPagePresentation(t *testing.T) {
 	for name, width := range map[string]int{"desktop": 1280, "narrow": 390} {
 		t.Run(name, func(t *testing.T) {
 			_, p := openRound(t, richRound, width)
-			var f struct {
-				Worst           float64
-				Where           string
-				Font, Overflow  bool
-				Indexes, Labels []string
-				Editors, Sends  int
+			var shell, content facts
+			p.MustEval(pageFacts, &shell)
+			p.Frame("#content").MustEval(pageFacts, &content)
+			for where, f := range map[string]facts{"page": shell, "content frame": content} {
+				if f.Worst < 4.5 {
+					t.Errorf("%s: text contrast %.2f:1 at %s, want at least 4.5:1 (WCAG AA; inactive controls exempt)", where, f.Worst, f.Where)
+				}
+				if !f.Font {
+					t.Errorf("%s: Atkinson Hyperlegible Next did not load", where)
+				}
+				if f.Overflow {
+					t.Errorf("%s overflows horizontally", where)
+				}
 			}
-			p.MustEval(pageFacts, &f)
-			if f.Worst < 4.5 {
-				t.Errorf("text contrast %.2f:1 at %s, want at least 4.5:1 (WCAG AA; inactive controls exempt)", f.Worst, f.Where)
-			}
-			if !f.Font {
-				t.Error("Atkinson Hyperlegible Next did not load")
-			}
+			indexes := append(content.Indexes, shell.Indexes...)
+			labels := append(content.Labels, shell.Labels...)
 			wantIndexes := []string{"01 rgb(36, 90, 150)", "02 rgb(133, 81, 11)", "03 rgb(18, 99, 91)"}
-			if strings.Join(f.Indexes, "|") != strings.Join(wantIndexes, "|") || strings.Join(f.Labels, "|") != "Capire|Confrontare|Decidere" {
-				t.Errorf("chapters %v %v", f.Indexes, f.Labels)
+			if strings.Join(indexes, "|") != strings.Join(wantIndexes, "|") || strings.Join(labels, "|") != "Capire|Confrontare|Decidere" {
+				t.Errorf("chapters %v %v", indexes, labels)
 			}
-			if f.Editors != 1 || f.Sends != 1 {
-				t.Errorf("%d editors and %d send buttons, want one feedback area", f.Editors, f.Sends)
-			}
-			if f.Overflow {
-				t.Error("the page overflows horizontally")
+			if shell.Editors != 1 || shell.Sends != 1 || content.Editors != 0 || content.Sends != 0 {
+				t.Errorf("%d+%d editors and %d+%d send buttons, want one feedback area in the page", shell.Editors, content.Editors, shell.Sends, content.Sends)
 			}
 		})
 	}
@@ -210,7 +242,7 @@ func TestPageShowsTheClosingPage(t *testing.T) {
 	environ := env(t, "LAVAGNA_SESSION=closing")
 	c := startRound(t, environ, richRound)
 	p := cdptest.Start(t).Open(c.url, 1280, 900)
-	p.WaitFor(formShown)
+	settled(t, p)
 	p.Click(`input[value="db"]`)
 	p.Click("#send-feedback")
 	if _, code := c.finish(); code != 0 {
@@ -393,5 +425,104 @@ func TestPageDetachedTabAfterSendingStaysSent(t *testing.T) {
 	p.MustEval(`({Eyebrow: document.querySelector('#feedback-eyebrow').textContent, Delivery: document.querySelector('#delivery').textContent, Sent: document.querySelector('#sent-area').innerText})`, &tab)
 	if tab.Eyebrow != "Feedback inviato" || tab.Delivery != "Questa scheda non è più collegata alla conversazione" || !strings.Contains(tab.Sent, "Un database locale") {
 		t.Fatalf("detached after sending: %+v", tab)
+	}
+}
+
+const prototypeRound = `# Capire
+## Il contatore {ref="Titolo"}
+Prova il prototipo qui sotto.
+
+# Confrontare
+<div class="ui-prototype" data-ref="UI · contatore"><button id="piu" type="button">Aggiungi</button> <output id="conteggio">0</output></div>
+
+# Decidere
+## Va bene? {id="ok"}
+- [si] Sì
+- [no] No
+`
+
+const prototypeScript = `document.querySelector('#piu').addEventListener('click', () => {
+  const out = document.querySelector('#conteggio');
+  out.textContent = String(Number(out.textContent) + 1);
+});
+`
+
+func TestPageAnchorsWithoutActivatingThePrototype(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"round.md": prototypeRound, "prototipo.js": prototypeScript})
+	c := startDir(t, env(t, "LAVAGNA_SESSION=anchor"), dir)
+	p := cdptest.Start(t).Open(c.url, 1280, 900)
+	settled(t, p)
+	f := p.Frame("#content")
+	count := func() string {
+		var s string
+		f.MustEval(`document.querySelector('#conteggio').textContent`, &s)
+		return s
+	}
+	explore := func(want string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for count() != want {
+			if time.Now().After(deadline) {
+				t.Fatalf("the prototype control stays inactive after picking: count %s, want %s", count(), want)
+			}
+			f.Click("#piu")
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	anchor := `document.querySelector('#anchor-label').textContent`
+	picking := `document.querySelector('#pick-anchor').getAttribute('aria-pressed') === 'true'`
+
+	p.Type("#comment-text", "Il pulsante si vede poco")
+	p.Click("#pick-anchor")
+	p.WaitFor(picking + ` && !document.querySelector('#picker-hint').hidden`)
+	f.Click("#piu")
+	p.WaitFor(anchor + ` === 'Riferimento: UI · contatore' && !(` + picking + `)`)
+	if got := count(); got != "0" {
+		t.Fatalf("picking the anchor activated the prototype control: count %s", got)
+	}
+	f.Click("#piu")
+	f.WaitFor(`document.querySelector('[data-ref="UI · contatore"]').classList.contains('referenced')`)
+	if got := count(); got != "0" {
+		t.Fatalf("the second click of a double click activated the prototype control: count %s", got)
+	}
+
+	explore("1")
+	var draft struct {
+		Editor, Anchor string
+	}
+	p.MustEval(`({Editor: document.querySelector('#comment-text').value, Anchor: `+anchor+`})`, &draft)
+	if draft.Editor != "Il pulsante si vede poco" || draft.Anchor != "Riferimento: UI · contatore" {
+		t.Fatalf("exploring again changed the draft: %+v", draft)
+	}
+
+	p.Click("#pick-anchor")
+	p.WaitFor(picking)
+	p.MustEval(`window.postMessage({lavagna: 'anchor', ref: 'Titolo'}, '*')`, nil)
+	f.MustEval(`parent.postMessage({lavagna: 'anchor', ref: 'Inventato'}, '*'); parent.postMessage({lavagna: 'cancel'}, '*')`, nil)
+	p.WaitFor(`!(` + picking + `)`)
+	var forged string
+	p.MustEval(anchor, &forged)
+	if forged != "Riferimento: UI · contatore" {
+		t.Fatalf("a forged anchor message changed the anchor: %q", forged)
+	}
+	p.Click("#pick-anchor")
+	p.WaitFor(picking)
+	p.Press("Escape", 27, 0)
+	p.WaitFor(`!(` + picking + `)`)
+	explore("2")
+
+	p.Click("#add-comment")
+	p.Type("#comment-text", "In generale va bene")
+	var review []string
+	p.MustEval(`[...document.querySelectorAll('#review-list .review-comment')].map(li => li.innerText.replace(/\s+/g, ' ').trim())`, &review)
+	if strings.Join(review, "|") != "UI · contatore Il pulsante si vede poco|In generale va bene nell’editor" {
+		t.Fatalf("review %q", review)
+	}
+	p.Click("#send-feedback")
+	lines, code := c.finish()
+	want := `,"choices":{},"comments":[{"anchor":"UI · contatore","text":"Il pulsante si vede poco"},{"anchor":null,"text":"In generale va bene"}],"images":[]}`
+	if code != 0 || len(lines) != 1 || !strings.HasSuffix(lines[0], want) {
+		t.Fatalf("exit %d, output %q", code, lines)
 	}
 }

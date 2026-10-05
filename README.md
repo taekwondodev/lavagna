@@ -15,7 +15,9 @@ The binary uses only the Go standard library and embeds the page, the v3 stylesh
 ## Commands
 
 - `lavagna check` exits 0 when the conversation identity is bindable, otherwise non-zero with the reason.
-- `lavagna round < round.md` presents a text-only round in the browser and blocks until the user sends one feedback batch. Pass no timeout; Esc interrupts.
+- `lavagna round < round.md` presents a round in the browser and blocks until the user sends one feedback batch. Pass no timeout; Esc interrupts.
+- `lavagna round DIR` does the same for `DIR/round.md` plus the `.js`, `.css` and image files beside it.
+- `lavagna round --help` prints the round grammar and one example.
 - `lavagna close` shows "Frontiera chiusa, torna al terminale", deletes the conversation's lavagna state and releases its page origin.
 
 Identity is `PI_SESSION_ID` plus `PI_SESSION_FILE`, otherwise `LAVAGNA_SESSION`. Another harness opts in by exporting `LAVAGNA_SESSION`. The page opens through `$BROWSER` when set, otherwise `open`. `$BROWSER` is split on whitespace into a command and its arguments, and the URL is appended; when it cannot start, lavagna says so on stderr and keeps waiting on the status-line URL.
@@ -26,7 +28,7 @@ Identity is `PI_SESSION_ID` plus `PI_SESSION_FILE`, otherwise `LAVAGNA_SESSION`.
 
 | Outcome | Last line | Exit |
 |---|---|---|
-| feedback | `{"lavagna":"feedback","round":"r3","submission":"s-…","choices":{"storage":"b"},"comments":[{"anchor":null,"text":"…"}],"images":[]}` | 0 |
+| feedback | `{"lavagna":"feedback","round":"r3","submission":"s-…","choices":{"storage":"b"},"comments":[{"anchor":"File · contesa","text":"…"},{"anchor":null,"text":"…"}],"images":[]}` | 0 |
 | closed | `{"lavagna":"closed","page":"shown"}` or `"page":"not-connected"` | 0 |
 | invalid | `{"lavagna":"invalid","errors":["round.md:12: unknown block ::: card"]}` | 2 |
 | busy | `{"lavagna":"busy","round":"r3"}` | 3 |
@@ -36,17 +38,9 @@ Esc prints nothing. Comment text is capped at 32 KiB per batch, measured as it i
 
 ## Round format
 
-`round.md` is lavagna's own grammar, written in Markdown's block syntax. Any other block (tables, code fences or indented code, quotes, HTML blocks, other heading levels, `*`, `+`, `1)` or indented list markers, other `:::` kinds, `{ref="…"}` attributes) is `invalid` with line-numbered errors before the page opens. Inside text only `**bold**` and `` `code` `` are interpreted; everything else, such as `*`, `_`, `[…](…)`, `<`, `&` or `\`, is shown exactly as written.
+`round.md` is lavagna's own grammar, written in Markdown's block syntax; `lavagna round --help` is its reference. Chapters `# Capire`, `# Confrontare` and `# Decidere` hold headings, paragraphs, lists, tables, the components `::: info`, `proposal`, `evidence`, `steps`, `boundary`, `why` and `excerpt`, `{ref="…"}` anchors, and raw HTML or SVG; decisions are questions with options under `# Decidere`. Inside text only `**bold**` and `` `code` `` are interpreted. Anything else is `invalid` with line-numbered errors before the page opens.
 
-```text
-# Capire | # Confrontare | # Decidere   chapters, in this order, each at most once
-## Heading, ### Heading                 section headings
-::: info [Label] ... :::                information block, default label "Informazione"
-- item, 1. item                         lists; lines indented by two spaces continue an item
-**bold**, `code`                        inline
-## Question {id="storage"}              under # Decidere: one question
-- [a] Option label                      its options (at least two); indented lines are the detail
-```
+A round directory holds at most 32 files and 4 MiB including rendered excerpts, under relative paths with no symlinks; `.lavagna` is reserved for the page's own frame assets. The parser refuses raw HTML `src` and `href` values that are not round files, `data:` images or `#` fragments, so a mistake fails before the page opens; the frame's CSP is what enforces it. An excerpt reads `path:start-end` once, from a regular file under the git root of the working directory, at most 64 KiB, and the page shows that snapshot.
 
 ## Design notes
 
@@ -55,7 +49,9 @@ Esc prints nothing. Comment text is capped at 32 KiB per batch, measured as it i
 - **Send gate.** The feedback endpoint takes only POST with the page's Origin, a JSON body and the round token. A pure gate answers accept, duplicate (same receipt, never delivered twice), answered, stale or foreign (409). Host and capability checks guard every request.
 - **Delivery stages.** The page shows Accepted on the server's reply and Returned once the result line is written. Stages only move forward, because the event stream and the send reply race. The page sends only while its event stream is live; when the stream fails for good it says the tab is no longer connected and keeps the draft.
 - **Drafts.** Drafts live in the tab's `localStorage`, keyed by the round token, so a later conversation that reuses the port never sees them. A changed draft gets a new submission ID; the draft is frozen while a send is in flight. Drafts are deleted when their batch is returned or the conversation closes.
-- **Fonts.** The font response carries `Access-Control-Allow-Origin` for the opaque-origin content frame planned for rich rounds.
+- **Content frame.** Capire and Confrontare render in `<iframe sandbox="allow-scripts">` with an opaque origin; Decidere, the editor and send stay in the page. The frame is served under its own per-round key, never the capability or the round token, and every frame response repeats the sandbox in its CSP: `sandbox allow-scripts; default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'`. The page's own `frame-src 'self'` keeps the frame from navigating to another origin. Known residual: Chrome does not enforce CSP's WebRTC directive, so a round script can send UDP packets (STUN) to any host. Script-level blocking was bypassed through shadow roots, `document.open` and round SVG documents, so lavagna does not pretend to block it. The frame holds no capability, token or host file, so such packets can carry only the agent-written round content and reveal the user's address to that host. Content can render, run its round scripts and propose anchors; it cannot read the page, send or forge feedback, make HTTP or WebSocket requests, submit forms, navigate the page or itself to another origin, open popups or use storage. `internal/live/isolation_test.go` reproduces each attempt of the [isolation decision](https://github.com/taekwondodev/dev/issues/95).
+- **Anchors.** A helper script in the frame proposes anchors and reports the frame's height through `postMessage`. The page accepts a message only from the frame's window, and an anchor only while the user is picking and only when the round defines it; the server checks the anchor again. While picking, and for half a second after picking ends, the helper intercepts pointer, keyboard and form events before round scripts see them, so choosing a prototype control, even with a double click, does not activate it.
+- **Fonts.** The font response carries `Access-Control-Allow-Origin`, because the content frame's origin is opaque.
 
 ## Development
 

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -26,7 +27,10 @@ const (
 	inactive        = "Questo round non è più attivo."
 )
 
-const shellCSP = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+const (
+	shellCSP = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	frameCSP = "sandbox allow-scripts; default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
+)
 
 var submissionPattern = regexp.MustCompile(`^s-[0-9a-f]{8,64}$`)
 
@@ -46,7 +50,14 @@ type view struct {
 	ID    string `json:"round"`
 	Token string `json:"token"`
 	Limit int    `json:"limit"`
+	Frame string `json:"frame"`
 	round.Round
+}
+
+type frame struct {
+	key   string
+	doc   []byte
+	files map[string]round.File
 }
 
 type receipt struct {
@@ -71,7 +82,9 @@ type server struct {
 	mu       sync.Mutex
 	gate     gate
 	view     *view
+	frame    *frame
 	options  map[string]map[string]bool
+	anchors  map[string]bool
 	stage    stage
 	streams  map[chan event]struct{}
 	accepted chan batch
@@ -86,10 +99,24 @@ type event struct {
 	data any
 }
 
-func newRound(o conversation.Origin, id, token string, r round.Round) *server {
+func newRound(o conversation.Origin, id, token string, r round.Round, files []round.File) *server {
 	s := newServer(o)
 	s.view = &view{ID: id, Token: token, Limit: maxCommentBytes, Round: r}
 	s.gate = gate{cap: o.Cap, round: id, token: token}
+	if r.Content != "" {
+		f := &frame{key: conversation.Secret(16), files: map[string]round.File{}}
+		var names []string
+		for _, file := range files {
+			f.files[file.Name] = file
+			names = append(names, file.Name)
+		}
+		f.doc = page.Frame(r.Content, names)
+		s.frame = f
+		s.view.Frame = "/f/" + f.key + "/"
+	}
+	for _, a := range r.Anchors {
+		s.anchors[a] = true
+	}
 	for _, q := range r.Questions {
 		s.options[q.ID] = map[string]bool{}
 		for _, opt := range q.Options {
@@ -105,6 +132,7 @@ func newServer(o conversation.Origin) *server {
 	return &server{
 		origin:   o,
 		options:  map[string]map[string]bool{},
+		anchors:  map[string]bool{},
 		streams:  map[chan event]struct{}{},
 		accepted: make(chan batch, 1),
 		seen:     make(chan struct{}),
@@ -138,6 +166,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /s/{cap}/assets/{file...}", s.capable(s.asset))
 	mux.HandleFunc("GET /s/{cap}/events", s.capable(s.events))
 	mux.HandleFunc("POST /s/{cap}/send", s.send)
+	mux.HandleFunc("GET /f/{key}/{file...}", s.framed)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Cache-Control", "no-store")
@@ -168,7 +197,36 @@ func (s *server) shell(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) asset(w http.ResponseWriter, r *http.Request) {
+	serveAsset(w, r, r.PathValue("file"))
+}
+
+func (s *server) framed(w http.ResponseWriter, r *http.Request) {
+	f := s.frame
+	if f == nil || !same(r.PathValue("key"), f.key) {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Security-Policy", frameCSP)
 	name := r.PathValue("file")
+	if asset, ok := strings.CutPrefix(name, page.FrameAsset); ok {
+		serveAsset(w, r, asset)
+		return
+	}
+	if name == "" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(f.doc)
+		return
+	}
+	file, ok := f.files[name]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", round.Types[strings.ToLower(path.Ext(name))])
+	w.Write(file.Body)
+}
+
+func serveAsset(w http.ResponseWriter, r *http.Request, name string) {
 	b, err := fs.ReadFile(page.Assets, name)
 	if err != nil {
 		http.NotFound(w, r)
@@ -253,7 +311,8 @@ type sendBody struct {
 	Submission string            `json:"submission"`
 	Choices    map[string]string `json:"choices"`
 	Comments   []struct {
-		Text string `json:"text"`
+		Text   string  `json:"text"`
+		Anchor *string `json:"anchor"`
 	} `json:"comments"`
 }
 
@@ -335,8 +394,11 @@ func (s *server) validate(in sendBody) (batch, int, string) {
 		if strings.TrimSpace(c.Text) == "" {
 			return b, http.StatusBadRequest, "empty comment"
 		}
+		if c.Anchor != nil && !s.anchors[*c.Anchor] {
+			return b, http.StatusBadRequest, "unknown anchor"
+		}
 		total += encodedLen(c.Text) - len(`""`)
-		b.comments = append(b.comments, comment{Text: c.Text})
+		b.comments = append(b.comments, comment{Anchor: c.Anchor, Text: c.Text})
 	}
 	if total > maxCommentBytes {
 		return b, http.StatusRequestEntityTooLarge, fmt.Sprintf("comment text exceeds %d bytes", maxCommentBytes)

@@ -21,6 +21,7 @@ type Browser struct {
 	next    int
 	pending map[int]chan message
 	paused  map[string][]string
+	frames  map[string]string
 }
 
 type message struct {
@@ -83,7 +84,7 @@ func Start(t testing.TB) *Browser {
 		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		cmd.Wait()
 	})
-	b := &Browser{t: t, w: toChromeW, pending: map[int]chan message{}, paused: map[string][]string{}}
+	b := &Browser{t: t, w: toChromeW, pending: map[int]chan message{}, paused: map[string][]string{}, frames: map[string]string{}}
 	go b.read(fromChromeR)
 	return b
 }
@@ -100,12 +101,32 @@ func (b *Browser) read(r *os.File) {
 			continue
 		}
 		b.mu.Lock()
-		if m.Method == "Fetch.requestPaused" {
+		switch m.Method {
+		case "Fetch.requestPaused":
 			var p struct {
 				RequestID string `json:"requestId"`
 			}
 			json.Unmarshal(m.Params, &p)
 			b.paused[m.SessionID] = append(b.paused[m.SessionID], p.RequestID)
+		case "Target.attachedToTarget":
+			var a struct {
+				SessionID  string `json:"sessionId"`
+				TargetInfo struct {
+					Type string `json:"type"`
+				} `json:"targetInfo"`
+			}
+			json.Unmarshal(m.Params, &a)
+			if a.TargetInfo.Type == "iframe" {
+				b.frames[m.SessionID] = a.SessionID
+			}
+		case "Target.detachedFromTarget":
+			var d struct {
+				SessionID string `json:"sessionId"`
+			}
+			json.Unmarshal(m.Params, &d)
+			if b.frames[m.SessionID] == d.SessionID {
+				delete(b.frames, m.SessionID)
+			}
 		}
 		ch := b.pending[m.ID]
 		delete(b.pending, m.ID)
@@ -171,6 +192,8 @@ func (b *Browser) Open(url string, width, height int) *Page {
 	}
 	b.must(&attached, "", "Target.attachToTarget", map[string]any{"targetId": target.TargetID, "flatten": true})
 	p := &Page{t: b.t, b: b, session: attached.SessionID}
+	b.must(nil, p.session, "Target.setAutoAttach",
+		map[string]any{"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true})
 	b.must(nil, p.session, "Emulation.setDeviceMetricsOverride",
 		map[string]any{"width": width, "height": height, "deviceScaleFactor": 1, "mobile": false})
 	b.must(nil, p.session, "Page.navigate", map[string]any{"url": url})
@@ -182,8 +205,10 @@ func (p *Page) Reload() {
 	p.b.must(nil, p.session, "Page.reload", map[string]any{})
 }
 
-func (p *Page) eval(expr string, into any) error {
-	raw, err := p.b.call(p.session, "Runtime.evaluate",
+func (p *Page) eval(expr string, into any) error { return p.b.eval(p.session, expr, into) }
+
+func (b *Browser) eval(session, expr string, into any) error {
+	raw, err := b.call(session, "Runtime.evaluate",
 		map[string]any{"expression": expr, "returnByValue": true, "awaitPromise": true})
 	if err != nil {
 		return err
@@ -220,14 +245,19 @@ func (p *Page) MustEval(expr string, into any) {
 
 func (p *Page) WaitFor(expr string) {
 	p.t.Helper()
+	waitFor(p.t, p.eval, expr)
+}
+
+func waitFor(t testing.TB, eval func(string, any) error, expr string) {
+	t.Helper()
 	deadline := time.Now().Add(callTimeout)
 	for {
 		var ok bool
-		if p.eval("Boolean("+expr+")", &ok) == nil && ok {
+		if eval("Boolean("+expr+")", &ok) == nil && ok {
 			return
 		}
 		if time.Now().After(deadline) {
-			p.t.Fatalf("timed out waiting for %s", expr)
+			t.Fatalf("timed out waiting for %s", expr)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -240,13 +270,23 @@ func (p *Page) Click(selector string) {
 
 func (p *Page) ClickTimes(selector string, n int) {
 	p.t.Helper()
-	var pt struct{ X, Y float64 }
-	p.MustEval(fmt.Sprintf(`(() => {
+	var pt point
+	p.MustEval(fmt.Sprintf(`(async () => {
 		const el = document.querySelector(%q);
 		el.scrollIntoView({block: 'center'});
+		%s
 		const r = el.getBoundingClientRect();
 		return {X: r.left + r.width / 2, Y: r.top + r.height / 2};
-	})()`, selector), &pt)
+	})()`, selector, painted), &pt)
+	p.press(pt, n)
+}
+
+type point struct{ X, Y float64 }
+
+const painted = `await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 50))));`
+
+func (p *Page) press(pt point, n int) {
+	p.t.Helper()
 	for i := 0; i < n; i++ {
 		for _, typ := range []string{"mousePressed", "mouseReleased"} {
 			p.b.must(nil, p.session, "Input.dispatchMouseEvent",
@@ -302,4 +342,53 @@ func (p *Page) Wheel(deltaY float64) {
 	p.t.Helper()
 	p.b.must(nil, p.session, "Input.dispatchMouseEvent",
 		map[string]any{"type": "mouseWheel", "x": 200, "y": 400, "deltaX": 0, "deltaY": deltaY})
+}
+
+type Frame struct {
+	p        *Page
+	selector string
+}
+
+func (p *Page) Frame(selector string) *Frame { return &Frame{p: p, selector: selector} }
+
+func (f *Frame) eval(expr string, into any) error {
+	f.p.b.mu.Lock()
+	session := f.p.b.frames[f.p.session]
+	f.p.b.mu.Unlock()
+	if session == "" {
+		return fmt.Errorf("no frame attached to the page")
+	}
+	return f.p.b.eval(session, expr, into)
+}
+
+func (f *Frame) MustEval(expr string, into any) {
+	f.p.t.Helper()
+	waitFor(f.p.t, f.eval, "document.readyState === 'complete'")
+	if err := f.eval(expr, into); err != nil {
+		f.p.t.Fatal(err)
+	}
+}
+
+func (f *Frame) WaitFor(expr string) {
+	f.p.t.Helper()
+	waitFor(f.p.t, f.eval, expr)
+}
+
+func (f *Frame) Click(selector string) {
+	f.p.t.Helper()
+	var r struct{ X, Y, Width, Height float64 }
+	f.MustEval(fmt.Sprintf(`(() => {
+		const r = document.querySelector(%q).getBoundingClientRect();
+		return {X: r.left, Y: r.top, Width: r.width, Height: r.height};
+	})()`, selector), &r)
+	box := fmt.Sprintf(`(() => {
+		const el = document.querySelector(%q);
+		const r = el.getBoundingClientRect();
+		return {X: r.left + el.clientLeft, Y: r.top + el.clientTop};
+	})()`, f.selector)
+	var at point
+	f.p.MustEval(box, &at)
+	f.p.MustEval(fmt.Sprintf(`(async () => { window.scrollBy({top: %f - innerHeight / 2, behavior: 'instant'}); %s })()`, at.Y+r.Y+r.Height/2, painted), nil)
+	f.p.MustEval(box, &at)
+	f.p.press(point{at.X + r.X + r.Width/2, at.Y + r.Y + r.Height/2}, 1)
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -99,16 +100,26 @@ func Check(getenv func(string) string, out, errw io.Writer) int {
 	return exitOK
 }
 
-func Round(getenv func(string) string, src io.Reader, out, errw io.Writer) int {
+func RoundHelp(out io.Writer) int {
+	io.WriteString(out, round.Help)
+	return exitOK
+}
+
+func Round(getenv func(string) string, src io.Reader, dir string, out, errw io.Writer) int {
 	c, err := conversation.FromEnv(getenv)
 	if err != nil {
 		return invalid(out, err.Error())
 	}
-	b, err := io.ReadAll(io.LimitReader(src, round.MaxBytes+1))
+	in, files, errs := input(src, dir)
+	if errs != nil {
+		return invalid(out, errs...)
+	}
+	wd, err := os.Getwd()
 	if err != nil {
 		return failure(out, err)
 	}
-	r, errs := round.Parse(b)
+	in.Excerpt = round.Repository(wd)
+	r, errs := round.Parse(in)
 	if errs != nil {
 		return invalid(out, errs...)
 	}
@@ -136,7 +147,7 @@ func Round(getenv func(string) string, src io.Reader, out, errw io.Writer) int {
 		return failure(out, err)
 	}
 
-	srv := newRound(origin, st.Live, conversation.Secret(16), r)
+	srv := newRound(origin, st.Live, conversation.Secret(16), r, files)
 	hs := &http.Server{Handler: srv.handler(), ReadHeaderTimeout: 10 * time.Second}
 	go hs.Serve(ln)
 	fmt.Fprintf(out, "lavagna · round %s · %s · Esc per interrompere\n", st.Live, origin.URL())
@@ -149,6 +160,21 @@ func Round(getenv func(string) string, src io.Reader, out, errw io.Writer) int {
 	st.Live = ""
 	lease.Save(st)
 	return code
+}
+
+func input(src io.Reader, dir string) (round.Input, []round.File, []string) {
+	if dir != "" {
+		d, errs := round.Load(dir)
+		if errs != nil {
+			return round.Input{}, nil, errs
+		}
+		return round.Input{Source: d.Source, Files: d.Names(), Budget: round.MaxBytes - d.Bytes}, d.Files, nil
+	}
+	b, err := io.ReadAll(io.LimitReader(src, round.MaxBytes+1))
+	if err != nil {
+		return round.Input{}, nil, []string{"round.md: " + err.Error()}
+	}
+	return round.Input{Source: b, Budget: round.MaxBytes - len(b)}, nil, nil
 }
 
 func Close(getenv func(string) string, out io.Writer) int {
