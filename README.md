@@ -18,7 +18,9 @@ The binary uses only the Go standard library and embeds the page, the v3 stylesh
 - `lavagna round < round.md` presents a round in the browser and blocks until the user sends one feedback batch. Pass no timeout; Esc interrupts.
 - `lavagna round DIR` does the same for `DIR/round.md` plus the `.js`, `.css` and image files beside it.
 - `lavagna round --help` prints the round grammar and one example.
-- `lavagna close` shows "Frontiera chiusa, torna al terminale", deletes the conversation's lavagna state and releases its page origin.
+- `lavagna close` shows "Frontiera chiusa, torna al terminale", deletes the conversation's lavagna state and screenshots and releases its page origin.
+
+Every `check`, `round` and `close` also removes the lavagna directories of other conversations untouched for 7 days, skipping any whose call is still live.
 
 Identity is `PI_SESSION_ID` plus `PI_SESSION_FILE`, otherwise `LAVAGNA_SESSION`. Another harness opts in by exporting `LAVAGNA_SESSION`. The page opens through `$BROWSER` when set, otherwise `open`. `$BROWSER` is split on whitespace into a command and its arguments, and the URL is appended; when it cannot start, lavagna says so on stderr and keeps waiting on the status-line URL.
 
@@ -28,13 +30,13 @@ Identity is `PI_SESSION_ID` plus `PI_SESSION_FILE`, otherwise `LAVAGNA_SESSION`.
 
 | Outcome | Last line | Exit |
 |---|---|---|
-| feedback | `{"lavagna":"feedback","round":"r3","submission":"s-…","choices":{"storage":"b"},"comments":[{"anchor":"File · contesa","text":"…"},{"anchor":null,"text":"…"}],"images":[]}` | 0 |
+| feedback | `{"lavagna":"feedback","round":"r3","submission":"s-…","choices":{"storage":"b"},"comments":[{"anchor":"File · contesa","text":"…"},{"anchor":null,"text":"…"}],"images":["/…/lavagna/<key>/images/….png"]}` | 0 |
 | closed | `{"lavagna":"closed","page":"shown"}` or `"page":"not-connected"` | 0 |
 | invalid | `{"lavagna":"invalid","errors":["round.md:12: unknown block ::: card"]}` | 2 |
 | busy | `{"lavagna":"busy","round":"r3"}` | 3 |
 | error | `{"lavagna":"error","message":"…"}` | 1 |
 
-Esc prints nothing. Comment text is capped at 32 KiB per batch, measured as it is encoded in the result line; the page refuses more with a live counter and never truncates. The server also refuses a batch whose result line would exceed 48 KiB, so the line stays inside the 50 KB tail a harness shows the model.
+Esc prints nothing. `images` holds the absolute paths of the batch's screenshots, in the order they appear in the draft. Comment text is capped at 32 KiB per batch, measured as it is encoded in the result line; the page refuses more with a live counter and never truncates. The server also refuses a batch whose result line would exceed 48 KiB, so the line stays inside the 50 KB tail a harness shows the model.
 
 ## Round format
 
@@ -54,6 +56,8 @@ A round directory holds at most 32 files and 4 MiB including rendered excerpts, 
 - **Delivery stages.** The page shows Accepted on the server's reply and Returned once the result line is written; the call records Returned only after the write succeeds. Stages only move forward, because the event stream and the send reply race. When a stream the tab watched live at Accepted drops before Returned, the call died in between: the page shows Uncertain and puts the batch back in the draft for resend. A tab that was closed or reloaded in that window shows its sent batch while reconnecting and claims no delivery stage until the call or the next round says how it ended. The page sends only while its event stream is live; when the stream fails for good it says the tab is no longer connected and keeps the draft.
 - **Continuity.** Nobody holds the origin between calls. A service worker scoped to the conversation's capability path precaches the shell; it answers from the network first and from the cache only when nothing listens, and never touches the event stream or sends. The shell also caches the rich document and its named resources. An opaque sandboxed frame cannot rely on service-worker subresource delivery, so offline restoration builds an in-memory document with embedded resources and the same sandbox. Its original scripts run from exact-byte, integrity-checked copies; its policy still blocks external HTTP and WebSocket connections. The saved resources are deleted with the conversation cache at `close`. The page reconnects its event stream every 250 ms, including a tab reloaded during a gap, so it attaches to the next call on the recorded port before that call would open another tab.
 - **Drafts.** The tab's `localStorage` keeps one record per capability path, so a later conversation that reuses the port never sees it: the round on screen and its draft. A reload or a reopened tab while nobody holds the origin shows that round and draft again. Tabs write the record only when their draft changes and adopt each other's writes, so a stale tab never overwrites a sent batch. A changed draft gets a new submission ID; the draft is frozen while a send is in flight. When the next round arrives, a draft that was never sent, or an Uncertain batch, moves into it once, keeping the choices the new round still offers; a returned batch does not. `close` deletes the record, the cache and the service worker.
+- **Screenshots.** The user pastes or drops screenshots into the feedback area; each uploads to `POST …/images` with the page's Origin, `application/octet-stream` and round token. PNG, JPEG, WebP and GIF are accepted by magic bytes, at most 10 MiB each, stored in the conversation's `images/` directory (0600). The send batch names them by ID, at most 8; lavagna never fetches a URL or reads a host path. Persisted screenshot IDs remain valid across server instances for resend. Screenshots stay until `close` or the 7-day sweep.
+- **Sweep.** Taking a conversation's lease touches its directory. A start removes another conversation's directory only when it is still untouched for 7 days once its lock is held, so a live call is never swept.
 
 ## Security notes
 

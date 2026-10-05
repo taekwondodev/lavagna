@@ -30,7 +30,7 @@ func (g gate) admit(s send) (gate, verdict) {
 	switch {
 	case !same(s.cap, g.cap):
 		return g, foreign
-	case s.round != g.round || !same(s.token, g.token):
+	case !g.current(s.round, s.token):
 		return g, stale
 	case g.admitted == "":
 		g.admitted = s.submission
@@ -41,5 +41,9 @@ func (g gate) admit(s send) (gate, verdict) {
 		return g, answered
 	}
 }
+
+func (g gate) open(round, token string) bool { return g.current(round, token) && g.admitted == "" }
+
+func (g gate) current(round, token string) bool { return round == g.round && same(token, g.token) }
 
 func same(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }

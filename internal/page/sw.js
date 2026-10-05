@@ -17,7 +17,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   url.search = '';
   url.hash = '';
-  if (event.request.method !== 'GET' || !SHELL.includes(url.href)) return;
+  if (event.request.method !== 'GET' || !(SHELL.includes(url.href) || url.href.startsWith(new URL('images/', SCOPE).href))) return;
   event.respondWith(fetch(event.request).then(response => {
     if (response.ok) {
       const copy = response.clone();

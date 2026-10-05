@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -26,6 +29,9 @@ func TestInterruptedAnchoredFeedbackSurvivesReloadAndNewRound(t *testing.T) {
 	p.WaitFor(`document.querySelector('#anchor-label').textContent === 'Riferimento: UI · contatore'`)
 	p.Click("#add-comment")
 	p.Type("#comment-text", "Commento generale")
+	png := screenshot(t)
+	p.Drop("#comment-text", []string{writeFile(t, "anchored.png", png)})
+	p.WaitFor(shots + ` === 1 && document.querySelector('#images img').naturalWidth > 0`)
 	p.Click("#send-feedback")
 	p.WaitFor(`document.querySelector('#delivery').textContent === '` + acceptedText + `'`)
 	first.esc()
@@ -39,9 +45,17 @@ func TestInterruptedAnchoredFeedbackSurvivesReloadAndNewRound(t *testing.T) {
 	turnIs(p, "Tocca a te")
 	p.Click("#send-feedback")
 	lines, code := second.finish()
-	want := `,"choices":{},"comments":[{"anchor":"UI · contatore","text":"Conserva il riferimento"},{"anchor":null,"text":"Commento generale"}],"images":[]}`
-	if code != 0 || len(lines) != 1 || !strings.HasSuffix(lines[0], want) {
+	want := `"comments":[{"anchor":"UI · contatore","text":"Conserva il riferimento"},{"anchor":null,"text":"Commento generale"}]`
+	if code != 0 || len(lines) != 1 || !strings.Contains(lines[0], want) {
 		t.Fatalf("resend after a round with different anchors: exit %d, output %q", code, lines)
+	}
+	var result struct{ Images []string }
+	if err := json.Unmarshal([]byte(lines[0]), &result); err != nil || len(result.Images) != 1 {
+		t.Fatalf("resent screenshots %s: %v", lines[0], err)
+	}
+	got, err := os.ReadFile(result.Images[0])
+	if err != nil || !bytes.Equal(got, png) {
+		t.Fatalf("the rich anchored resend lost screenshot bytes: %v", err)
 	}
 }
 
@@ -55,10 +69,10 @@ func TestRichRoundSurvivesOfflineReloadAndReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFiles(t, dir, map[string]string{
-		"round.md":   "# Capire\n## Snapshot {ref=\"Snapshot\"}\nTesto ricco conservato.\n\n| Prima | Dopo |\n| --- | --- |\n| A | B |\n\n<img id=\"picture\" src=\"screen.png\" alt=\"Schermata\">\n\n<button id=\"prototype\">Prova</button>\n\n# Decidere\n## Dove? {id=\"storage\"}\n- [file] File\n- [db] Database\n",
-		"screen.png": string(image),
-		"style.css":  "#prototype { color: rgb(12, 34, 56); }",
-		"app.js":     "document.querySelector('#prototype').onclick = function () { this.textContent = 'Funziona'; };",
+		"round.md":        "# Capire\n## Snapshot {ref=\"Snapshot\"}\nTesto ricco conservato.\n\n| Prima | Dopo |\n| --- | --- |\n| A | B |\n\n<img id=\"picture\" src=\"screen shot.png\" alt=\"Schermata\">\n\n<button id=\"prototype\">Prova</button>\n\n# Decidere\n## Dove? {id=\"storage\"}\n- [file] File\n- [db] Database\n",
+		"screen shot.png": string(image),
+		"STYLE.CSS":       "#prototype { color: rgb(12, 34, 56); background-image: url('screen shot.png'); }",
+		"APP.JS":          "document.querySelector('#prototype').onclick = function () { this.textContent = 'Funziona'; };",
 	})
 	first := startDir(t, env(t, "LAVAGNA_SESSION=rich-offline"), dir)
 	b := cdptest.Start(t)
@@ -75,7 +89,7 @@ func TestRichRoundSurvivesOfflineReloadAndReopen(t *testing.T) {
 		p.WaitFor(`document.querySelector('#comment-text').value === 'Bozza accanto al contenuto'`)
 		f := p.Frame("#content")
 		f.WaitFor(`document.body.textContent.includes('Testo ricco conservato.') && document.querySelector('table').textContent.includes('Dopo')`)
-		f.WaitFor(`getComputedStyle(document.querySelector('#prototype')).color === 'rgb(12, 34, 56)'`)
+		f.WaitFor(`getComputedStyle(document.querySelector('#prototype')).color === 'rgb(12, 34, 56)' && getComputedStyle(document.querySelector('#prototype')).backgroundImage.includes('data:image/png;base64,')`)
 		f.WaitFor(`document.querySelector('#picture').naturalWidth === 1 && [...document.fonts].some(font => font.status === 'loaded')`)
 		var isolated bool
 		f.MustEval(`(() => { try { void parent.document; return false; } catch { return true; } })()`, &isolated)

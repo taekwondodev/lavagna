@@ -170,7 +170,7 @@ func TestFrameEscapesStayBlocked(t *testing.T) {
 	if errs != nil {
 		t.Fatal(errs)
 	}
-	s := newRound(o, "r1", "tok-1", r, files, nil)
+	s := newRound(o, "r1", "tok-1", r, files, nil, t.TempDir())
 	rec := &recorder{}
 	hs := &http.Server{Handler: rec.wrap(s.handler())}
 	go hs.Serve(ln)

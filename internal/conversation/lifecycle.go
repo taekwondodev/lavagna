@@ -44,8 +44,6 @@ func (s State) Step(e Event) State {
 			}
 			s.Previous = &Outcome{Round: s.Live, Submission: s.Accepted, End: outcome}
 		}
-		// Drafts can survive several interrupted rounds. Keep the authored anchor
-		// names valid for resend, without making them pickable in newer content.
 		s.Anchors = append(slices.Clone(s.Anchors), e.Anchors...)
 		slices.Sort(s.Anchors)
 		s.Anchors = slices.Compact(s.Anchors)

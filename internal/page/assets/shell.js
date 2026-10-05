@@ -54,11 +54,13 @@ let refusal = '';
 let picking = false;
 let chapterTops = {};
 let snapshotURL = null;
+let uploading = 0;
+let imageRefusal = '';
 let acceptedWhileLive = null;
 let leaving = false;
 
 function blank() {
-  return { choices: {}, comments: [], editor: '', anchor: null, editing: null, previous: null, next: 0, submission: null, stage: '', sent: null, uncertain: false, carried: false };
+  return { choices: {}, comments: [], images: [], editor: '', anchor: null, editing: null, previous: null, next: 0, submission: null, stage: '', sent: null, uncertain: false, carried: false };
 }
 
 function stored() {
@@ -84,11 +86,11 @@ function leftover(old, previous) {
   const index = old.comments.findIndex(comment => comment.id === old.editing);
   if (index !== -1 && old.editor.trim()) comments[index] = { text: old.editor.trim(), anchor: old.anchor };
   const editor = index === -1 ? { text: old.editor, anchor: old.anchor } : old.previous || { text: '', anchor: null };
-  return { comments, editor: editor.text, anchor: editor.anchor, choices: old.choices, uncertain: old.uncertain || outcome === 'uncertain' };
+  return { comments, editor: editor.text, anchor: editor.anchor, choices: old.choices, images: old.images, uncertain: old.uncertain || outcome === 'uncertain' };
 }
 
 function resend(batch) {
-  return { comments: batch.comments, editor: '', anchor: null, choices: batch.choices, uncertain: true };
+  return { comments: batch.comments, editor: '', anchor: null, choices: batch.choices, images: batch.images, uncertain: true };
 }
 
 function carry(old, next) {
@@ -102,8 +104,9 @@ function carry(old, next) {
   withComments(result, batch.comments);
   result.editor = batch.editor;
   result.anchor = batch.anchor;
+  result.images = batch.images;
   result.uncertain = batch.uncertain;
-  result.carried = batch.comments.length > 0 || Boolean(batch.editor.trim()) || Object.keys(result.choices).length > 0;
+  result.carried = batch.comments.length > 0 || Boolean(batch.editor.trim()) || Object.keys(result.choices).length > 0 || result.images.length > 0;
   return result;
 }
 
@@ -181,12 +184,14 @@ function markUncertain() {
   draft.choices = { ...batch.choices };
   withComments(draft, batch.comments);
   draft.anchor = batch.anchor;
+  draft.images = batch.images;
   draft.editing = null;
   draft.previous = null;
   draft.editor = batch.editor;
   draft.sent = null;
   editor.value = '';
   syncChoices();
+  renderImages();
   save();
 }
 
@@ -211,6 +216,11 @@ function phase() {
 
 function kilobytes(bytes) {
   return (bytes / 1024).toFixed(1).replace('.', ',') + ' KB';
+}
+
+function size(bytes) {
+  if (bytes < 1024 * 1024) return kilobytes(bytes);
+  return (bytes / 1024 / 1024).toLocaleString('it-IT', { maximumFractionDigits: 1 }) + ' MB';
 }
 
 function countLabel(count) {
@@ -243,6 +253,7 @@ function reviewItems(comments) {
     if (comment.id === 'draft') item.append(element('span', 'nell’editor', 'review-marker'));
     items.push(item);
   }
+  if (draft.images.length) items.push(element('li', draft.images.length + ' screenshot', 'review-comment'));
   return items;
 }
 
@@ -255,6 +266,7 @@ function sentItems(batch) {
     item.append(element('span', comment.text));
     items.push(item);
   }
+  if (batch.images.length) items.push(element('li', batch.images.length + ' screenshot', 'review-comment'));
   return items;
 }
 
@@ -324,8 +336,9 @@ function cancelPicking() {
 function sendBlocker(over, count, answers) {
   if (!live) return 'Lavagna non è collegata: il feedback resta in bozza.';
   if (draft.editing !== null) return 'Salva o annulla la modifica per inviare.';
+  if (uploading) return 'Attendi il caricamento degli screenshot.';
   if (over) return 'Accorcia i commenti per inviare.';
-  if (!answers && count === 0) return 'Scegli un’opzione o scrivi un commento per inviare.';
+  if (!answers && count === 0 && !draft.images.length) return 'Scegli un’opzione, scrivi un commento o allega uno screenshot per inviare.';
   return '';
 }
 
@@ -360,6 +373,8 @@ function updateControls() {
   setText($('#add-comment'), draft.editing === null ? 'Aggiungi commento' : 'Salva modifica');
   $('#cancel-edit').hidden = draft.editing === null;
   $('#cancel-edit').disabled = isSent || sending;
+  for (const remove of document.querySelectorAll('#images button')) remove.disabled = locked;
+  setText($('#image-refusal'), imageRefusal);
 
   const counter = $('#comment-counter');
   counter.hidden = bytes < view.limit * COUNTER_FROM;
@@ -399,6 +414,7 @@ function updateMobileBar(answers, count) {
   const parts = [];
   if (answers) parts.push(answers + (answers === 1 ? ' risposta' : ' risposte'));
   if (count) parts.push(countLabel(count));
+  if (draft.images.length) parts.push(draft.images.length + ' screenshot');
   setText($('#mobile-summary'), !sent() && parts.length ? parts.join(' · ') + ' in bozza' : PHASES[phase()].turn);
 }
 
@@ -436,6 +452,88 @@ function renderComments() {
     item.append(actions);
     list.append(item);
   }
+}
+
+function renderImages() {
+  $('#images').replaceChildren(...draft.images.map((image, index) => {
+    const name = 'Screenshot ' + (index + 1);
+    const item = element('li', undefined, 'shot');
+    const preview = element('img');
+    preview.src = 'images/' + image.id;
+    preview.alt = name;
+    const remove = element('button', 'Rimuovi');
+    remove.type = 'button';
+    remove.disabled = frozen();
+    remove.addEventListener('click', () => {
+      draft.images = draft.images.filter(other => other.id !== image.id);
+      imageRefusal = '';
+      $('#editor-status').textContent = 'Screenshot rimosso dalla bozza.';
+      changed();
+      renderImages();
+    });
+    item.append(preview, element('span', name + ' · ' + size(image.bytes)), remove);
+    return item;
+  }));
+}
+
+function imageProblem(files) {
+  const total = draft.images.length + uploading + files.length;
+  if (total > view.imageLimit) {
+    return `Al massimo ${view.imageLimit} screenshot per invio: con questi sarebbero ${total}. Nessuno è stato aggiunto.`;
+  }
+  const large = files.find(file => file.size > view.imageBytes);
+  if (large) return `«${large.name}» supera ${size(view.imageBytes)}. Nessuno screenshot è stato aggiunto.`;
+  return '';
+}
+
+async function upload(file) {
+  const response = await fetch('images', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', 'Lavagna-Round': view.round, 'Lavagna-Token': view.token },
+    body: file,
+  }).catch(() => { throw new Error('lavagna non risponde'); });
+  const body = await response.json().catch(() => ({}));
+  if (response.status === 415) throw new Error(`«${file.name}» non è un’immagine PNG, JPEG, WebP o GIF`);
+  if (response.status !== 201) throw new Error(body.error || String(response.status));
+  return { id: body.image, bytes: file.size };
+}
+
+async function attach(files) {
+  if (!view || frozen()) return;
+  imageRefusal = imageProblem(files);
+  if (imageRefusal) {
+    updateControls();
+    return;
+  }
+  const target = draft;
+  uploading += files.length;
+  $('#editor-status').textContent = 'Caricamento degli screenshot…';
+  updateControls();
+  const added = [];
+  let problem = '';
+  try {
+    for (const file of files) added.push(await upload(file));
+  } catch (error) {
+    problem = error.message + '. Nessuno screenshot è stato aggiunto.';
+  } finally {
+    uploading -= files.length;
+  }
+  if (draft !== target) {
+    updateControls();
+    return;
+  }
+  imageRefusal = problem;
+  if (!imageRefusal) target.images.push(...added);
+  $('#editor-status').textContent = imageRefusal ? '' : added.length === 1
+    ? 'Screenshot nella bozza. Non è stato inviato.'
+    : `${added.length} screenshot nella bozza. Non sono stati inviati.`;
+  changed();
+  renderImages();
+}
+
+function refuseLinks() {
+  imageRefusal = 'Link e percorsi non vengono caricati: incolla o trascina l’immagine stessa.';
+  updateControls();
 }
 
 function changed() {
@@ -526,18 +624,18 @@ async function cacheFrame(next) {
   const encoded = new Map();
   const scripts = new Map();
   for (const [url, response] of resources) {
-    if (url.endsWith('.css') || url === new URL(next.frame, location.origin).href) continue;
+    if (response.headers.get('Content-Type').startsWith('text/css') || url === new URL(next.frame, location.origin).href) continue;
     const blob = await response.clone().blob();
     encoded.set(url, await dataURL(blob));
-    if (url.endsWith('.js')) {
+    if (response.headers.get('Content-Type').startsWith('text/javascript')) {
       const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
       scripts.set(url, 'sha256-' + btoa(String.fromCharCode(...new Uint8Array(digest))));
     }
   }
   for (const [url, response] of resources) {
-    if (!url.endsWith('.css')) continue;
-    const css = (await response.text()).replace(/url\(\s*(['"]?)([^)'"\s]+)\1\s*\)/g, (match, quote, path) => {
-      const data = encoded.get(new URL(path, url).href);
+    if (!response.headers.get('Content-Type').startsWith('text/css')) continue;
+    const css = (await response.text()).replace(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*?))\s*\)/g, (match, doubleQuoted, singleQuoted, unquoted) => {
+      const data = encoded.get(new URL(doubleQuoted ?? singleQuoted ?? unquoted, url).href);
       return data ? 'url("' + data + '")' : match;
     });
     encoded.set(url, await dataURL(new Blob([css], { type: 'text/css' })));
@@ -556,8 +654,6 @@ async function cacheFrame(next) {
   }
   const policy = doc.createElement('meta');
   policy.httpEquiv = 'Content-Security-Policy';
-  // A meta policy cannot carry sandbox or frame-ancestors. The iframe keeps
-  // its sandbox attribute, and the shell restricts frame navigation.
   policy.content = response.headers.get('Content-Security-Policy')
     .replace(/(?:sandbox|frame-ancestors)[^;]*;?\s*/g, '')
     .replace("script-src 'self'", 'script-src ' + [...scripts.values()].map(hash => "'" + hash + "'").join(' '))
@@ -604,6 +700,7 @@ async function render(next) {
   }
   area.insertAdjacentHTML('beforeend', view.decide);
   setText($('#round-label'), 'Round ' + view.round.replace(/^r/, ''));
+  setText($('#image-help'), `Incolla o trascina qui fino a ${view.imageLimit} screenshot: PNG, JPEG, WebP o GIF, ${size(view.imageBytes)} ciascuno.`);
   document.title = 'lavagna · round ' + view.round.replace(/^r/, '');
   for (const input of document.querySelectorAll('#document input[type=radio]')) {
     input.checked = draft.choices[input.dataset.question] === input.value;
@@ -617,8 +714,10 @@ async function render(next) {
   $('#waiting').hidden = true;
   $('#closed').hidden = true;
   form.hidden = false;
+  imageRefusal = '';
   renderRoute();
   renderComments();
+  renderImages();
   if (!own) save();
   updateControls();
 }
@@ -633,7 +732,8 @@ async function send() {
   draft.submission = draft.submission || newSubmission();
   const comments = collectComments().map(comment => ({ text: comment.text, anchor: comment.anchor || null }));
   const choices = { ...draft.choices };
-  draft.sent = { choices, comments };
+  const images = draft.images.map(image => image.id);
+  draft.sent = { choices, comments, images: draft.images.map(image => ({ ...image })) };
   draft.uncertain = false;
   acceptedWhileLive = draft.submission;
   sending = true;
@@ -645,7 +745,7 @@ async function send() {
     const response = await fetch('send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ round: view.round, token: view.token, submission: draft.submission, choices, comments }),
+      body: JSON.stringify({ round: view.round, token: view.token, submission: draft.submission, choices, comments, images }),
     });
     const body = await response.json().catch(() => ({}));
     if (response.status === 202 || response.status === 200) {
@@ -701,6 +801,46 @@ $('#add-comment').addEventListener('click', () => {
   renderComments();
   editor.focus();
 });
+
+editor.addEventListener('paste', event => {
+  const files = [...event.clipboardData.files];
+  if (!files.length) return;
+  event.preventDefault();
+  attach(files);
+});
+
+function carriesFiles(event) {
+  return event.dataTransfer && event.dataTransfer.types.includes('Files');
+}
+
+$('#feedback').addEventListener('dragover', event => {
+  if (!carriesFiles(event) && !event.dataTransfer.types.includes('text/uri-list')) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = frozen() ? 'none' : 'copy';
+  $('#feedback').classList.toggle('dropping', !frozen());
+});
+
+$('#feedback').addEventListener('dragleave', event => {
+  if (!$('#feedback').contains(event.relatedTarget)) $('#feedback').classList.remove('dropping');
+});
+
+$('#feedback').addEventListener('drop', event => {
+  $('#feedback').classList.remove('dropping');
+  const files = [...event.dataTransfer.files];
+  if (files.length) {
+    event.preventDefault();
+    attach(files);
+  } else if (event.dataTransfer.types.includes('text/uri-list')) {
+    event.preventDefault();
+    refuseLinks();
+  }
+});
+
+for (const type of ['dragover', 'drop']) {
+  window.addEventListener(type, event => {
+    if (carriesFiles(event) && !$('#feedback').contains(event.target)) event.preventDefault();
+  });
+}
 
 $('#cancel-edit').addEventListener('click', () => {
   restorePrevious();
@@ -783,6 +923,7 @@ function adopt() {
   syncChoices();
   noteAcceptedWhileLive();
   renderComments();
+  renderImages();
   updateControls();
 }
 

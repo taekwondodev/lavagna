@@ -44,7 +44,7 @@ type feedbackLine struct {
 func (b batch) line() feedbackLine {
 	return feedbackLine{
 		Lavagna: "feedback", Round: b.round, Submission: b.submission,
-		Choices: b.choices, Comments: b.comments, Images: []string{},
+		Choices: b.choices, Comments: b.comments, Images: b.images,
 	}
 }
 
@@ -96,6 +96,7 @@ func Check(getenv func(string) string, out, errw io.Writer) int {
 		fmt.Fprintln(errw, "lavagna:", err)
 		return exitInvalid
 	}
+	conversation.Sweep(c, time.Now())
 	fmt.Fprintln(out, "lavagna: conversation", c.Key)
 	return exitOK
 }
@@ -110,6 +111,7 @@ func Round(getenv func(string) string, src io.Reader, dir string, out, errw io.W
 	if err != nil {
 		return invalid(out, err.Error())
 	}
+	conversation.Sweep(c, time.Now())
 	in, files, errs := input(src, dir)
 	if errs != nil {
 		return invalid(out, errs...)
@@ -145,7 +147,7 @@ func Round(getenv func(string) string, src io.Reader, dir string, out, errw io.W
 		return failure(out, err)
 	}
 
-	srv := newRound(origin, st.Live, conversation.Secret(16), r, files, st.Previous)
+	srv := newRound(origin, st.Live, conversation.Secret(16), r, files, st.Previous, c.Images())
 	for _, anchor := range st.Anchors {
 		srv.anchors[anchor] = true
 	}
@@ -194,6 +196,7 @@ func Close(getenv func(string) string, out io.Writer) int {
 	if err != nil {
 		return invalid(out, err.Error())
 	}
+	conversation.Sweep(c, time.Now())
 	lease, err := conversation.Acquire(c)
 	if errors.Is(err, conversation.ErrBusy) {
 		return busy(out, c)
