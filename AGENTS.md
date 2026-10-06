@@ -6,9 +6,25 @@ Lavagna is a harness-neutral CLI for browser rounds in agent conversations. It p
 
 This file guides changes to lavagna itself. Daily use starts in [README.md](README.md) and [the round guide](docs/rounds.md).
 
-## Development workflow
+## Dev cycle
 
 Use `dev-cycle` from the shared workflow library for development work. Keep shared procedures in that library rather than copying them into this repository.
+
+### Issue tracker
+
+GitHub Issues on `taekwondodev/lavagna`. See [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
+
+### Issue labels
+
+One category, one readiness and one activity label per issue. See [docs/agents/triage-labels.md](docs/agents/triage-labels.md).
+
+### Delivery
+
+Pull requests into `main` on `origin`. Before implementation or delivery, read [docs/agents/delivery.md](docs/agents/delivery.md) for route and target defaults.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repository root. See [docs/agents/domain.md](docs/agents/domain.md).
 
 ## Conditional references
 
@@ -17,7 +33,6 @@ Use `dev-cycle` from the shared workflow library for development work. Keep shar
 - Read [SECURITY.md](SECURITY.md) before changing resource loading, browser isolation, feedback authorization or access to host files and session transcripts.
 - Read [docs/rounds.md](docs/rounds.md) before changing commands, round input, feedback, delivery status or recovery. Update the owning guide in the same change as its behavior.
 - Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for setup, verification, documentation ownership and recording architectural decisions.
-- Read [docs/agents/delivery.md](docs/agents/delivery.md) before implementation or delivery.
 
 ## Evidence
 
