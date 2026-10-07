@@ -7,6 +7,7 @@ Lavagna connects an agent conversation to a browser page for explicit user feedb
 | **Harness** | The environment invoking lavagna on behalf of an agent conversation. |
 | **Conversation** | The identity binding successive CLI calls to one page origin and retained state. |
 | **Round** | One presentation of authored content and decisions, awaiting one explicit feedback batch. |
+| **Question ledger** | The questions lavagna retains for one conversation until close, each with its current content, round, discussion and settled answer, so that each call sends only what changes. |
 | **Content snapshot** | Retained rendered explanations and resource bytes reusable by another round without inheriting its decisions. |
 | **Shell** | The trusted browser UI that owns decisions, the feedback editor and send. Not the invoking terminal shell. |
 | **Content frame** | The isolated browser frame displaying the round's explanations and prototypes. |
