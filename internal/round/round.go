@@ -7,8 +7,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/taekwondodev/lavagna/internal/diagram"
+	"github.com/taekwondodev/lavagna/internal/page"
 )
 
 const MaxBytes = 4 << 20
@@ -60,9 +64,7 @@ var components = map[string]component{
 	"proposal": {"recommendation", "role-analysis", "Proposta · non approvata"},
 	"why":      {"representation", "role-neutral", "Perché questa forma"},
 	"boundary": {"boundary", "role-neutral", "Confine"},
-	"sequence": {"diagram sequence", "role-information", "Sequenza"},
 	"flow":     {"diagram flow", "role-information", "Flusso"},
-	"bars":     {"diagram bars", "role-information", "Barre"},
 }
 
 var evidenceKinds = map[string]component{
@@ -110,6 +112,11 @@ type parser struct {
 	used      int
 	recap     []RecapRow
 	phase     bool
+	// options are the question's variants for diagrams; current is the chapter
+	// being rendered; repeat holds the diagrams of 01 that 02 draws again.
+	options []diagram.Option
+	current string
+	repeat  []string
 }
 
 func (p *parser) fail(n int, format string, args ...any) {
@@ -295,6 +302,10 @@ func (p *parser) component(ls []line, i int, sc scope) int {
 	}
 	body := ls[i+1 : end]
 	inner := scope{nested: true, frame: sc.frame}
+	if diagram.Kind(kind) {
+		p.diagram(l.n, kind, label, body)
+		return end + 1
+	}
 	if c, ok := components[kind]; ok {
 		if label == "" {
 			label = c.label
@@ -332,6 +343,75 @@ func (p *parser) component(ls []line, i int, sc scope) int {
 		p.fail(l.n, "unknown block ::: %s", kind)
 	}
 	return end + 1
+}
+
+// diagramFont measures diagram labels with the font the page embeds.
+var diagramFont = sync.OnceValues(func() (*diagram.Font, error) {
+	b, err := fs.ReadFile(page.Assets, page.Font)
+	if err != nil {
+		return nil, err
+	}
+	return diagram.ParseFont(b)
+})
+
+var diagramNames = map[string]string{"sequence": "Sequenza", "bars": "Barre"}
+
+// diagram draws a sequence or bars block as static SVG. 01 shows the present
+// state and leaves a diagram that declares variants to 02, which draws one SVG
+// per variant for the frame helper to show.
+func (p *parser) diagram(n int, kind, title string, body []line) {
+	lines := make([]diagram.Line, len(body))
+	for i, l := range body {
+		lines[i] = diagram.Line{N: l.n, Text: l.text}
+	}
+	d, errs := diagram.Parse(kind, title, n, lines, p.options)
+	for _, e := range errs {
+		p.fail(e.Line, "%s", e.Msg)
+	}
+	if d == nil {
+		return
+	}
+	font, err := diagramFont()
+	if err != nil {
+		p.fail(n, "diagram font: %v", err)
+		return
+	}
+	if title == "" {
+		title = diagramNames[kind]
+	}
+	figure := func(variants []string) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, `<figure class="diagram %s"><figcaption class="content-label role-information">%s</figcaption>`, kind, html.EscapeString(title))
+		if len(variants) == 1 {
+			b.WriteString(d.SVG(font, variants[0]))
+		} else {
+			for _, v := range variants {
+				hidden := " hidden"
+				if v == diagram.Now {
+					hidden = ""
+				}
+				fmt.Fprintf(&b, `<div class="diagram-variant" data-variant="%s"%s>%s</div>`, html.EscapeString(v), hidden, d.SVG(font, v))
+			}
+		}
+		b.WriteString(`</figure>`)
+		return b.String()
+	}
+	out, repeat := figure([]string{diagram.Now}), ""
+	switch {
+	case d.Varies() && p.current == "Capire":
+		repeat = figure(d.Variants())
+	case d.Varies():
+		out = figure(d.Variants())
+	}
+	if p.used+len(out)+len(repeat) > p.in.Budget {
+		p.fail(n, "::: %s: the round exceeds the %d byte bound", kind, MaxBytes)
+		return
+	}
+	p.used += len(out) + len(repeat)
+	p.out.WriteString(out)
+	if repeat != "" {
+		p.repeat = append(p.repeat, repeat)
+	}
 }
 
 func (p *parser) recapTable(attr string) {

@@ -64,6 +64,49 @@ question replaces its previous version together with its resources.
 - `{ref}`, `data-ref`, level-1 chapter headings, and shared/root resources are
   unsupported. Anchors are not part of per-question feedback.
 
+## Diagrams
+
+`::: sequence TITLE` and `::: bars TITLE` draw a diagram as static SVG; `:::`
+closes the block and the title is optional. The author writes no coordinates,
+sizes, line breaks or colours: labels are measured with the page font and
+wrapped, and the legend is generated.
+
+```text
+::: sequence Salvataggio interrotto
+Sessione A | a.json.tmp [atomic] | a.json
+Sessione A -> a.json: apre con O_TRUNC [now]
+note Sessione A: crash !1 [now]
+Sessione A -> a.json.tmp: scrive e fsync [atomic]
+a.json --> Sessione A: JSON troncato ?2 [-atomic]
+:::
+
+::: bars Tempo per salvataggio
+Scrittura: 4 ms !1 [now]
+fsync: 5 ms +1 [atomic]
+:::
+```
+
+- Variants are `now`, the present state, and the question's option ids.
+  `[now a b]` at the end of a line draws the element only in those variants;
+  `[-a]` in every variant except those; no tag means always.
+- Before the tag, `!n` marks a problem, `?n` a risk and `+n` a change, each
+  with circled badge n; `!`, `?` and `+` set the tone without a badge. An
+  element drawn in an option variant and absent from `now` is drawn as a
+  change without any marker.
+- sequence: an optional first line `A | B [tag] | C` lists the participants
+  in order; without it they appear in order of use. `A -> B: text` is a
+  message, `A --> B: text` a dashed reply, `note A: text` a note. A line
+  cannot name a participant absent from one of its variants.
+- bars: `Label: 830 B`, one non-negative value per bar; every bar shares one
+  unit. All variants use one scale.
+- A diagram written in Capire is drawn in 01 for `now`, whatever the choice.
+  02 repeats each one that has a variant tag, drawn for the variant shown, and
+  is added when the question has no Confrontare. A diagram written in
+  Confrontare appears only in 02, drawn for the variant shown.
+- Limits: sequence at most 8 participants and 40 lines; bars at most 12 bars.
+  Labels and titles are plain text of at most 80 characters. An unknown
+  variant or participant is an error with its line.
+
 ## Resources and bounds
 
 For `DIR/round.md`, question `crash` owns files only under `DIR/crash/`. A
