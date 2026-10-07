@@ -27,10 +27,11 @@ Run `go test ./...` for the existing unit, CLI and browser integration checks, a
 | Conversation locking, sweep and lifecycle | `internal/conversation/*_test.go` |
 | Admission, screenshot uploads and frame isolation | `internal/live/*_test.go` |
 | Command results and concurrent calls | `cli_test.go` |
-| Question rendering, frame resource isolation, send admission and grouped feedback | `internal/round/questions_test.go`, `internal/live/server_test.go`, `internal/live/feedback_test.go`, `internal/live/phase_test.go` |
+| Question rendering, the page's view, frame resource isolation, send admission and grouped feedback | `internal/round/questions_test.go`, `internal/live/server_test.go`, `internal/live/feedback_test.go`, `internal/live/phase_test.go` |
+| The three-column page: rail, 03, threads, drafts, delivery stages and the shell and frame boundary | `internal/live/page_test.go`, `internal/live/isolation_test.go` |
 | Relay lifetime, listener handoff and delivery receipts | `relay_test.go`, `internal/witness/*_test.go` |
 
-The existing browser tests bound to the previous round page were removed for the per-question transition; follow-up page tickets replace them. The current Go checks exercise question parsing, question-scoped frame routes, send validation, retained outcome reads and the CLI-to-send flow, but do not establish browser interaction coverage. [`internal/cdptest`](../internal/cdptest) remains available for the replacement page tests. CLI integration tests use `BROWSER=true`, so no tab opens in the user's browser.
+Browser tests drive a headless Chrome through [`internal/cdptest`](../internal/cdptest) and skip when no Chrome or Chromium is installed. The page tests run real calls through `PhaseRound`, answered from the page. Recovery, narrow and phone layouts, and Expand are not covered yet. CLI integration tests use `BROWSER=true`, so no tab opens in the user's browser.
 
 [`internal/witnesstest/testdata`](../internal/witnesstest/testdata) holds the witness fixtures. `answered`, `next-round` and `close` were cut from a real Pi 1.0.3 session with `cut.mjs`; `unread`, `retry` and `unrecognized` cover cases that run did not produce, written through Pi's `SessionManager` with modelled message bodies by `record.mjs`. The checked-in fixtures are consumed without launching a model session.
 

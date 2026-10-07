@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -41,6 +42,9 @@ type RecapRow struct {
 	Struck                         bool
 }
 
+// PhaseQuestion is one question as authored. Lead, option labels, details and
+// Reason are plain text for the shell; HTML holds only 01 Capire and
+// 02 Confrontare, rendered for the content frame.
 type PhaseQuestion struct {
 	ID        string        `json:"id"`
 	Title     string        `json:"title"`
@@ -48,16 +52,32 @@ type PhaseQuestion struct {
 	Planned   bool          `json:"planned,omitempty"`
 	Source    string        `json:"-"`
 	HTML      string        `json:"-"`
+	Lead      string        `json:"lead,omitempty"`
 	Options   []PhaseOption `json:"options,omitempty"`
+	Reason    string        `json:"reason,omitempty"`
 	Resources []File        `json:"-"`
 	FrameKey  string        `json:"-"`
 	Frame     string        `json:"frame,omitempty"`
 	StartLine int           `json:"-"`
 }
 
+// Size is the rendered size of the question: its frame document, the text the
+// shell shows and its resources.
+func (q PhaseQuestion) Size() int {
+	n := len(q.HTML) + len(q.Title) + len(q.Lead) + len(q.Reason)
+	for _, o := range q.Options {
+		n += len(o.Label) + len(o.Detail) + len(o.Effect)
+	}
+	for _, r := range q.Resources {
+		n += len(r.Body)
+	}
+	return n
+}
+
 type PhaseOption struct {
 	ID          string `json:"id"`
 	Label       string `json:"label"`
+	Detail      string `json:"detail,omitempty"`
 	Effect      string `json:"effect,omitempty"`
 	Recommended bool   `json:"recommended,omitempty"`
 }
@@ -323,8 +343,12 @@ func parseQuestionBody(q *PhaseQuestion, start int, errs *[]string) {
 	effects := map[int]bool{}
 	recommended := 0
 	current := -1
+	var lead, reason []string
 	for i, line := range strings.Split(q.Source, "\n") {
 		ln := start + 1 + i
+		if chapter == "" && !strings.HasPrefix(line, "## ") && strings.TrimSpace(line) != "" {
+			lead = append(lead, strings.TrimSpace(line))
+		}
 		if strings.HasPrefix(line, "## ") {
 			name := strings.TrimSpace(line[3:])
 			if name != "Capire" && name != "Confrontare" && name != "Decidere" {
@@ -393,8 +417,14 @@ func parseQuestionBody(q *PhaseQuestion, start int, errs *[]string) {
 			}
 			effects[current] = true
 			q.Options[current].Effect = strings.TrimSpace(strings.SplitN(line, "=>", 2)[1])
+		} else if strings.HasPrefix(line, "  ") && current >= 0 {
+			q.Options[current].Detail = strings.TrimSpace(q.Options[current].Detail + " " + strings.TrimSpace(line))
+		} else if strings.TrimSpace(line) != "" {
+			reason = append(reason, strings.TrimSpace(line))
 		}
 	}
+	q.Lead = strings.Join(lead, "\n")
+	q.Reason = strings.Join(reason, "\n")
 	if len(q.Options) < 2 || len(q.Options) > 6 {
 		*errs = append(*errs, fmt.Sprintf("round.md:%d: question needs 2 to 6 options", start))
 	}
@@ -404,6 +434,38 @@ func parseQuestionBody(q *PhaseQuestion, start int, errs *[]string) {
 	if len(q.Options) == 0 {
 		*errs = append(*errs, fmt.Sprintf("round.md:%d: non-planned question needs ## Decidere options", start))
 	}
+}
+
+// frameChapters are the chapters rendered in the content frame. Title, lead
+// and 03 Decidere stay in the shell.
+var frameChapters = map[string]struct{ index, role, purpose string }{
+	"Capire":      {"01", "role-information", "dov’è il problema"},
+	"Confrontare": {"02", "role-analysis", "come cambia con la scelta"},
+}
+
+// optionKey is the letter the page shows for the option at index i.
+func optionKey(i int) string { return string(rune('A' + i)) }
+
+// preview renders the head of 02: one Anteprima chip per option and the
+// effect line of each option. The frame helper shows the variant in use.
+func preview(q *PhaseQuestion) string {
+	var b strings.Builder
+	b.WriteString(`<div class="preview" role="group" aria-label="Anteprima"><span class="preview-label">Anteprima</span>`)
+	for i, o := range q.Options {
+		star, recommended := "", ""
+		if o.Recommended {
+			star, recommended = " ★", ` data-recommended=""`
+		}
+		fmt.Fprintf(&b, `<button type="button" class="chip" data-variant="%s"%s title="%s" aria-pressed="false">%s%s</button>`,
+			html.EscapeString(o.ID), recommended, html.EscapeString(o.Label), optionKey(i), star)
+	}
+	b.WriteString(`<span class="preview-note"></span></div>`)
+	for i, o := range q.Options {
+		if o.Effect != "" {
+			fmt.Fprintf(&b, `<p class="effect" data-variant="%s" hidden><strong>Con %s:</strong> %s</p>`, html.EscapeString(o.ID), optionKey(i), inline(o.Effect))
+		}
+	}
+	return b.String()
 }
 
 // RenderPhase renders every complete question of the call. recap holds the
@@ -421,19 +483,19 @@ func RenderPhase(phase *Phase, excerpt Excerpter, recap []RecapRow) []string {
 			files[q.ID+"/"+file.Name] = true
 		}
 		p := parser{out: &strings.Builder{}, questions: map[string]bool{}, anchors: map[string]bool{}, in: Input{Files: files, Budget: remaining, Excerpt: excerpt}, recap: recap, phase: true}
-		p.out.WriteString("<article data-question=\"" + html.EscapeString(q.ID) + "\"><h1>" + html.EscapeString(q.Title) + "</h1>")
 		chapter := ""
 		var body []line
+		// flush renders a frame chapter; one with no content is hidden.
 		flush := func() {
-			if chapter == "" {
-				for _, text := range body {
-					if strings.TrimSpace(text.text) != "" {
-						fmt.Fprintf(p.out, "<p>%s</p>", inline(strings.TrimSpace(text.text)))
-					}
+			c, framed := frameChapters[chapter]
+			empty := !slices.ContainsFunc(body, func(l line) bool { return strings.TrimSpace(l.text) != "" })
+			if framed && !empty {
+				id := strings.ToLower(chapter)
+				fmt.Fprintf(p.out, `<section class="chapter %s" id="%s"><header class="chapter-header"><span class="chapter-index" aria-hidden="true">%s</span><span class="chapter-name">%s</span><span class="chapter-purpose">%s</span></header><div class="chapter-body">`,
+					c.role, id, c.index, chapter, c.purpose)
+				if chapter == "Confrontare" {
+					p.out.WriteString(preview(q))
 				}
-			}
-			if chapter != "" && (chapter == "Capire" || chapter == "Confrontare") {
-				fmt.Fprintf(p.out, "<section class=\"chapter\"><h2>%s</h2><div class=\"chapter-body\">", html.EscapeString(chapter))
 				p.blocks(body, scope{frame: true})
 				p.out.WriteString("</div></section>")
 			}
@@ -448,7 +510,6 @@ func RenderPhase(phase *Phase, excerpt Excerpter, recap []RecapRow) []string {
 			body = append(body, line{n: q.StartLine + 1 + j, text: text})
 		}
 		flush()
-		p.out.WriteString("</article>")
 		q.HTML = p.out.String()
 		errs = append(errs, p.errs...)
 		remaining -= p.used

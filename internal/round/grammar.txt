@@ -19,6 +19,7 @@ Compare alternatives and consequences.
 
 ## Decidere
 - [atomic] Write a temporary file, then rename {recommended}
+  The file is always old or new; one fsync per save.
   => The old file remains intact until rename.
 - [journal] Append records and recover the last valid record
 
@@ -46,7 +47,15 @@ question replaces its previous version together with its resources.
   Option ids use the question id pattern; `now` is reserved.
 - At most one option ends in `{recommended}`.
 - An indented `=> consequence` line gives that option's effect; at most one per
-  option. A free-text answer is always available and needs no syntax.
+  option. Other indented lines describe the option. A paragraph after the
+  options gives the reason for the recommendation. A free-text answer is
+  always available and needs no syntax.
+- The page shows the title, the lead (text before the first chapter) and
+  Decidere as 03 in its own controls, as plain text with `code` and **bold**.
+  Capire and Confrontare render as 01 and 02 in the question's frame; an empty
+  chapter is hidden. 02 starts with an Anteprima chip per option and the effect
+  line of the variant shown: the preview, else the choice, else the
+  recommended option.
 - A bare title is planned and has no question artifact.
 - `::: excerpt path:start-end 45!1` includes a source excerpt; `45!1` marks
   line 45 as a problem with badge 1. Separate marks with spaces.
@@ -59,6 +68,13 @@ For `DIR/round.md`, question `crash` owns files only under `DIR/crash/`. A
 question's frame is served at `/f/<key>/<question-id>/`; references name files
 as `<question-id>/file`. Only that question's `.js` and `.css` run in its frame.
 No resources are shared across questions.
+
+Scripts follow the choice without asking for it. The frame's `<html>` carries
+`data-option` (the selected option id, absent when none), `data-free` (`true`
+when a free-text answer exists) and `data-variant` (the option 02 shows), and
+`document` receives a `lavagna:option` event with `detail: {option, free,
+variant}` on load and on every change. The frame never receives the free text
+or any message.
 
 Input text, resources and rendered excerpts are bounded to 4 MiB and at most
 32 files per call. Retained question artifacts are bounded to 6 MiB. Resource

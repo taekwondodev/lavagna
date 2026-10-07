@@ -226,6 +226,16 @@ func (p *Page) Close() {
 	}
 }
 
+// Screenshot returns the page as PNG bytes.
+func (p *Page) Screenshot() []byte {
+	p.t.Helper()
+	var shot struct {
+		Data []byte `json:"data"`
+	}
+	p.b.must(&shot, p.session, "Page.captureScreenshot", map[string]any{"format": "png"})
+	return shot.Data
+}
+
 func (p *Page) Reload() {
 	p.t.Helper()
 	p.b.must(nil, p.session, "Page.reload", map[string]any{})

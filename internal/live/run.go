@@ -33,22 +33,6 @@ const (
 	exitBusy    = 3
 )
 
-type feedbackLine struct {
-	Lavagna    string            `json:"lavagna"`
-	Round      string            `json:"round"`
-	Submission string            `json:"submission"`
-	Choices    map[string]string `json:"choices"`
-	Comments   []comment         `json:"comments"`
-	Images     []string          `json:"images"`
-}
-
-func (b batch) line() feedbackLine {
-	return feedbackLine{
-		Lavagna: "feedback", Round: b.round, Submission: b.submission,
-		Choices: b.choices, Comments: b.comments, Images: b.images,
-	}
-}
-
 func encodeJSON(w io.Writer, value any) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)

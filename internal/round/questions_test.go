@@ -286,3 +286,77 @@ func TestRecapRendersTheDecisionsTable(t *testing.T) {
 		t.Fatalf("authored recap body: %v", errs)
 	}
 }
+
+func TestQuestionPartsSplitBetweenShellAndFrame(t *testing.T) {
+	phase, errs := ParsePhase([]byte(`# Cosa succede se crasha? {id="crash"}
+Con un file per sessione resta un rischio.
+Il file può restare a metà.
+## Capire
+Il salvataggio tronca il file.
+## Confrontare
+<div class="screen"></div>
+## Decidere
+- [atomic] Scrittura atomica {recommended}
+  Il file è sempre vecchio o nuovo;
+  un fsync per salvataggio.
+  => Il crash avviene sul ` + "`.tmp`" + `.
+- [journal] Journal con checksum
+  => Si perde solo l'ultimo record.
+- [none] Nessuna protezione
+
+Risolve il caso con **poche righe**.
+`))
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	q := phase.Questions[0]
+	if q.Lead != "Con un file per sessione resta un rischio.\nIl file può restare a metà." {
+		t.Errorf("lead %q", q.Lead)
+	}
+	if q.Options[0].Detail != "Il file è sempre vecchio o nuovo; un fsync per salvataggio." || q.Options[1].Detail != "" {
+		t.Errorf("details %q, %q", q.Options[0].Detail, q.Options[1].Detail)
+	}
+	if q.Reason != "Risolve il caso con **poche righe**." {
+		t.Errorf("reason %q", q.Reason)
+	}
+	if errs := RenderPhase(&phase, nil, nil); errs != nil {
+		t.Fatal(errs)
+	}
+	html := phase.Questions[0].HTML
+	for _, absent := range []string{"Cosa succede", "resta un rischio", "Decidere", "Scrittura atomica</", "poche righe"} {
+		if strings.Contains(html, absent) {
+			t.Errorf("frame document carries shell content %q: %s", absent, html)
+		}
+	}
+	for _, want := range []string{
+		`<section class="chapter role-information" id="capire">`,
+		`<span class="chapter-index" aria-hidden="true">02</span><span class="chapter-name">Confrontare</span>`,
+		`<button type="button" class="chip" data-variant="atomic" data-recommended="" title="Scrittura atomica" aria-pressed="false">A ★</button>`,
+		`<button type="button" class="chip" data-variant="none" title="Nessuna protezione" aria-pressed="false">C</button>`,
+		`<p class="effect" data-variant="atomic" hidden><strong>Con A:</strong> Il crash avviene sul <code>.tmp</code>.</p>`,
+		`<div class="screen"></div>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("frame document lacks %s: %s", want, html)
+		}
+	}
+	if strings.Contains(html, `data-variant="none" hidden`) {
+		t.Errorf("an option without => has an effect line: %s", html)
+	}
+}
+
+func TestEmptyChaptersAreHiddenFromTheFrame(t *testing.T) {
+	phase, errs := ParsePhase([]byte("# Solo capire {id=\"a\"}\n## Capire\nIl problema.\n## Confrontare\n\n## Decidere\n- [x] X\n  => effetto\n- [y] Y\n# Solo decidere {id=\"b\"}\nUna premessa.\n## Decidere\n- [x] X\n- [y] Y\n"))
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	if errs := RenderPhase(&phase, nil, nil); errs != nil {
+		t.Fatal(errs)
+	}
+	if a := phase.Questions[0].HTML; !strings.Contains(a, `id="capire"`) || strings.Contains(a, `id="confrontare"`) || strings.Contains(a, "Anteprima") {
+		t.Errorf("empty 02 rendered: %s", a)
+	}
+	if b := phase.Questions[1].HTML; b != "" {
+		t.Errorf("a question with only lead and 03 needs no frame document: %q", b)
+	}
+}
