@@ -354,9 +354,9 @@ var diagramFont = sync.OnceValues(func() (*diagram.Font, error) {
 	return diagram.ParseFont(b)
 })
 
-var diagramNames = map[string]string{"sequence": "Sequenza", "bars": "Barre"}
+var diagramNames = map[string]string{"sequence": "Sequenza", "flow": "Flusso", "bars": "Barre"}
 
-// diagram draws a sequence or bars block as static SVG. 01 shows the present
+// diagram draws a sequence, flow or bars block as static SVG. 01 shows the present
 // state and leaves a diagram that declares variants to 02, which draws one SVG
 // per variant for the frame helper to show.
 func (p *parser) diagram(n int, kind, title string, body []line) {

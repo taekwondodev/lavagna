@@ -62,7 +62,7 @@ Anything invalid is reported with source line numbers before the page changes. F
 
 ### Draw diagrams
 
-`::: sequence TITLE` and `::: bars TITLE` blocks in Capire or Confrontare are drawn by lavagna as static SVG; no script runs and the frame's content security policy is unchanged. The title is optional and `:::` closes the block. Lavagna measures labels with the page's font and wraps them, chooses every coordinate and colour, and generates the legend; the author writes none of them.
+`::: sequence TITLE`, `::: flow TITLE` and `::: bars TITLE` blocks in Capire or Confrontare are drawn by lavagna as static SVG; no script runs and the frame's content security policy is unchanged. The title is optional and `:::` closes the block. Lavagna measures labels with the page's font and wraps them, chooses every coordinate and colour, and generates the legend; the author writes none of them.
 
 ```text
 ::: sequence Salvataggio interrotto
@@ -71,6 +71,15 @@ Sessione A -> a.json: apre con O_TRUNC [now]
 note Sessione A: crash !1 [now]
 Sessione A -> a.json.tmp: scrive e fsync [atomic]
 a.json --> Sessione A: JSON troncato ?2 [-atomic]
+:::
+
+::: flow Chi scrive il file
+s = Sessione A
+tmp = a.json.tmp [atomic]
+s -> a.json: sovrascrive !1 [-atomic]
+s -> tmp: scrive e fsync [atomic]
+tmp --> a.json: rename [atomic]
+group Disco: tmp, a.json
 :::
 
 ::: bars Tempo per salvataggio
@@ -82,9 +91,10 @@ fsync: 5 ms +1 [atomic]
 - **Variants.** A diagram is drawn for `now`, the present state, and for each option of the question. `[now a b]` at the end of a line keeps the element only in those variants, `[-a]` keeps it in all but those, and a line without a tag is always drawn.
 - **Markers.** Before the tag, `!n`, `?n` and `+n` mark a problem, a risk and a change with circled badge n, as the `45!1` excerpt mark does; `!`, `?` and `+` set only the tone. An element drawn in an option's variant and absent from `now` is drawn as a change without a marker.
 - **sequence.** An optional first line `A | B [tag] | C` fixes the participants and their order; otherwise they appear in order of use. `A -> B: text` is a message, `A --> B: text` a dashed reply and `note A: text` a note on A. A line may not name a participant missing from one of its variants.
+- **flow.** Lavagna lays the nodes out left to right, keeps edges out of the nodes they do not join and keeps each group's box free of other nodes. `id = Label` gives a node a short alias, which may not repeat another node's label, and a node is named by its label or alias. `A -> B: text` is an edge between two different nodes whose text is optional, `A --> B` a dashed edge and a name alone a node without edges; an edge adds the nodes it names. `group Name: A, B` boxes nodes that other lines define, and any line starting with `group ` is a group; a node belongs to at most one group and groups do not nest. The line declaring a node, alone or by alias, gives it its tag and marker; an edge may not name a node missing from one of its variants. Each variant is laid out on its own, so nodes may move between variants.
 - **bars.** One `Label: value unit` per bar, values non-negative and one unit for every bar. Every variant uses the same scale.
 - **Placement.** A diagram written in Capire is drawn in 01 for `now`, whatever the choice. 02 repeats each one that has a variant tag, drawn for the variant 02 shows, so choosing an option or previewing a chip redraws it; a question without Confrontare gets a 02 for these diagrams. A diagram written in Confrontare appears only in 02, drawn for the variant shown.
-- **Limits.** `sequence` has at most 8 participants and 40 lines, `bars` at most 12 bars. Titles and labels are plain text of at most 80 characters; `**bold**` and `` `code` `` are not interpreted. Characters missing from the font are allowed and drawn by the browser's fallback font with a margin. An unknown variant, an unknown participant or any other grammar error is reported with its line.
+- **Limits.** `sequence` has at most 8 participants and 40 lines, `flow` at most 20 nodes, 30 edges and 4 groups, `bars` at most 12 bars. Titles and labels are plain text of at most 80 characters; `**bold**` and `` `code` `` are not interpreted. Characters missing from the font are allowed and drawn by the browser's fallback font with a margin. An unknown variant, participant, alias or node, or any other grammar error, is reported with its line.
 
 ## Continue a phase
 

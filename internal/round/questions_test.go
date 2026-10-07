@@ -447,7 +447,54 @@ func TestGrammarDiagramExampleRenders(t *testing.T) {
 	if errs := RenderPhase(&phase, nil, nil); errs != nil {
 		t.Fatal(errs)
 	}
-	if html := phase.Questions[0].HTML; strings.Count(html, `class="diagram-variant"`) != 6 {
-		t.Errorf("both diagrams vary, so 02 draws 3 variants of each: %s", html)
+	if html := phase.Questions[0].HTML; strings.Count(html, `class="diagram-variant"`) != 9 {
+		t.Errorf("the three diagrams vary, so 02 draws 3 variants of each: %s", html)
+	}
+}
+
+// TestFlowExampleOf17Renders draws the flow example of #17 in a question with
+// options send and inside.
+func TestFlowExampleOf17Renders(t *testing.T) {
+	phase, errs := ParsePhase([]byte(`# Chi conosce la scelta prima del Send? {id="send"}
+## Capire
+::: flow
+cli = lavagna CLI
+frame = Frame sandbox
+Agente -> cli: domande
+cli -> Shell: pagina e token
+cli -> frame: 01 e 02
+Utente -> Shell: sceglie in 03
+Shell -> cli: Send
+Shell -> frame: id opzione ?1 [send]
+Utente -> frame: sceglie di nuovo in 02 !1 [inside]
+group Browser: Shell, frame
+:::
+## Decidere
+- [send] Al Send
+- [inside] Dentro il frame
+`))
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	if errs := RenderPhase(&phase, nil, nil); errs != nil {
+		t.Fatal(errs)
+	}
+	capire, confrontare, ok := strings.Cut(phase.Questions[0].HTML, `id="confrontare"`)
+	if !ok {
+		t.Fatal("a flow with variants needs 02")
+	}
+	if !strings.Contains(capire, `<figure class="diagram flow"><figcaption class="content-label role-information">Flusso</figcaption><svg`) ||
+		!strings.Contains(capire, ">lavagna CLI<") || strings.Contains(capire, ">id opzione<") || strings.Contains(capire, "dg-badge") {
+		t.Errorf("01 draws now: %s", capire)
+	}
+	for _, v := range []string{"now", "send", "inside"} {
+		if !strings.Contains(confrontare, `<div class="diagram-variant" data-variant="`+v+`"`) {
+			t.Errorf("02 lacks variant %s: %s", v, confrontare)
+		}
+	}
+	_, send, _ := strings.Cut(confrontare, `<div class="diagram-variant" data-variant="send"`)
+	send, _, _ = strings.Cut(send, `<div class="diagram-variant" data-variant="inside"`)
+	if !strings.Contains(send, `<g class="dg-risk">`) || !strings.Contains(send, ">id opzione<") || !strings.Contains(send, `class="dg-badge"`) {
+		t.Errorf("send draws the risk ①: %s", send)
 	}
 }

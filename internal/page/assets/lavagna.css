@@ -326,6 +326,8 @@ html.frame[data-expanded="native"] .raw.expanded > .raw-stage { flex: 1; min-hei
 .dg-line { stroke: var(--tone); stroke-width: 1.5; }
 .dg-head { fill: var(--tone); }
 .dg-note { fill: var(--tone-soft); stroke: var(--tone); }
+.dg-group { fill: none; stroke: var(--tone); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.dg-group-name { fill: var(--tone); }
 .dg-bar { fill: var(--tone); }
 .dg-badge { fill: var(--tone); }
 .dg-badge-text { fill: var(--on-accent); }

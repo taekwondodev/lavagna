@@ -66,10 +66,10 @@ question replaces its previous version together with its resources.
 
 ## Diagrams
 
-`::: sequence TITLE` and `::: bars TITLE` draw a diagram as static SVG; `:::`
-closes the block and the title is optional. The author writes no coordinates,
-sizes, line breaks or colours: labels are measured with the page font and
-wrapped, and the legend is generated.
+`::: sequence TITLE`, `::: flow TITLE` and `::: bars TITLE` draw a diagram as
+static SVG; `:::` closes the block and the title is optional. The author writes
+no coordinates, sizes, line breaks or colours: labels are measured with the
+page font and wrapped, and the legend is generated.
 
 ```text
 ::: sequence Salvataggio interrotto
@@ -78,6 +78,15 @@ Sessione A -> a.json: apre con O_TRUNC [now]
 note Sessione A: crash !1 [now]
 Sessione A -> a.json.tmp: scrive e fsync [atomic]
 a.json --> Sessione A: JSON troncato ?2 [-atomic]
+:::
+
+::: flow Chi scrive il file
+s = Sessione A
+tmp = a.json.tmp [atomic]
+s -> a.json: sovrascrive !1 [-atomic]
+s -> tmp: scrive e fsync [atomic]
+tmp --> a.json: rename [atomic]
+group Disco: tmp, a.json
 :::
 
 ::: bars Tempo per salvataggio
@@ -97,15 +106,24 @@ fsync: 5 ms +1 [atomic]
   in order; without it they appear in order of use. `A -> B: text` is a
   message, `A --> B: text` a dashed reply, `note A: text` a note. A line
   cannot name a participant absent from one of its variants.
+- flow: laid out left to right. `id = Label` gives a node a short alias that
+  may not repeat another node's label; a node is named by its label or alias.
+  `A -> B: text` is an edge between two different nodes, its text optional,
+  `A --> B` a dashed edge and a name alone a node without edges; an edge adds
+  the nodes it names. `group Name: A, B` boxes nodes that other lines define,
+  and any line starting with `group ` is a group; a node is in at most one
+  group and groups do not nest. A line declaring a node gives it its tag and
+  marker. An edge cannot name a node absent from one of its variants.
 - bars: `Label: 830 B`, one non-negative value per bar; every bar shares one
   unit. All variants use one scale.
 - A diagram written in Capire is drawn in 01 for `now`, whatever the choice.
   02 repeats each one that has a variant tag, drawn for the variant shown, and
   is added when the question has no Confrontare. A diagram written in
   Confrontare appears only in 02, drawn for the variant shown.
-- Limits: sequence at most 8 participants and 40 lines; bars at most 12 bars.
-  Labels and titles are plain text of at most 80 characters. An unknown
-  variant or participant is an error with its line.
+- Limits: sequence at most 8 participants and 40 lines; flow at most 20
+  nodes, 30 edges and 4 groups; bars at most 12 bars. Labels and titles are
+  plain text of at most 80 characters. An unknown variant, participant, alias
+  or node is an error with its line.
 
 ## Resources and bounds
 

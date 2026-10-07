@@ -1,5 +1,5 @@
-// Package diagram parses the sequence and bars blocks of a question and draws
-// each as one static SVG per variant: now, the present state, and every option
+// Package diagram parses the sequence, flow and bars blocks of a question and
+// draws each as one static SVG per variant: now, the present state, and every option
 // of the question. Labels are measured with the embedded font, so the author
 // writes no coordinates, sizes, line breaks or colours.
 package diagram
@@ -36,7 +36,7 @@ type Error struct {
 }
 
 // Kind reports whether name opens a diagram block.
-func Kind(name string) bool { return name == "sequence" || name == "bars" }
+func Kind(name string) bool { return name == "sequence" || name == "flow" || name == "bars" }
 
 // tone is how an element is drawn. A marker sets it; otherwise an element
 // drawn in an option variant and absent from now is a change.
@@ -84,6 +84,10 @@ type Diagram struct {
 	participants []element
 	steps        []step
 
+	nodes  []element
+	edges  []edge
+	groups []group
+
 	bars []bar
 	unit string
 }
@@ -103,8 +107,11 @@ func (d *Diagram) Variants() []string {
 
 // SVG draws the diagram for variant.
 func (d *Diagram) SVG(f *Font, variant string) string {
-	if d.kind == "bars" {
+	switch d.kind {
+	case "bars":
 		return d.drawBars(f, variant)
+	case "flow":
+		return d.drawFlow(f, variant)
 	}
 	return d.drawSequence(f, variant)
 }
@@ -139,6 +146,8 @@ func Parse(kind, title string, n int, body []Line, options []Option) (*Diagram, 
 	switch kind {
 	case "sequence":
 		p.sequence(n, lines)
+	case "flow":
+		p.flow(n, lines)
 	case "bars":
 		p.barList(n, lines)
 	default:
@@ -197,16 +206,16 @@ func (p *parser) label(n int, what, text string) {
 	}
 }
 
-// presentIn reports, for the step on line n, a participant it names that is
-// absent from a variant drawing the step.
-func (p *parser) presentIn(n int, e element, names ...int) {
+// presentIn reports, for the line n drawing e, an element of of it names that
+// is absent from a variant drawing e.
+func (p *parser) presentIn(n int, e element, what string, of []element, names ...int) {
 	for _, v := range p.d.Variants() {
 		if !e.in(v) {
 			continue
 		}
 		for _, i := range names {
-			if part := p.d.participants[i]; !part.in(v) {
-				p.fail(n, "participant %q is absent from variant %s", part.label, v)
+			if part := of[i]; !part.in(v) {
+				p.fail(n, "%s %q is absent from variant %s", what, part.label, v)
 				return
 			}
 		}

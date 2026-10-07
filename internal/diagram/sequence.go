@@ -89,7 +89,7 @@ func (p *parser) sequence(n int, lines []Line) {
 		if s.from < 0 || s.to < 0 {
 			continue
 		}
-		p.presentIn(l.N, s.element, s.from, s.to)
+		p.presentIn(l.N, s.element, "participant", p.d.participants, s.from, s.to)
 		p.d.steps = append(p.d.steps, s)
 	}
 	if len(p.d.participants) > maxParticipants {

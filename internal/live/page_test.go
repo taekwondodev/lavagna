@@ -631,6 +631,17 @@ Sessione A -> a.json: apre con O_TRUNC !1 [now none]
 Sessione A -> a.json.tmp: scrive 9 KB e fsync [atomic]
 Sessione A -> a.log: append record e checksum [journal]
 :::
+
+::: flow Chi scrive il file
+s = Sessione A
+tmp = a.json.tmp [atomic]
+log = a.log [journal]
+s -> a.json: sovrascrive !1 [now none]
+s -> tmp: scrive e fsync [atomic]
+tmp --> a.json: rename [atomic]
+s -> log: append [journal]
+group Disco: tmp, log, a.json
+:::
 ## Decidere
 - [atomic] Scrittura atomica {recommended}
 - [journal] Journal
@@ -645,14 +656,15 @@ func TestDiagramsFollowTheVariantShown(t *testing.T) {
 	f := p.Frame("#content")
 	shown := `[...document.querySelectorAll('#confrontare .diagram-variant')].filter(d => !d.hidden).map(d => d.dataset.variant).join(' ')`
 	capire := `[...document.querySelectorAll('#capire svg text')].map(t => t.textContent).join('|')`
-	f.WaitFor(shown + ` === 'atomic'`)
+	// Both diagrams, the sequence and the flow, follow the variant shown.
+	f.WaitFor(shown + ` === 'atomic atomic'`)
 	p.Click(`.option[data-option="journal"]`)
-	f.WaitFor(shown + ` === 'journal'`)
+	f.WaitFor(shown + ` === 'journal journal'`)
 	f.Click(`.preview .chip[data-variant="none"]`)
-	f.WaitFor(shown + ` === 'none'`)
+	f.WaitFor(shown + ` === 'none none'`)
 	f.Click(`.preview .chip[data-variant="none"]`)
-	f.WaitFor(shown + ` === 'journal'`)
-	if got := frameString(f, capire); !strings.Contains(got, "apre con O_TRUNC") || strings.Contains(got, "a.json.tmp") || strings.Contains(got, "a.log") {
+	f.WaitFor(shown + ` === 'journal journal'`)
+	if got := frameString(f, capire); !strings.Contains(got, "apre con O_TRUNC") || !strings.Contains(got, "sovrascrive") || strings.Contains(got, "a.json.tmp") || strings.Contains(got, "a.log") {
 		t.Errorf("01 must keep the present state: %s", got)
 	}
 
