@@ -13,7 +13,7 @@ Lavagna is a local CLI for browser rounds in an agent conversation. Its trust mo
 
 Lavagna's shell owns decision controls, threads, the draft, send, the conversation capability and the [round token](CONTEXT.md). Agent-supplied explanations and prototypes render in an opaque-origin `<iframe sandbox="allow-scripts">`, one for the active question, destroyed on every switch; frame responses repeat the sandbox in Content Security Policy (CSP). The shell shows titles, leads, options and messages as text nodes and never parses agent HTML.
 
-The frame has its own [frame key](CONTEXT.md), not the shell capability or round token. The shell accepts frame messages only from the active frame's window and acts only on `layout`, so a forged message changes presentation at most. It sends the frame only `option`: the selected option id and whether a free-text answer exists, never the free text, messages, screenshots, capability or round token. The feedback endpoint requires POST, the shell's Origin and the round token. Round scripts cannot read the shell DOM or its draft, obtain its token through that DOM, or submit valid feedback on the user's behalf.
+The frame has its own [frame key](CONTEXT.md), not the shell capability or round token. The shell accepts frame messages only from the active frame's window and acts only on `layout` and `expand`, so a forged message changes presentation at most. It honors `expand` only while the frame holds focus during a user gesture, and at phone width keeps its own Riduci above the expanded frame, so a round script cannot trap the user in an expansion. It sends the frame only `option`, the selected option id and whether a free-text answer exists, and `expanded`, the expansion state; never the free text, messages, screenshots, capability or round token. The feedback endpoint requires POST, the shell's Origin and the round token. Round scripts cannot read the shell DOM or its draft, obtain its token through that DOM, or submit valid feedback on the user's behalf.
 
 For offline reloads, the shell caches each question frame it shows, with its named resources, and reconstructs an in-memory blob document. It retains `sandbox="allow-scripts"`, embeds resource bytes as data URLs, and pins the copied scripts with CSP hashes and integrity attributes. The shell permits these local snapshot transports; the frame still cannot read the shell or make HTTP, fetch or WebSocket connections. This does not add a script opt-in or change the accepted WebRTC behavior.
 
@@ -36,6 +36,10 @@ The maintainer explicitly accepted this risk on 2026-10-05 and chose to keep the
 ## Accepted residual risk: unsent choice visible to round scripts
 
 So that 02 follows the choice, the shell tells the active question's content frame which option the user selected in 03, or that a free-text answer exists, before Send. Round scripts can read it and, through the accepted WebRTC egress above, could transmit it before the user sends feedback. The frame never receives the free text, thread messages, screenshots, the shell capability or the round token. See [ADR 0001](docs/adr/0001-frame-receives-selected-option.md).
+
+## Accepted residual risk: round scripts can expand on the user's tap
+
+Espandi lives in the content frame, so the shell accepts `expand` from any user gesture inside the active frame. A round script can therefore expand the page again whenever the user taps its content, even right after Riduci. It cannot expand the page without such a tap, and the shell's own Riduci and controls stay usable without touching the frame. Preventing it would move Espandi into the shell, an alternative rejected in [How does the content frame show 01 and 02 of the active question?](https://github.com/taekwondodev/lavagna/issues/16#issuecomment-6033567938). The maintainer accepted this risk on 2026-10-07.
 
 ## Accepted residual risk: local port squatting
 

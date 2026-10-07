@@ -45,6 +45,9 @@ const LINE_SEPARATORS = new RegExp('[' + String.fromCharCode(0x2028, 0x2029) + '
 
 const $ = selector => document.querySelector(selector);
 const composer = $('#composer');
+// At phone width the rail is a strip, the discussion a sheet and Expand shows
+// the block full screen at its own size. lavagna.css uses the same width.
+const PHONE = matchMedia('(max-width: 640px)');
 const encoder = new TextEncoder();
 
 // view is the server's last view of the phase. record is the phase's draft in
@@ -67,6 +70,8 @@ let refusal = '';
 let uploading = 0;
 let imageRefusal = '';
 let snapshotURL = null;
+let expanded = false;
+let sheet = false;
 const renders = new Set();
 
 function blank() {
@@ -385,6 +390,7 @@ function renderRail() {
 function overviewCard() {
   const card = button(undefined, 'card card-overview');
   card.dataset.target = OVERVIEW;
+  card.title = 'Panoramica e decisioni prese';
   if (active === OVERVIEW) card.setAttribute('aria-current', 'true');
   card.append(element('span', undefined, 'card-n card-icon'), element('span', 'Panoramica e decisioni prese', 'card-title'));
   const meta = element('span', undefined, 'card-meta');
@@ -703,6 +709,7 @@ function mountFrame(q, area) {
 }
 
 function destroyFrame() {
+  if (expanded) expand(false);
   $('#frame-area').replaceChildren();
   content = null;
   if (snapshotURL) URL.revokeObjectURL(snapshotURL);
@@ -723,13 +730,38 @@ function sendOption() {
 function fromFrame(event) {
   if (!content || event.source !== content.frame.contentWindow) return;
   const data = event.data;
-  if (!data || typeof data !== 'object' || data.lavagna !== 'layout') return;
+  if (!data || typeof data !== 'object') return;
+  if (data.lavagna === 'expand' && (data.active !== true || frameGesture())) expand(data.active === true);
+  if (data.lavagna !== 'layout') return;
   const height = Number(data.height);
   if (Number.isFinite(height) && height >= 0) content.frame.style.height = Math.min(Math.ceil(height), MAX_FRAME_HEIGHT) + 'px';
   if (!content.ready) {
     content.ready = true;
     sendOption();
   }
+}
+
+// frameGesture tells whether the user is acting inside the frame: it holds
+// focus and the page has transient activation. A round script alone cannot
+// expand the page, so after Riduci it cannot expand it again.
+function frameGesture() {
+  return document.activeElement === content.frame && (!navigator.userActivation || navigator.userActivation.isActive);
+}
+
+// expand changes presentation only: rail and discussion, or at phone width the
+// whole page chrome, hide while the active frame shows one wide block larger.
+// At phone width the shell's own bar keeps Riduci, which frame code cannot
+// remove. The frame learns the state once the layout has changed.
+function expand(active) {
+  const page = $('#page');
+  expanded = active && Boolean(content);
+  if (expanded) page.dataset.expanded = PHONE.matches ? 'native' : 'fit';
+  else delete page.dataset.expanded;
+  if (expanded) setText($('#expand-label'), label(content.id) + ' · schermata a grandezza reale');
+  if (expanded && sheet) toggleSheet();
+  if (!content || !content.frame.contentWindow) return;
+  void page.offsetWidth;
+  content.frame.contentWindow.postMessage({ lavagna: 'expanded', active: expanded, native: page.dataset.expanded === 'native' }, '*');
 }
 
 async function cacheQuestion(q) {
@@ -834,6 +866,7 @@ function renderDiscussion() {
   composer.placeholder = id === OVERVIEW ? 'Commento generale…' : 'Approfondisci ' + label(id) + '…';
   const entries = threadEntries(id);
   setText($('#discussion-count'), plural(entries.length, 'messaggio', 'messaggi'));
+  setText($('#sheet-toggle'), sheet ? 'Chiudi discussione' : 'Discussione' + (entries.length ? ' ' + entries.length : ''));
   const signature = JSON.stringify([id, entries, frozen()]);
   if (signature !== threadKey) {
     threadKey = signature;
@@ -879,6 +912,15 @@ function unstage(id, entry) {
   if (entry.image !== undefined) draft.images.splice(entry.image, 1);
   imageRefusal = '';
   changed();
+  renderDiscussion();
+}
+
+// The discussion opens as a sheet from the footer at phone width; elsewhere it
+// stays beside the question and the toggle is hidden.
+function toggleSheet() {
+  sheet = !sheet;
+  $('#page').toggleAttribute('data-sheet', sheet);
+  $('#sheet-toggle').setAttribute('aria-expanded', String(sheet));
   renderDiscussion();
 }
 
@@ -1261,8 +1303,18 @@ composer.addEventListener('paste', event => {
 
 $('#stage-message').addEventListener('click', stageMessage);
 $('#send').addEventListener('click', send);
+$('#sheet-toggle').addEventListener('click', toggleSheet);
+$('#reduce').addEventListener('click', () => expand(false));
+PHONE.addEventListener('change', () => {
+  if (expanded) expand(true);
+});
 
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && expanded) {
+    event.preventDefault();
+    expand(false);
+    return;
+  }
   if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return;
   event.preventDefault();
   send();
