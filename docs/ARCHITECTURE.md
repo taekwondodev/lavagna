@@ -7,7 +7,7 @@ Lavagna is a local CLI coordinating a browser page with one agent conversation. 
 | Component | Responsibility | Behavior reference |
 | --- | --- | --- |
 | [`main.go`](../main.go) | Dispatch public commands and the internal relay entry point | [Commands](rounds.md#present-and-close) |
-| [`internal/round`](../internal/round) | Load bounded round inputs, parse the grammar and compose immutable content snapshots | [Authoring](rounds.md#author-a-round) |
+| [`internal/round`](../internal/round) | Load bounded question inputs, parse the grammar and render isolated per-question documents | [Authoring](rounds.md#author-questions) |
 | [`internal/conversation`](../internal/conversation) | Bind identity, persist private state and artifacts, serialize calls and sweep expired state | [Conversation and recovery](rounds.md#recover-an-interrupted-round) |
 | [`internal/live`](../internal/live) | Serve the loopback origin, admit feedback, store screenshot uploads and hand the listener between calls and relay | [Feedback](rounds.md#collect-feedback), [Security](../SECURITY.md) |
 | [`internal/page`](../internal/page) | Embed and render the shell and content frame; retain browser drafts and offline snapshots | [Recovery](rounds.md#recover-an-interrupted-round) |
@@ -17,7 +17,7 @@ Test support and verification boundaries are in [Development](DEVELOPMENT.md#ver
 
 ## Conversation ownership
 
-The conversation key is a digest of the harness identity; pages never see the raw session values. The user cache directory holds `lavagna/<key>/state.json` with mode 0600 inside a mode-0700 directory. Lifecycle state retains the loopback origin, its 256-bit page capability, round counter, live lifecycle and authored anchors. Immutable content snapshots and full feedback records are separate private artifacts; uploaded screenshots remain files under `images/`. Retained files use mode 0600. Artifact creation and reads hold the conversation lease, so `close` and expiry cannot race a partial read or publication.
+The conversation key is a digest of the harness identity; pages never see the raw session values. The user cache directory holds `lavagna/<key>/state.json` with mode 0600 inside a mode-0700 directory. State carries an integer format and the question ledger, including each question's current version and status, alongside the loopback origin, page capability, round counter and live lifecycle. Each complete question version is an immutable private `artifacts/question/<id>-<version>.json`; planned questions have no artifact. Full feedback records are separate private artifacts, and uploaded screenshots remain files under `images/`. Retained files use mode 0600. Artifact creation and reads hold the conversation lease, so `close` and expiry cannot race a partial read or publication.
 
 A non-blocking `flock` serializes CLI calls for one conversation. `close` keeps the lock file while deleting other conversation data, so racing calls cannot lock different inodes. The kernel releases the lease on process death. Taking a lease touches the conversation directory; a sweep removes another conversation only if it is still expired after acquiring its lease.
 
@@ -41,9 +41,9 @@ The witness reads `$PI_SESSION_FILE` from the offset where the call returned. A 
 
 The pure send gate distinguishes acceptance, duplicate receipt, answered, stale and foreign submissions. [`internal/live/gate.go`](../internal/live/gate.go) owns the exact decision table; [Security](../SECURITY.md#shell-and-content-boundary) owns request authorization and frame isolation.
 
-Capire and Confrontare render in the content frame. Decidere, the editor and send stay in the shell. A frame helper reports height and proposes anchors through `postMessage`. The shell accepts proposals only from its frame window, while picking, and for anchors defined by the round. The server retains authored anchors across rounds for draft recovery. During picking and for half a second afterward, the helper intercepts pointer, keyboard and form events before prototype scripts see them. Font responses allow cross-origin access because the frame's origin is opaque.
+Each question's Capire and Confrontare material renders in its own content frame. Decidere, the editor and send stay in the shell. A frame helper reports height through `postMessage`; the shell accepts messages only from that question's frame window. During picking and for half a second afterward, the helper intercepts pointer, keyboard and form events before prototype scripts see them. Font responses allow cross-origin access because the frame's origin is opaque.
 
-The live CLI persists admitted feedback before returning a successful result. Small records are returned inline; large records return a bounded deferred result and remain accessible through selective CLI reads. The submission ID still identifies the witness receipt; a deferred receipt does not establish that the agent has read every comment. Content reuse supplies the original rendered frame and resource bytes, while new decisions are parsed independently. This avoids source rereads, inherited choices and a second patch grammar.
+The live CLI persists admitted feedback before returning a successful result. Small records are returned inline; large records return a bounded deferred result and remain accessible through selective CLI reads. The submission ID still identifies the witness receipt; a deferred receipt does not establish that the agent has read every comment. Question replacement writes a new immutable version with its complete resource set; earlier decisions are not inherited. Planned questions are represented in the ledger without a rendered artifact.
 
 Screenshot uploads are stored by the live server; batches reference them by ID and the CLI result resolves them to local paths. The [round guide](rounds.md#collect-feedback) owns supported formats, size limits and retention.
 

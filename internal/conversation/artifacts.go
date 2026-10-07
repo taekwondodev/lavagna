@@ -46,6 +46,13 @@ func (l *Lease) StoreArtifact(kind, id string, data []byte) error {
 	return os.Link(tmp, name)
 }
 
+func (l *Lease) RemoveArtifact(kind, id string) error {
+	if !artifactID.MatchString(kind) || !artifactID.MatchString(id) {
+		return errors.New("invalid artifact reference")
+	}
+	return os.Remove(filepath.Join(l.conv.dir, artifactsDir, kind, id+".json"))
+}
+
 func (l *Lease) ReadArtifact(kind, id string, limit int) ([]byte, error) {
 	if !artifactID.MatchString(kind) || !artifactID.MatchString(id) {
 		return nil, errors.New("invalid artifact reference")

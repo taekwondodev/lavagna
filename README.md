@@ -1,6 +1,6 @@
 # lavagna
 
-A harness-neutral CLI for browser rounds in agent conversations: present one round of content, await one explicit feedback batch, and return it to the invoking shell as a compact machine-readable result.
+A harness-neutral CLI for browser rounds in agent conversations: present one or more questions, await one explicit feedback batch, and return question-grouped machine-readable results to the invoking shell.
 
 ## Install
 
@@ -18,7 +18,7 @@ lavagna round < round.md
 lavagna close
 ```
 
-Run these from the agent's invoking shell. `round` opens the browser and waits for explicit feedback; stdout is one JSON result and operational status goes to stderr. Pass no timeout; Esc interrupts. Start with `lavagna round --help` for the minimal contract and example; load `lavagna round --help grammar` only for richer content. Reuse an earlier content snapshot with `round --reuse rN` and new decisions. Read deferred feedback and needed images before `close`, which deletes the phase's retained data.
+Run these from the agent's invoking shell. `round` presents one or more per-question documents and waits for explicit feedback; stdout is one JSON result and operational status goes to stderr. Pass no timeout; Esc interrupts. Start with `lavagna round --help` for the minimal contract and example; load `lavagna round --help grammar` for the full format. Read deferred feedback with `lavagna feedback SUBMISSION --question ID`, `--overview` or `--all`. Read needed feedback and images before `close`, which deletes the phase's retained data.
 
 The [round guide](docs/rounds.md) covers conversation identity, browser setup, commands, directory input, feedback limits, delivery status and recovery. Read [Security](SECURITY.md) before presenting sensitive material or scripted prototypes.
 

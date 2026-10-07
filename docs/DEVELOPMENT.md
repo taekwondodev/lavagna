@@ -27,10 +27,10 @@ Run `go test ./...` for the existing unit, CLI and browser integration checks, a
 | Conversation locking, sweep and lifecycle | `internal/conversation/*_test.go` |
 | Admission, screenshot uploads and frame isolation | `internal/live/*_test.go` |
 | Command results and concurrent calls | `cli_test.go` |
-| Page behavior, drafts, screenshots and offline rich rounds | `page_test.go`, `continuity_test.go`, `rich_continuity_test.go` |
+| Question rendering, frame resource isolation, send admission and grouped feedback | `internal/round/questions_test.go`, `internal/live/server_test.go`, `internal/live/feedback_test.go`, `internal/live/phase_test.go` |
 | Relay lifetime, listener handoff and delivery receipts | `relay_test.go`, `internal/witness/*_test.go` |
 
-Browser tests use [`internal/cdptest`](../internal/cdptest) to drive headless Chrome or Chromium over `--remote-debugging-pipe`, with a temporary profile and mock keychain. They skip when neither browser is installed; a passing Go command alone does not prove browser coverage. Tests invoke lavagna with `BROWSER=true`, so no tab opens in the user's browser. Exercise the actual page when changing interactive behavior.
+The existing browser tests bound to the previous round page were removed for the per-question transition; follow-up page tickets replace them. The current Go checks exercise question parsing, question-scoped frame routes, send validation, retained outcome reads and the CLI-to-send flow, but do not establish browser interaction coverage. [`internal/cdptest`](../internal/cdptest) remains available for the replacement page tests. CLI integration tests use `BROWSER=true`, so no tab opens in the user's browser.
 
 [`internal/witnesstest/testdata`](../internal/witnesstest/testdata) holds the witness fixtures. `answered`, `next-round` and `close` were cut from a real Pi 1.0.3 session with `cut.mjs`; `unread`, `retry` and `unrecognized` cover cases that run did not produce, written through Pi's `SessionManager` with modelled message bodies by `record.mjs`. The checked-in fixtures are consumed without launching a model session.
 

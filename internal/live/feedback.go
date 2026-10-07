@@ -20,6 +20,8 @@ type FeedbackRequest struct {
 	Submission string
 	Comment    int
 	Offset     int
+	Question   string
+	Overview   bool
 	All        bool
 }
 
@@ -33,7 +35,7 @@ type feedbackItem struct {
 }
 
 func Feedback(getenv func(string) string, out io.Writer, request FeedbackRequest) int {
-	if !submissionPattern.MatchString(request.Submission) || request.Comment < 0 || request.Offset < 0 || request.All && (request.Comment != 0 || request.Offset != 0) {
+	if !submissionPattern.MatchString(request.Submission) || request.Comment < 0 || request.Offset < 0 || request.All && (request.Comment != 0 || request.Offset != 0 || request.Question != "" || request.Overview) || request.Question != "" && (request.Comment != 0 || request.Offset != 0 || request.Overview) || request.Overview && (request.Comment != 0 || request.Offset != 0) {
 		return invalid(out, "invalid feedback reference")
 	}
 	c, err := conversation.FromEnv(getenv)
@@ -53,9 +55,35 @@ func Feedback(getenv func(string) string, out io.Writer, request FeedbackRequest
 	if err != nil {
 		return invalid(out, "feedback not found in this conversation")
 	}
+	var perQuestion phaseOutcomeLine
+	if json.Unmarshal(b, &perQuestion) == nil && perQuestion.Submission == request.Submission && perQuestion.Questions != nil {
+		if request.All {
+			return result(out, exitOK, perQuestion)
+		}
+		if request.Question != "" {
+			question, ok := perQuestion.Questions[request.Question]
+			if !ok || emptyPhaseQuestion(question) {
+				return invalid(out, "question has no feedback in this batch")
+			}
+			return result(out, exitOK, struct {
+				Question string `json:"question"`
+				phaseQuestionLine
+			}{request.Question, question})
+		}
+		if request.Overview {
+			if perQuestion.Overview == nil {
+				return result(out, exitOK, phaseQuestionLine{})
+			}
+			return result(out, exitOK, *perQuestion.Overview)
+		}
+		return result(out, exitOK, deferredSummary(perQuestion))
+	}
 	var line feedbackLine
 	if json.Unmarshal(b, &line) != nil || line.Submission != request.Submission {
 		return failure(out, errors.New("stored feedback is invalid"))
+	}
+	if request.Question != "" || request.Overview {
+		return invalid(out, "selector is not available for this feedback")
 	}
 	if request.All {
 		return result(out, exitOK, line)
@@ -91,6 +119,43 @@ func Feedback(getenv func(string) string, out io.Writer, request FeedbackRequest
 		Next       int    `json:"next"`
 		Length     int    `json:"length"`
 	}{"feedback", line.Submission, request.Comment, request.Offset, text[request.Offset:end], next, len(text)})
+}
+
+func emptyPhaseQuestion(q phaseQuestionLine) bool {
+	return q.Choice == "" && q.Answer == nil && q.Messages == nil && q.Images == nil
+}
+
+func deferredSummary(line phaseOutcomeLine) phaseOutcomeLine {
+	line.Deferred = true
+	for id, q := range line.Questions {
+		q.Messages = countIfList(q.Messages)
+		q.Images = countIfList(q.Images)
+		if answer, ok := q.Answer.(string); ok && answer != "" {
+			q.Answer = true
+		}
+		line.Questions[id] = q
+	}
+	if line.Overview != nil {
+		q := *line.Overview
+		q.Messages = countIfList(q.Messages)
+		q.Images = countIfList(q.Images)
+		line.Overview = &q
+	}
+	return line
+}
+
+func countIfList(value any) any {
+	switch values := value.(type) {
+	case []string:
+		if len(values) > 0 {
+			return len(values)
+		}
+	case []any:
+		if len(values) > 0 {
+			return len(values)
+		}
+	}
+	return value
 }
 
 func feedbackOverview(out io.Writer, line feedbackLine, offset int) int {
