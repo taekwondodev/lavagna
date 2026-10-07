@@ -68,7 +68,7 @@ textarea::placeholder { color: var(--muted); }
 .turn[data-state="user"] { color: var(--action); background: var(--action-soft); border-color: var(--action-border); }
 .turn[data-state="sending"], .turn[data-state="accepted"], .turn[data-state="returned"], .turn[data-state="waiting"], .turn[data-state="received"], .turn[data-state="read"] { color: var(--information); background: var(--information-soft); border-color: var(--information-border); }
 .turn[data-state="received"]::before { animation: pulse 1s infinite; }
-.turn[data-state="reconnecting"], .turn[data-state="detached"], .turn[data-state="inactive"], .turn[data-state="unread"], .turn[data-state="unread-aborted"], .turn[data-state="ended"], .turn[data-state="aborted"] { color: var(--analysis); background: var(--analysis-soft); border-color: var(--analysis-border); }
+.turn[data-state="reconnecting"], .turn[data-state="detached"], .turn[data-state="uncertain"], .turn[data-state="inactive"], .turn[data-state="unread"], .turn[data-state="unread-aborted"], .turn[data-state="ended"], .turn[data-state="aborted"] { color: var(--analysis); background: var(--analysis-soft); border-color: var(--analysis-border); }
 @keyframes pulse { 50% { opacity: .25; } }
 
 .rail { grid-area: rail; overflow-y: auto; padding: 12px 10px 16px; display: flex; flex-direction: column; gap: 12px; background: var(--neutral-soft); border-right: 1px solid var(--line); }
@@ -155,6 +155,8 @@ button.option:disabled.on { opacity: 1; }
 .message { padding: 9px 11px; border-radius: 8px; font-size: 13px; border: 1px solid var(--line); background: var(--surface); }
 .message-agent { background: var(--information-soft); border-color: var(--information-border); }
 .message-staged { background: var(--staged); border: 1px dashed var(--staged-border); }
+.message-note { background: var(--neutral-soft); border-style: dashed; }
+.message-note .message-text { font-style: italic; }
 .message-who { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
 .message-agent .message-who { color: var(--information); }
 .message-staged .message-who { color: var(--analysis); }
@@ -175,13 +177,17 @@ button.option:disabled.on { opacity: 1; }
 .summary { font-size: 13px; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
 .summary[data-state="draft"] { color: var(--analysis); }
 .summary[data-state="accepted"], .summary[data-state="returned"], .summary[data-state="waiting"], .summary[data-state="received"], .summary[data-state="read"] { color: var(--information); font-weight: 650; }
-.summary[data-state="refused"], .summary[data-state="detached"], .summary[data-state="unread"], .summary[data-state="unread-aborted"], .summary[data-state="ended"], .summary[data-state="aborted"] { color: var(--analysis); font-weight: 650; }
+.summary[data-state="refused"], .summary[data-state="detached"], .summary[data-state="uncertain"], .summary[data-state="unread"], .summary[data-state="unread-aborted"], .summary[data-state="ended"], .summary[data-state="aborted"] { color: var(--analysis); font-weight: 650; }
 .counter { font-size: 12px; color: var(--muted); margin: 2px 0 0; font-variant-numeric: tabular-nums; }
 .counter.over { color: var(--analysis); font-weight: 700; }
 .footer-send { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .kbd-hint { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 3px; }
 .kbd-hint kbd { font: inherit; font-size: 11px; min-width: 20px; text-align: center; padding: 1px 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--neutral-soft); color: var(--ink); }
 .send-count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: var(--surface); color: var(--action); font-size: 11px; }
+
+.salvage { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 16px; padding: 12px 14px; border-radius: 8px; font-size: 13px; color: var(--analysis); background: var(--analysis-soft); border: 1px solid var(--analysis-border); }
+.salvage p { margin: 0; flex: 1 1 280px; }
+.salvage-actions { display: flex; gap: 8px; }
 
 /* expansion: the active frame shows one wide block larger */
 .page[data-state="ready"][data-expanded] { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "center" "footer"; }

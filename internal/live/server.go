@@ -70,6 +70,7 @@ func (s stage) MarshalText() ([]byte, error) {
 type view struct {
 	ID         string                `json:"round"`
 	Call       string                `json:"call"`
+	Build      string                `json:"build"`
 	Token      string                `json:"token"`
 	Limit      int                   `json:"limit"`
 	ImageLimit int                   `json:"imageLimit"`
@@ -275,7 +276,7 @@ func newRound(spec roundSpec) *server {
 	s.loadUploads()
 	s.gate = gate{cap: spec.Origin.Cap, round: spec.ID, token: spec.Token}
 	s.frames = map[string]*frame{}
-	s.view = &view{ID: spec.ID, Call: spec.Call, Token: spec.Token, Limit: maxCommentBytes, ImageLimit: maxImages, ImageBytes: maxImageBytes, Previous: spec.Previous,
+	s.view = &view{ID: spec.ID, Call: spec.Call, Build: page.Build, Token: spec.Token, Limit: maxCommentBytes, ImageLimit: maxImages, ImageBytes: maxImageBytes, Previous: spec.Previous,
 		Phase: phaseView{Title: l.Title, Round: l.Round, Questions: []questionView{}, Overview: messages(l.Overview), Decisions: append([]conversation.Decision{}, l.Decisions...)}}
 	for _, q := range spec.Questions {
 		entry := l.Questions[q.ID]

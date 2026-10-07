@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="lavagna-build" content="{{build}}">
   <title>lavagna</title>
   <link rel="stylesheet" href="assets/lavagna.css">
   <script src="assets/shell.js" defer></script>
@@ -30,6 +31,13 @@
         <h1>Frontiera chiusa, torna al terminale</h1>
         <p>L’agente continua nel terminale con il riepilogo delle decisioni e ti chiede il passo successivo.</p>
         <p class="muted">Puoi chiudere questa scheda.</p>
+      </section>
+      <section class="salvage" id="salvage" hidden>
+        <p>Una bozza scritta con un’altra versione di lavagna non si può riprendere. Copiala ora: dopo verrà scartata.</p>
+        <div class="salvage-actions">
+          <button type="button" id="salvage-copy">Copia bozza</button>
+          <button type="button" id="salvage-drop">Scarta</button>
+        </div>
       </section>
       <div class="question" id="question">
         <div id="question-head"></div>
@@ -63,6 +71,7 @@
         <p class="counter" id="counter" aria-live="polite" hidden></p>
       </div>
       <div class="footer-send">
+        <button type="button" id="copy-draft" hidden>Copia bozza</button>
         <span class="kbd-hint" aria-hidden="true"><kbd>⌘</kbd><kbd>↩</kbd> invia</span>
         <button type="button" id="send" class="primary" disabled>Send to Agent<span class="send-count" id="send-count" hidden></span></button>
       </div>

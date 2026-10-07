@@ -12,13 +12,16 @@ const TEXT = {
   unwitnessed: 'stato in tempo reale non disponibile',
   detached: 'Questa scheda non è più collegata alla conversazione',
   closed: 'Frontiera chiusa, torna al terminale',
+  reconnecting: 'Riconnessione a lavagna…',
+  uncertain: 'Consegna non riuscita: l’agente è stato interrotto. I messaggi inviati sono tornati in bozza: puoi reinviarli.',
 };
 // Each stage: the short form in the title bar and the full sentence in the
 // footer. A null sentence shows the draft summary instead.
 const STAGES = {
   connecting: ['Collegamento a lavagna…', ''],
   user: ['Tocca a te', null],
-  reconnecting: ['Riconnessione a lavagna…', ''],
+  reconnecting: ['Riconnessione a lavagna…', TEXT.reconnecting],
+  uncertain: ['Consegna non riuscita', TEXT.uncertain],
   sending: ['Invio in corso…', 'Invio in corso…'],
   inactive: ['Round non più attivo', ''],
   accepted: ['Inviato', TEXT.accepted],
@@ -38,6 +41,11 @@ const DEGRADED = ['returned', 'waiting', 'read'];
 const OVERVIEW = ':overview';
 const RECORD_KEY = 'lavagna:' + location.pathname;
 const CACHE_NAME = 'lavagna:' + location.pathname;
+const RELOAD_KEY = 'lavagna:reload:' + location.pathname;
+const VIEW_URL = new URL('view.json', location.href).href;
+const BUILD = document.querySelector('meta[name="lavagna-build"]').content;
+const DRAFT_VERSION = 1;
+const SALVAGED = ['text', 'editor', 'composer', 'free', 'answer', 'messages', 'comments'];
 const RETRY_MS = 250;
 const COUNTER_FROM = 0.75;
 const MAX_FRAME_HEIGHT = 100000;
@@ -72,27 +80,53 @@ let imageRefusal = '';
 let snapshotURL = null;
 let expanded = false;
 let sheet = false;
+let acceptedLive = null;
+let salvaged = '';
 const renders = new Set();
 
 function blank() {
-  return { questions: {}, overview: thread(), seen: {}, heard: {}, batch: null, delivery: null, submission: null };
+  return { version: DRAFT_VERSION, call: '', active: null, questions: {}, overview: thread(), seen: {}, heard: {}, batch: null, delivery: null, submission: null };
 }
 
-function thread() { return { messages: [], images: [], composer: '' }; }
+function thread() { return { messages: [], images: [], composer: '', notes: [] }; }
 
+function callNumber(call) { return Number(String(call || '').replace(/^c/, '')) || 0; }
+
+// stored reads the phase record. A record this shell cannot read comes back as
+// its raw text, to be offered once and dropped.
 function stored() {
+  let raw = null;
+  try { raw = localStorage.getItem(RECORD_KEY); } catch { }
+  if (raw === null) return {};
   try {
-    const value = JSON.parse(localStorage.getItem(RECORD_KEY));
-    if (value && value.questions && value.overview && value.seen) return value;
+    const value = JSON.parse(raw);
+    if (value && value.version === DRAFT_VERSION) return { record: value };
   } catch { }
-  return null;
+  return { unreadable: raw };
 }
 
-// save stores the record. A batch stays stored only until it is returned:
-// until then a reload or a lost call needs it; afterwards it is delivered and
-// only this tab shows it until the server's threads hold it.
+// salvage collects the text the user wrote in an unreadable record.
+function salvage(raw) {
+  const texts = [];
+  const walk = (value, name) => {
+    if (typeof value === 'string') {
+      if (SALVAGED.includes(name) && value.trim()) texts.push(value.trim());
+    } else if (value && typeof value === 'object') {
+      for (const [field, inner] of Object.entries(value)) walk(inner, Array.isArray(value) ? name : field);
+    }
+  };
+  try { walk(JSON.parse(raw), ''); } catch { return raw.trim(); }
+  return texts.join('\n\n');
+}
+
+// save stores the record unless another tab already stored a later call's. A
+// batch stays stored only until it is returned: until then a reload or a lost
+// call needs it; afterwards it is delivered and only this tab shows it until
+// the server's threads hold it.
 function save() {
   if (!record) return;
+  const other = stored().record;
+  if (other && callNumber(other.call) > callNumber(record.call)) return;
   const delivered = record.delivery && ORDER.indexOf(record.delivery.stage) >= ORDER.indexOf('returned');
   try { localStorage.setItem(RECORD_KEY, JSON.stringify(delivered ? { ...record, batch: null } : record)); } catch { }
 }
@@ -227,19 +261,42 @@ function imageCount() {
   return total;
 }
 
-// reconcile adapts the phase draft to a new view: drafts of questions that no
-// longer take an answer lose it, and a batch the threads now hold stops being
-// shown from the draft. A batch from an earlier call that the ledger never
-// received returns to the draft.
-function reconcile() {
+// named is how a notice names an answer: its letter, or the free text.
+function named(q, answer) {
+  if (answer.choice) return answer.key || (q ? key(q, answer) : '?');
+  return '«' + answer.text.trim() + '»';
+}
+
+// reconcile adapts the phase draft to a view; prev is the view it replaces.
+// A rewritten question keeps a choice whose option survives; otherwise its
+// thread says the choice is gone. A settled question drops a different staged
+// answer and its thread says so. Restored messages the ledger now holds leave
+// the draft. A batch from an earlier call that the ledger never received
+// returns to the draft.
+function reconcile(prev) {
   for (const id of Object.keys(record.questions)) {
-    const q = question(id);
-    if (!q) {
-      delete record.questions[id];
-      continue;
+    if (!question(id)) delete record.questions[id];
+  }
+  for (const q of questions()) {
+    const draft = peek(q.id);
+    const old = prev && prev.phase.questions.find(p => p.id === q.id);
+    if (draft) {
+      draft.messages = draft.messages.filter(m => !m.from || !received(m.from));
+      draft.images = draft.images.filter(image => !image.from || !received(image.from));
     }
-    const draft = record.questions[id];
-    if (draft.answer && (!answerable(q) || draft.answer.choice && !q.options.some(o => o.id === draft.answer.choice))) delete draft.answer;
+    const answer = draft && draft.answer;
+    if (answer && !answerable(q)) {
+      const decided = ledgerAnswer(q);
+      if (q.status === 'settled' && (answer.choice || answer.text && answer.text.trim()) && !sameAnswer(answer, decided)) {
+        draftOf(q.id).notes.push('Chiusa con ' + (decided.choice ? key(q, decided) : 'la risposta libera') + '; la tua bozza ' + named(old, answer) + ' non è stata inviata. Scrivilo qui se vuoi riaprirla.');
+      }
+      delete draft.answer;
+    } else if (answer && answer.choice && !q.options.some(o => o.id === answer.choice)) {
+      draft.notes.push('La tua scelta ' + named(old, answer) + ' non esiste più nella nuova versione');
+      delete draft.answer;
+    } else if (!answer && old && old.version !== q.version && old.answer && old.answer.choice && !q.options.some(o => o.id === old.answer.choice)) {
+      draftOf(q.id).notes.push('La tua scelta ' + key(old, old.answer) + ' non esiste più nella nuova versione');
+    }
   }
   const batch = record.batch;
   if (batch && received(batch.submission)) record.batch = null;
@@ -251,19 +308,40 @@ function reconcile() {
     inactive = false;
     refusal = '';
   }
+  record.call = view.call;
 }
 
+// restore returns a batch to the draft before anything written after it. A
+// choice changed since keeps the newer value. Restored items remember their
+// submission, so they leave the draft once the ledger holds them.
 function restore(batch) {
   const back = (id, sent) => {
     if (id !== OVERVIEW && !question(id)) return;
     const draft = draftOf(id);
-    draft.messages = (sent.messages || []).map(text => ({ text })).concat(draft.messages);
-    draft.images = (sent.images || []).concat(draft.images);
+    const from = batch.submission;
+    draft.messages = (sent.messages || []).map(text => ({ text, from })).concat(draft.messages);
+    draft.images = (sent.images || []).map(image => ({ ...image, from })).concat(draft.images);
     const q = question(id);
     if (q && answerable(q) && !draft.answer && (sent.choice || sent.answer)) draft.answer = sent.choice ? { choice: sent.choice } : { text: sent.answer };
   };
   for (const id in batch.questions) back(id, batch.questions[id]);
   back(OVERVIEW, batch.overview);
+}
+
+// markUncertain returns the batch to the draft when the stream watched it
+// accepted and then dropped before it was returned.
+function markUncertain() {
+  const d = delivery();
+  if (!d || d.stage !== 'accepted' || d.submission !== acceptedLive || !record.batch) return;
+  restore(record.batch);
+  record.batch = null;
+  record.delivery = { call: d.call, submission: null, stage: '', unwitnessed: false, uncertain: true };
+  save();
+}
+
+function noteAccepted() {
+  const d = delivery();
+  if (live && d && d.stage === 'accepted') acceptedLive = d.submission;
 }
 
 // changed records a draft edit. Composer text never shows on the rail, so
@@ -296,6 +374,7 @@ function phase() {
     if (d.stage === 'accepted' && !live) return 'reconnecting';
     return d.stage;
   }
+  if (d && d.uncertain) return 'uncertain';
   if (inactive) return 'inactive';
   return live ? 'user' : 'reconnecting';
 }
@@ -499,6 +578,7 @@ function defaultActive() {
 function show(id) {
   if (id === active) return;
   active = id;
+  record.active = id;
   composer.value = draftOf(id).composer;
   setText($('#composer-status'), '');
   imageRefusal = '';
@@ -665,7 +745,7 @@ function choose(id, option) {
   const q = question(id);
   if (!q || !answerable(q) || frozen()) return;
   const draft = draftOf(id);
-  draft.answer = answerOf(q).choice === option ? {} : { choice: option };
+  draft.answer = answerOf(q).choice === option ? {} : { choice: option, key: key(q, { choice: option }) };
   changed();
   updateDecide(q);
 }
@@ -693,7 +773,6 @@ function mountFrame(q, area) {
   area.append(frame);
   if (live) {
     frame.src = q.frame;
-    track(cacheQuestion(q)).catch(() => { });
     return;
   }
   track(snapshot(q)).then(url => {
@@ -765,7 +844,6 @@ function expand(active) {
 }
 
 async function cacheQuestion(q) {
-  await navigator.serviceWorker.ready;
   const cache = await caches.open(CACHE_NAME);
   for (const path of q.resources || []) {
     const url = new URL(path, location.origin).href;
@@ -773,6 +851,25 @@ async function cacheQuestion(q) {
     const response = await fetch(url);
     if (!response.ok) throw new Error('Question resource unavailable');
     await cache.put(url, response);
+  }
+}
+
+// cacheView keeps the view and every question's frame, so a reload while
+// nothing listens rebuilds the page and rereads any question.
+async function cacheView(next) {
+  const cache = await caches.open(CACHE_NAME);
+  await cache.put(VIEW_URL, new Response(JSON.stringify(next), { headers: { 'Content-Type': 'application/json' } }));
+  for (const q of next.phase.questions) {
+    if (q.frame) await cacheQuestion(q).catch(() => { });
+  }
+}
+
+async function cachedView() {
+  try {
+    const response = await caches.match(VIEW_URL, { cacheName: CACHE_NAME });
+    return response ? await response.json() : null;
+  } catch {
+    return null;
   }
 }
 
@@ -845,6 +942,8 @@ async function snapshot(q) {
 // call's batch until the server holds it, then the staged draft.
 function threadEntries(id) {
   const entries = serverThread(id).map(m => ({ kind: m.author === 'agent' ? 'agent' : 'user', text: m.text || '', images: (m.images || []).map(image => ({ id: image })) }));
+  const notes = peek(id) ? peek(id).notes || [] : [];
+  for (const text of notes) entries.push({ kind: 'note', text, images: [] });
   const batch = record.batch;
   const sent = batch && (id === OVERVIEW ? batch.overview : batch.questions[id]);
   if (sent) {
@@ -885,7 +984,7 @@ function renderDiscussion() {
 
 function message(id, entry) {
   const item = element('li', undefined, 'message message-' + entry.kind);
-  const who = element('p', entry.kind === 'agent' ? 'Agente' : entry.kind === 'staged' ? 'Tu · in bozza' : 'Tu', 'message-who');
+  const who = element('p', { agent: 'Agente', staged: 'Tu · in bozza', note: 'lavagna', user: 'Tu' }[entry.kind], 'message-who');
   if (entry.kind === 'staged') {
     const remove = button('×', 'unstage');
     remove.setAttribute('aria-label', 'Rimuovi dalla bozza');
@@ -1035,6 +1134,7 @@ function updateFooter() {
     : `${kilobytes(bytes)} di ${kilobytes(view.limit)} disponibili per il testo`);
   const send = $('#send');
   send.disabled = sendBlocker(items, over);
+  $('#copy-draft').hidden = !detached;
   const badge = $('#send-count');
   badge.hidden = !count;
   setText(badge, String(count));
@@ -1044,6 +1144,37 @@ function updateFooter() {
 function draftUnwitnessed(name) {
   const d = delivery();
   return d && d.unwitnessed && DEGRADED.includes(name);
+}
+
+// draftText is every staged text, grouped by question and Overview.
+function draftText() {
+  const parts = [];
+  const section = (title, lines) => {
+    if (lines.length) parts.push(title + '\n' + lines.join('\n'));
+  };
+  for (const q of questions()) {
+    const lines = [];
+    if (stagedChoice(q)) {
+      const answer = answerOf(q);
+      const option = q.options.find(o => o.id === answer.choice);
+      if (option) lines.push('Scelta ' + key(q, answer) + ': ' + option.label);
+      else if (answer.text && answer.text.trim()) lines.push('Risposta: ' + answer.text.trim());
+    }
+    const draft = peek(q.id);
+    if (draft) lines.push(...stagedMessages(draft));
+    section(number(q.id) + ' · ' + q.title, lines);
+  }
+  section('Panoramica', stagedMessages(record.overview));
+  return parts.join('\n\n');
+}
+
+async function copyText(text, control) {
+  try {
+    await navigator.clipboard.writeText(text);
+    setText(control, 'Copiata');
+  } catch {
+    setText(control, 'Copia non riuscita');
+  }
 }
 
 function newSubmission() {
@@ -1091,6 +1222,7 @@ function clearSent() {
     draft.messages = [];
     draft.images = [];
     draft.composer = '';
+    draft.notes = [];
     delete draft.answer;
   }
   record.overview = thread();
@@ -1120,6 +1252,7 @@ async function send() {
       record.batch = { submission, ...shown };
       clearSent();
       advance({ stage: 'accepted', ...body });
+      noteAccepted();
       record.submission = null;
     } else if (response.status === 409) {
       inactive = true;
@@ -1137,6 +1270,7 @@ async function send() {
   } finally {
     if (!closed) {
       sending = false;
+      if (!live) markUncertain();
       save();
       refreshViews();
     }
@@ -1154,12 +1288,43 @@ function ensureActive() {
   composer.value = draftOf(active).composer;
 }
 
+// reloadForBuild reloads a tab whose shell differs from the server's, once
+// per build. Without sessionStorage it keeps the tab rather than risk a loop.
+function reloadForBuild(build) {
+  if (!build) return false;
+  if (build === BUILD) {
+    try { sessionStorage.removeItem(RELOAD_KEY); } catch { }
+    return false;
+  }
+  try {
+    if (sessionStorage.getItem(RELOAD_KEY) === build) return false;
+    sessionStorage.setItem(RELOAD_KEY, build);
+  } catch {
+    return false;
+  }
+  leaving = true;
+  location.reload();
+  return true;
+}
+
 function apply(next) {
   if (closed) return;
+  const prev = view;
   view = next;
-  if (!record) record = stored() || blank();
-  reconcile();
+  if (!record) {
+    const found = stored();
+    record = found.record || blank();
+    if (found.unreadable !== undefined) {
+      salvaged = salvage(found.unreadable);
+      try { localStorage.removeItem(RECORD_KEY); } catch { }
+    }
+    active = record.active;
+    if (active) composer.value = draftOf(active).composer;
+  }
+  reconcile(prev);
   ensureActive();
+  $('#salvage').hidden = !salvaged;
+  if (live) track(cacheView(next)).catch(() => { });
   $('#waiting').hidden = true;
   $('#closed').hidden = true;
   $('#page').dataset.state = 'ready';
@@ -1168,10 +1333,10 @@ function apply(next) {
 }
 
 function adopt() {
-  const next = stored();
-  if (!view || !next) return;
+  const next = stored().record;
+  if (!view || !next || callNumber(next.call) > callNumber(view.call)) return;
   record = next;
-  reconcile();
+  reconcile(view);
   ensureActive();
   const text = $('#free-text');
   const q = active === OVERVIEW ? null : question(active);
@@ -1201,6 +1366,7 @@ async function forget() {
   await Promise.allSettled([...renders]);
   let clean = true;
   try { localStorage.removeItem(RECORD_KEY); } catch { clean = false; }
+  try { sessionStorage.removeItem(RELOAD_KEY); } catch { }
   try {
     const registration = await navigator.serviceWorker.getRegistration();
     if (registration) {
@@ -1248,14 +1414,18 @@ function connect() {
   const source = new EventSource('events');
   source.addEventListener('round', event => {
     if (closed) return;
+    const next = JSON.parse(event.data);
+    if (reloadForBuild(next.build)) return;
     live = true;
-    apply(JSON.parse(event.data));
+    apply(next);
+    noteAccepted();
   });
   source.addEventListener('receipt', event => {
     const receipt = JSON.parse(event.data);
     const d = delivery();
     if (!d || receipt.submission !== d.submission) return;
     advance(receipt);
+    noteAccepted();
     save();
     updateFooter();
   });
@@ -1265,16 +1435,20 @@ function connect() {
     try { token = JSON.parse(event.data).token; } catch { return; }
     showClosed(token);
   });
+  // Retries fail every 250 ms while nothing listens; only a change of state
+  // redraws, so the page stays usable offline.
   source.addEventListener('error', () => {
     if (leaving) return;
+    const was = live;
     live = false;
     if (source.readyState === EventSource.CLOSED) detached = true;
     else {
       source.close();
       setTimeout(connect, RETRY_MS);
     }
+    if (view && !sending) markUncertain();
     if (view) {
-      refreshViews();
+      if (was || detached) refreshViews();
     } else {
       if (detached) {
         setText($('#waiting .notice-lead'), TEXT.detached);
@@ -1307,6 +1481,12 @@ $('#sheet-toggle').addEventListener('click', toggleSheet);
 $('#reduce').addEventListener('click', () => expand(false));
 PHONE.addEventListener('change', () => {
   if (expanded) expand(true);
+});
+$('#copy-draft').addEventListener('click', () => copyText(draftText(), $('#copy-draft')));
+$('#salvage-copy').addEventListener('click', () => copyText(salvaged, $('#salvage-copy')));
+$('#salvage-drop').addEventListener('click', () => {
+  salvaged = '';
+  $('#salvage').hidden = true;
 });
 
 document.addEventListener('keydown', event => {
@@ -1349,6 +1529,8 @@ for (const type of ['dragover', 'drop']) {
 }
 
 window.addEventListener('message', fromFrame);
+// A reload aborts the stream before pagehide; neither drop is a lost call.
+window.addEventListener('beforeunload', () => { leaving = true; });
 window.addEventListener('pagehide', () => { leaving = true; });
 window.addEventListener('pageshow', () => { leaving = closed; });
 window.addEventListener('storage', event => {
@@ -1357,3 +1539,6 @@ window.addEventListener('storage', event => {
 
 try { navigator.serviceWorker.register('sw.js').catch(() => { }); } catch { }
 connect();
+cachedView().then(cached => {
+  if (cached && !view && !closed) apply(cached);
+});
