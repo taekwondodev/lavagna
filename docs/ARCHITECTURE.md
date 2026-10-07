@@ -64,4 +64,8 @@ These existing project records remain in `taekwondodev/dev`; their links are his
 | [dev#95](https://github.com/taekwondodev/dev/issues/95) | Content isolation decision, qualified by the [accepted WebRTC risk](../SECURITY.md#accepted-residual-risk-webrtc) |
 | [dev#100](https://github.com/taekwondodev/dev/issues/100) | Reconnect and trusted-account boundary |
 
-There are no local ADRs yet. Add accepted decisions only through the [documentation ownership rules](DEVELOPMENT.md#documentation-ownership), then link them here.
+Local decision records live in `docs/adr/`. Add accepted decisions only through the [documentation ownership rules](DEVELOPMENT.md#documentation-ownership), then link them here.
+
+| Record | Subject |
+| --- | --- |
+| [ADR 0001](adr/0001-frame-receives-selected-option.md) | The content frame receives the selected option before Send |
