@@ -610,11 +610,14 @@ func TestDeliveryStagesShowInTitleBarAndFooter(t *testing.T) {
 	waitStage("Grilling ancora aperto | L’agente ha terminato il turno prima di chiudere la frontiera. Il tuo feedback è conservato. · 1 in bozza")
 
 	p.Click(`.card[data-target="retention"]`)
-	p.Reload()
-	p.WaitFor(`document.querySelector('#rail .card')`)
+	reload(p)
 	if strings.Contains(evalString(p, `document.querySelector('.card[data-target="retention"]').className`), "unseen") {
 		t.Error("a reload lost the seen mark")
 	}
+	if evalString(p, `String(document.querySelector('.card[data-target="retention"]').getAttribute('aria-current'))`) != "true" {
+		t.Error("a reload lost the active question")
+	}
+	p.Click(`.card[data-target="crash"]`)
 	if got := evalString(p, `document.querySelector('#composer').value`); got != "Ancora una cosa" {
 		t.Errorf("a reload lost the composer draft: %q", got)
 	}

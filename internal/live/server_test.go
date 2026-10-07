@@ -1,6 +1,7 @@
 package live
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -266,6 +267,9 @@ func TestFrameServesTheRoundUnderItsOwnKey(t *testing.T) {
 			t.Errorf("%s: Access-Control-Allow-Origin %q, want %q", path, got, want.cors)
 		}
 	}
+	if len(page.Build) != 16 || !bytes.Contains(page.Shell, []byte(`<meta name="lavagna-build" content="`+page.Build+`">`)) {
+		t.Errorf("the shell does not carry the build id %q the view sends", page.Build)
+	}
 	shell := get("/s/" + s.origin.Cap + "/")
 	if csp := shell.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-src 'self'") || !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Errorf("shell CSP %q", csp)
@@ -488,7 +492,7 @@ func TestViewCarriesTheLedgerThePageRenders(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`"round":"r2","call":"c4","token":"tok-4"`,
+		`"round":"r2","call":"c4","build":"` + page.Build + `","token":"tok-4"`,
 		`"phase":{"title":"Archivio","round":2,"questions":[`,
 		`{"id":"storage","title":"Dove?","status":"settled","round":1,"version":1,"lead":"Due sessioni.","options":[{"id":"file","label":"File","detail":"Uno per sessione","recommended":true},{"id":"db","label":"Database"}],"reason":"Nessuna dipendenza.","answer":{"choice":"file"},"thread":[`,
 		`{"author":"user","round":1,"submission":"s-1","images":["0123abcd"]}`,

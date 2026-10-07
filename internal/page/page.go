@@ -1,7 +1,10 @@
 package page
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"html"
 	"io/fs"
@@ -11,7 +14,7 @@ import (
 )
 
 //go:embed shell.html
-var Shell []byte
+var shell []byte
 
 //go:embed sw.js
 var Worker []byte
@@ -20,6 +23,32 @@ var Worker []byte
 var assets embed.FS
 
 var Assets = mustSub(assets, "assets")
+
+// Build identifies the embedded page. The server sends it in the view and the
+// shell carries it, so a tab built differently can reload.
+var Build = build()
+
+// Shell is the shell document, stamped with Build.
+var Shell = bytes.Replace(shell, []byte("{{build}}"), []byte(Build), 1)
+
+func build() string {
+	h := sha256.New()
+	h.Write(shell)
+	h.Write(Worker)
+	err := fs.WalkDir(assets, ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := fs.ReadFile(assets, name)
+		fmt.Fprintf(h, "%s\x00%d\x00", name, len(b))
+		h.Write(b)
+		return err
+	})
+	if err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
 
 const (
 	Font       = "fonts/AtkinsonHyperlegibleNext.ttf"

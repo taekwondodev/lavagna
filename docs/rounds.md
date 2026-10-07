@@ -170,10 +170,37 @@ lavagna feedback s-3f9543fe0510ab8e --all            # full record
 
 The selectors are mutually exclusive. An unknown id or a question with no feedback in that batch is an error. Read all feedback relevant to a decision and any needed images before acting; close removes these local references. A deferred receipt does not establish that the agent read every message.
 
-## Delivery and recovery
+## Interpret delivery status
 
-The page reports accepted and returned stages from server and CLI events, in short form in the title bar and as a sentence in the footer, followed by "· N in bozza" while items are staged. A supported Pi session witness can report receipt and turn completion; those are delivery observations, not proof that the agent understood feedback or that the phase is settled.
+The page reports accepted and returned stages from server and CLI events, in short form in the title bar and as a sentence in the footer, followed by "· N in bozza" while items are staged. A supported Pi session witness can report receipt and turn completion; those are delivery observations, not proof that the agent understood feedback or that the phase is settled. Without a witness the footer adds "stato in tempo reale non disponibile".
 
-The relay keeps the page origin live during the agent's turn. If a call is interrupted, reload the page and inspect the displayed delivery state before retrying; a call with no element resumes waiting without resending content. Each call has its own round token and frame key, and delivery outcomes such as Interrupted and Uncertain belong to the call, so a reply-only call stays in its round. A returned batch is not resent automatically. A running call holds the conversation lease; concurrent calls report busy. `close` is destructive and repeatable. It removes retained local files even if no browser is connected; browser-cache deletion is confirmed only when a connected page acknowledges cleanup.
+| Stage | Title bar | Footer |
+| --- | --- | --- |
+| Nothing sent in this call | Tocca a te | The draft summary, or "Niente in bozza" |
+| Accepted by lavagna | Inviato | Ricevuto da lavagna · non ancora consegnato all’agente |
+| Returned to the terminal | Consegnato al terminale | Consegnato al terminale |
+| Read by the agent | L’agente lavora | Letto dall’agente · l’agente lavora |
+| Turn ended or interrupted | Grilling ancora aperto, Turno interrotto | Whether the agent read the batch first |
+| Uncertain | Consegna non riuscita | The sent messages are back in the draft |
+
+Each call has its own round token and frame key, and delivery outcomes such as Interrupted and Uncertain belong to the call, so a reply-only call stays in its round.
+
+## Recover an interrupted round
+
+The relay keeps the page origin live during the agent's turn. If a call is interrupted, reload the page and inspect the displayed delivery state before retrying; a call with no element resumes waiting without resending content. A returned batch is not resent automatically. A running call holds the conversation lease; concurrent calls report busy.
+
+The draft belongs to the phase, so the page recovers per question:
+
+- A reload or a reopened tab restores the rail, the active question, threads, every question's and the Overview's draft, and seen marks. Each question's content is cached when it arrives, so any question can be reread while nothing listens.
+- While the event stream is down, Send and <kbd>⌘</kbd><kbd>↩</kbd> stay disabled and drafts stay intact; the page reconnects to later calls by itself. A tab reloaded after Send but before the batch was returned shows the batch's messages as "Tu" and "Riconnessione a lavagna…" without claiming a stage.
+- If a stream watched live at Accepted drops before Returned, the batch is Uncertain: its messages and screenshots return to the draft before anything written after Send, and a choice changed after Send keeps the newer value. Once the agent's ledger holds that batch, its messages appear as sent and leave the draft, so resending does not duplicate them.
+- Each call reconciles the draft. A question moved into the new round keeps its draft. A rewritten question keeps a choice whose option survives and becomes unseen; otherwise the choice is cleared and its discussion notes "La tua scelta B non esiste più nella nuova versione". A settled question drops a different staged answer with the note "Chiusa con A; la tua bozza B non è stata inviata. Scrivilo qui se vuoi riaprirla."
+- Tabs of one conversation share the draft; a tab of an earlier call cannot overwrite a later call's draft.
+- If another process holds the port, the next call opens a new origin. The old tab is detached: read-only, with "Copia bozza" to copy all staged text grouped by question and Overview. The new origin starts with an empty draft and rebuilds rail and threads from the call.
+- After an upgrade, a tab built by another lavagna reloads once. A draft the new page cannot read is offered once through "Copia bozza", then discarded.
+
+Screenshots can be attached only until Send is accepted; text written after Send stays in the draft for the next call.
+
+`close` is destructive and repeatable. It removes retained local files even if no browser is connected, and from a connected page it removes the phase draft, seen marks, cached content and the service worker; browser cleanup is confirmed only when that page acknowledges it.
 
 After `close`, the one-day expiry or an upgrade, the phase starts empty. A `reply` or `settled` naming a question the ledger lacks is invalid; send the complete questions again. State written by an older lavagna starts a fresh phase on the same page origin, deletes the old phase data and notes the restart on stderr. State written by a newer lavagna makes `round` and `feedback` return an error asking for `lavagna close`, without touching anything; `close` works on every format. `lavagna feedback S --all` returns a record as its version wrote it; `--question` and `--overview` on a record older than per-question feedback are errors suggesting `--all`.
