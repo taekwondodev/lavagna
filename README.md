@@ -33,3 +33,4 @@ The [round guide](docs/rounds.md) covers conversation identity, browser setup, c
 | Change the project as an agent | [Agent entry point](AGENTS.md) |
 | Prepare a pull request | [Delivery policy](docs/agents/delivery.md) |
 | Understand trust boundaries and accepted risks | [Security](SECURITY.md) |
+| Use lavagna with the grilling skill | [Grilling skill](https://github.com/taekwondodev/skills/tree/main/skills/grilling) |
