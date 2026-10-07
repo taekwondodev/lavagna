@@ -4,8 +4,10 @@
 // follows the option the shell reports, so 02 shows the variant in use: its
 // effect line and the drawing of each diagram. The
 // shell sends only the selected option id and whether a free-text answer
-// exists; the preview chosen here never leaves the frame.
+// exists; the preview chosen here never leaves the frame. It also fits raw
+// HTML blocks wider than the column and asks the shell to expand one.
 (() => {
+  const EXPAND_BELOW = 0.85;
   const shell = window.parent;
   const root = document.documentElement;
   let option = null;
@@ -13,6 +15,11 @@
   let preview = null;
   let reported = '';
   let announced = '';
+  // expanded and native are the shell's last `expanded` state: native shows
+  // the expanding block full screen at its own size, else it stays fitted.
+  let expanded = false;
+  let native = false;
+  let expanding = null;
 
   function post(kind, data) {
     shell.postMessage(Object.assign({ lavagna: kind }, data), '*');
@@ -55,6 +62,66 @@
     if (state === announced) return;
     announced = state;
     document.dispatchEvent(new CustomEvent('lavagna:option', { detail: { option, free, variant: shown } }));
+    fit();
+  }
+
+  function head(block) {
+    let node = block.querySelector(':scope > .raw-head');
+    if (node) return node;
+    node = document.createElement('div');
+    node.className = 'raw-head';
+    const label = document.createElement('span');
+    label.className = 'raw-scale';
+    const control = document.createElement('button');
+    control.type = 'button';
+    control.className = 'raw-expand';
+    node.append(label, control);
+    block.prepend(node);
+    return node;
+  }
+
+  // fitBlock measures the block at the column width and, when it overflows,
+  // zooms its stage to fit. The expanding block keeps its header so Riduci
+  // stays reachable, and at native size it scrolls instead of zooming.
+  function fitBlock(block) {
+    const stage = block.querySelector(':scope > .raw-stage');
+    const open = expanded && block === expanding;
+    block.classList.remove('wide');
+    block.classList.toggle('expanded', open);
+    stage.style.width = '';
+    stage.style.zoom = '';
+    const width = stage.scrollWidth;
+    if (width <= stage.clientWidth && !open) return;
+    block.classList.add('wide');
+    const node = head(block);
+    const scale = open && native ? 1 : Math.min(1, stage.clientWidth / width);
+    if (!(open && native)) {
+      stage.style.width = width + 'px';
+      stage.style.zoom = String(scale);
+    }
+    node.firstChild.textContent = 'Schermata ' + width + ' px · ' + Math.round(scale * 100) + ' %';
+    const control = node.lastChild;
+    control.textContent = open ? 'Riduci' : 'Espandi a tutta pagina';
+    control.hidden = !open && scale >= EXPAND_BELOW;
+  }
+
+  function fit() {
+    for (const block of document.querySelectorAll('.raw')) fitBlock(block);
+  }
+
+  // follow applies the shell's `expanded` state. Without a block asking, as
+  // after a forged `expand`, the first wide block is shown, else none.
+  function follow(data) {
+    expanded = data.active === true;
+    native = expanded && data.native === true;
+    if (!expanded) expanding = null;
+    else if (!expanding) expanding = document.querySelector('.raw.wide');
+    if (expanded && !expanding) {
+      expanded = native = false;
+      post('expand', { active: false });
+    }
+    if (native) root.dataset.expanded = 'native'; else delete root.dataset.expanded;
+    fit();
   }
 
   function layout() {
@@ -71,7 +138,9 @@
 
   window.addEventListener('message', event => {
     const data = event.data;
-    if (event.source !== shell || !data || typeof data !== 'object' || data.lavagna !== 'option') return;
+    if (event.source !== shell || !data || typeof data !== 'object') return;
+    if (data.lavagna === 'expanded') follow(data);
+    if (data.lavagna !== 'option') return;
     const next = typeof data.option === 'string' ? data.option : null;
     const nextFree = data.free === true && !next;
     if (next !== option || nextFree !== free) preview = null;
@@ -81,10 +150,23 @@
   });
 
   document.addEventListener('click', event => {
-    const chip = event.target instanceof Element ? event.target.closest('.preview .chip') : null;
+    const target = event.target instanceof Element ? event.target : null;
+    const control = target && target.closest('.raw-expand');
+    if (control) {
+      const block = control.closest('.raw');
+      const open = expanded && block === expanding;
+      if (!open) expanding = block;
+      post('expand', { active: !open });
+      return;
+    }
+    const chip = target && target.closest('.preview .chip');
     if (!chip) return;
     preview = preview === chip.dataset.variant ? null : chip.dataset.variant;
     apply();
+  });
+
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && expanded) post('expand', { active: false });
   });
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -92,5 +174,9 @@
     new ResizeObserver(layout).observe(document.body);
     layout();
   });
-  window.addEventListener('load', layout);
+  window.addEventListener('resize', fit);
+  window.addEventListener('load', () => {
+    fit();
+    layout();
+  });
 })();

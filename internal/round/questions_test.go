@@ -334,7 +334,9 @@ Risolve il caso con **poche righe**.
 		`<button type="button" class="chip" data-variant="atomic" data-recommended="" title="Scrittura atomica" aria-pressed="false">A ★</button>`,
 		`<button type="button" class="chip" data-variant="none" title="Nessuna protezione" aria-pressed="false">C</button>`,
 		`<p class="effect" data-variant="atomic" hidden><strong>Con A:</strong> Il crash avviene sul <code>.tmp</code>.</p>`,
-		`<div class="screen"></div>`,
+		`<div class="raw"><div class="raw-stage">
+<div class="screen"></div>
+</div></div>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("frame document lacks %s: %s", want, html)

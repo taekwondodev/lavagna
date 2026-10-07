@@ -13,6 +13,10 @@
       <div class="brand">lavagna<span class="phase-title" id="phase-title"></span><span class="round-label" id="round-label"></span></div>
       <p class="turn" id="turn" data-state="connecting" role="status" aria-live="polite">Collegamento a lavagna…</p>
     </header>
+    <div class="expand-bar" id="expand-bar">
+      <span class="expand-label" id="expand-label"></span>
+      <button type="button" id="reduce">Riduci</button>
+    </div>
 
     <nav class="rail" id="rail" aria-label="Round e domande" hidden></nav>
 
@@ -53,6 +57,7 @@
     </aside>
 
     <footer class="footer" id="footer" hidden>
+      <button type="button" id="sheet-toggle" class="sheet-toggle" aria-controls="discussion" aria-expanded="false"></button>
       <div class="footer-status">
         <p class="summary" id="summary" role="status" aria-live="polite"></p>
         <p class="counter" id="counter" aria-live="polite" hidden></p>

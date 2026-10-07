@@ -57,6 +57,8 @@ question replaces its previous version together with its resources.
   line of the variant shown: the preview, else the choice, else the
   recommended option.
 - A bare title is planned and has no question artifact.
+- A raw HTML block renders inside `.raw > .raw-stage`. A block wider than the
+  column is fitted, with Expand below 85 %; give screens their native width.
 - `::: excerpt path:start-end 45!1` includes a source excerpt; `45!1` marks
   line 45 as a problem with badge 1. Separate marks with spaces.
 - `{ref}`, `data-ref`, level-1 chapter headings, and shared/root resources are

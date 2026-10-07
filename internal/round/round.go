@@ -689,6 +689,8 @@ func (p *parser) raw(ls []line, i int, sc scope) int {
 		p.fail(ls[i].n, "raw HTML belongs in # Capire or # Confrontare")
 		return end
 	}
+	// The frame helper fits a raw block wider than the column inside its stage.
+	p.out.WriteString(`<div class="raw"><div class="raw-stage">` + "\n")
 	for _, l := range ls[i:end] {
 		for _, m := range dataRef.FindAllStringSubmatch(l.text, -1) {
 			p.ref(l.n, html.UnescapeString(m[1]+m[2]+m[3]))
@@ -699,6 +701,7 @@ func (p *parser) raw(ls []line, i int, sc scope) int {
 		p.out.WriteString(l.text)
 		p.out.WriteString("\n")
 	}
+	p.out.WriteString("</div></div>")
 	return end
 }
 
