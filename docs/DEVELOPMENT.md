@@ -24,7 +24,7 @@ Run `go test ./...` for the existing unit, CLI and browser integration checks, a
 | Boundary | Existing evidence |
 | --- | --- |
 | Round grammar, directory limits and repository excerpts | `internal/round/*_test.go` |
-| Diagram grammar, variants, label widths against Chrome and SVG drawing | `internal/diagram/*_test.go`; [`testdata/chrome-widths.json`](../internal/diagram/testdata/chrome-widths.json) holds the Chrome measurements of #14; `internal/live/page_test.go` checks variant switching and drawn widths in the frame |
+| Diagram grammar, variants, label widths against Chrome, flow layout and SVG drawing | `internal/diagram/*_test.go`; [`testdata/chrome-widths.json`](../internal/diagram/testdata/chrome-widths.json) holds the Chrome measurements of #14 and [`testdata/flow-examples.json`](../internal/diagram/testdata/flow-examples.json) the flow examples of #13 with their hand layouts; `BenchmarkFlowAtTheLimit` times a flow at the size limits; `internal/live/page_test.go` checks variant switching and drawn widths in the frame |
 | Conversation locking, sweep and lifecycle | `internal/conversation/*_test.go` |
 | Admission, screenshot uploads and frame isolation | `internal/live/*_test.go` |
 | Command results and concurrent calls | `cli_test.go` |

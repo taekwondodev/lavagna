@@ -1,0 +1,122 @@
+{
+  "about": "Flow diagrams authored by hand during the 2026-10-06 grilling of lavagna's three-column round page. col/row are the hand-placed grid cells (left to right); an automatic layout should do at least as well. Labels use \\n for line breaks. Rendered at 13px Atkinson Hyperlegible Next, node box about 136-200 px wide and 52 px high.",
+  "examples": [
+    {
+      "name": "retention-now",
+      "nodes": [
+        {"id": "s", "label": "Sessione chiusa", "col": 0, "row": 0},
+        {"id": "disk", "label": "a.json resta\nsu disco", "col": 1, "row": 0},
+        {"id": "grow", "label": "dopo un mese:\n~400 file", "col": 2, "row": 0}
+      ],
+      "edges": [{"from": "s", "to": "disk", "label": "scrive"}, {"from": "disk", "to": "grow", "label": "nessuno la toglie"}],
+      "groups": []
+    },
+    {
+      "name": "retention-sweep",
+      "nodes": [
+        {"id": "s", "label": "Sessione chiusa", "col": 0, "row": 0},
+        {"id": "idle", "label": "nessun uso\nper 1 giorno", "col": 1, "row": 0},
+        {"id": "sweep", "label": "lo sweep\nla rimuove", "col": 2, "row": 0},
+        {"id": "use", "label": "riapri la sessione", "col": 1, "row": 1}
+      ],
+      "edges": [{"from": "s", "to": "idle", "label": "timer"}, {"from": "idle", "to": "sweep"}, {"from": "use", "to": "idle", "label": "azzera il timer"}],
+      "groups": []
+    },
+    {
+      "name": "trust-boundary",
+      "nodes": [
+        {"id": "agent", "label": "Agente", "col": 0, "row": 0},
+        {"id": "cli", "label": "lavagna CLI", "col": 1, "row": 0},
+        {"id": "shell", "label": "Shell\ndecisioni · Send", "col": 2, "row": 0},
+        {"id": "frame", "label": "Frame sandbox\ncontenuti · script", "col": 2, "row": 1}
+      ],
+      "edges": [
+        {"from": "agent", "to": "cli", "label": "round.md"}, {"from": "cli", "to": "shell", "label": "pagina + token"},
+        {"from": "shell", "to": "cli", "label": "batch + token"}, {"from": "cli", "to": "frame", "label": "frame key"},
+        {"from": "frame", "to": "shell", "label": "anchor"}
+      ],
+      "groups": [{"label": "Browser", "nodes": ["shell", "frame"]}]
+    },
+    {
+      "name": "confirmed-design",
+      "nodes": [
+        {"id": "agent", "label": "Agente", "col": 0, "row": 0},
+        {"id": "cli", "label": "lavagna CLI\nregistro delle domande\ndiagrammi → SVG", "col": 1, "row": 0},
+        {"id": "shell", "label": "Shell\ncolonna · 03 · discussione\nSend to Agent ⌘↩", "col": 2, "row": 0},
+        {"id": "frame", "label": "Frame sandbox\n01 e 02 della domanda\nattiva", "col": 2, "row": 1}
+      ],
+      "edges": [
+        {"from": "agent", "to": "cli", "label": "domande o risposte"}, {"from": "cli", "to": "agent", "label": "batch per domanda"},
+        {"from": "cli", "to": "shell", "label": "registro"}, {"from": "shell", "to": "cli", "label": "Send"},
+        {"from": "cli", "to": "frame", "label": "01 e 02 con SVG"}, {"from": "shell", "to": "frame", "label": "id opzione"},
+        {"from": "frame", "to": "shell", "label": "altezza"}
+      ],
+      "groups": [{"label": "Browser", "nodes": ["shell", "frame"]}]
+    },
+    {
+      "name": "legacy-format-both",
+      "nodes": [
+        {"id": "skill", "label": "skill grilling\naggiornata", "col": 0, "row": 0},
+        {"id": "perq", "label": "una sezione\nper domanda", "col": 1, "row": 0},
+        {"id": "parse", "label": "parser", "col": 2, "row": 0},
+        {"id": "ledger", "label": "registro delle\ndomande", "col": 3, "row": 0},
+        {"id": "page", "label": "pagina a 3 colonne", "col": 4, "row": 0},
+        {"id": "old", "label": "round.md\nformato di oggi", "col": 1, "row": 1},
+        {"id": "oldparse", "label": "secondo parser", "col": 2, "row": 1},
+        {"id": "conv", "label": "conversione in\nuna domanda", "col": 3, "row": 1}
+      ],
+      "edges": [
+        {"from": "skill", "to": "perq"}, {"from": "perq", "to": "parse"}, {"from": "parse", "to": "ledger"}, {"from": "ledger", "to": "page"},
+        {"from": "skill", "to": "old"}, {"from": "old", "to": "oldparse"}, {"from": "oldparse", "to": "conv"}, {"from": "conv", "to": "page"}
+      ],
+      "groups": []
+    },
+    {
+      "name": "open-question-move",
+      "nodes": [
+        {"id": "q2", "label": "Q2 · risposta B", "col": 0, "row": 0},
+        {"id": "q3ghost", "label": "Q3 → round corrente", "col": 0, "row": 1},
+        {"id": "q4", "label": "Q4 · nuova", "col": 2, "row": 0},
+        {"id": "q3moved", "label": "Q3 · ancora aperta", "col": 2, "row": 1}
+      ],
+      "edges": [{"from": "q2", "to": "q4", "label": "sblocca"}, {"from": "q3ghost", "to": "q3moved", "label": "solo l’id"}],
+      "groups": [{"label": "Round 2 · chiuso", "nodes": ["q2", "q3ghost"]}, {"label": "Round 3 · current", "nodes": ["q4", "q3moved"]}]
+    },
+    {
+      "name": "anchor-removal-now",
+      "nodes": [
+        {"id": "src", "label": "round.md\n{ref} e data-ref", "col": 0, "row": 0},
+        {"id": "parse", "label": "parser: etichette\nuniche · 33", "col": 1, "row": 0},
+        {"id": "state", "label": "anchor conservati\ntra i round · 5", "col": 2, "row": 0},
+        {"id": "page", "label": "picker nella shell,\neventi fermati · 90", "col": 3, "row": 0},
+        {"id": "batch", "label": "batch\n\"anchor\": \"…\" · 16", "col": 4, "row": 0},
+        {"id": "docs", "label": "documenti · 9", "col": 1, "row": 1},
+        {"id": "tests", "label": "test · 92", "col": 3, "row": 1}
+      ],
+      "edges": [{"from": "src", "to": "parse"}, {"from": "parse", "to": "state"}, {"from": "state", "to": "page"}, {"from": "page", "to": "batch"}],
+      "groups": [{"label": "da togliere o aggiornare", "nodes": ["src", "parse", "state", "page", "batch", "docs", "tests"]}]
+    },
+    {
+      "name": "wayfinder-map",
+      "note": "The hardest case. The first hand layout let three edges pass through unrelated nodes; this second hand layout has none.",
+      "nodes": [
+        {"id": "r2", "label": "Ricerca · layout\nautomatico di flow", "col": 0, "row": 0},
+        {"id": "r1", "label": "Ricerca · larghezza del\ntesto senza browser", "col": 0, "row": 1},
+        {"id": "d4", "label": "Cosa restituisce\nun batch per domanda", "col": 0, "row": 2},
+        {"id": "d1", "label": "Come si scrive\nuna domanda", "col": 0, "row": 3},
+        {"id": "d2", "label": "Sintassi dei\nblocchi diagramma", "col": 1, "row": 0},
+        {"id": "d3", "label": "Cosa manda l’agente\ndopo la prima chiamata", "col": 1, "row": 3},
+        {"id": "d6", "label": "Frame della\ndomanda attiva", "col": 1, "row": 4},
+        {"id": "d7", "label": "Bozze, thread e consegna\ndopo un reload", "col": 2, "row": 3},
+        {"id": "d5", "label": "Registro delle\ndomande su disco", "col": 2, "row": 4},
+        {"id": "d8", "label": "La skill grilling\ncon il formato nuovo", "col": 3, "row": 1}
+      ],
+      "edges": [
+        {"from": "r2", "to": "d2"}, {"from": "r1", "to": "d2"}, {"from": "d1", "to": "d3"}, {"from": "d1", "to": "d6"},
+        {"from": "d3", "to": "d5"}, {"from": "d3", "to": "d7"}, {"from": "d4", "to": "d7"},
+        {"from": "d2", "to": "d8"}, {"from": "d3", "to": "d8"}, {"from": "d4", "to": "d8"}
+      ],
+      "groups": []
+    }
+  ]
+}

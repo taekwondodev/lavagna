@@ -10,7 +10,7 @@ import (
 	"github.com/taekwondodev/lavagna/internal/page"
 )
 
-func testFont(t *testing.T) *Font {
+func testFont(t testing.TB) *Font {
 	t.Helper()
 	b, err := fs.ReadFile(page.Assets, page.Font)
 	if err != nil {
