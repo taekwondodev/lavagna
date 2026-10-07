@@ -157,6 +157,8 @@ func TestNextCallReconcilesTheDraftPerQuestion(t *testing.T) {
 
 	run.call(reconcileSecond, nil)
 	p.WaitFor(`document.querySelector('#round-label').textContent === 'r2'`)
+	wantText(t, p, "#question-head h1", "Quanto teniamo le sessioni chiuse?")
+	p.Click(`.card[data-target="crash"]`)
 	thread := func() string {
 		var entries []string
 		p.MustEval(`[...document.querySelectorAll('#thread .message')].map(m => m.querySelector('.message-who').textContent.replace('×', '') + ': ' + m.querySelector('.message-text').textContent)`, &entries)
@@ -164,9 +166,6 @@ func TestNextCallReconcilesTheDraftPerQuestion(t *testing.T) {
 	}
 	if got := thread(); got != "Tu: Prima nota | lavagna: Chiusa con B; la tua bozza A non è stata inviata. Scrivilo qui se vuoi riaprirla." {
 		t.Errorf("settled question thread: %s", got)
-	}
-	if !strings.Contains(evalString(p, `document.querySelector('.card[data-target="retention"]').className`), "unseen") {
-		t.Error("the rewritten question did not return to unseen")
 	}
 	if evalString(p, `document.querySelector('.card[data-target="retention"]').closest('.round').className`) != "round round-current" {
 		t.Error("the unsettled question did not move into the new round")

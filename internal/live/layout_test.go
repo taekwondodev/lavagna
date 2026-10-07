@@ -94,6 +94,61 @@ func heads(f *cdptest.Frame) string {
 	}).join(' | ')`)
 }
 
+func TestDecisionTablesKeepReadableColumnsWithLongReasons(t *testing.T) {
+	run := newPhaseRun(t)
+	run.call(`# Is this interaction ready for your grilling sessions? {id="acceptance"}
+## Decidere
+- [accept] The interaction is ready
+- [revise] Fix the concerns I describe first
+`, nil)
+	p := cdptest.Start(t).Open(run.url, desktopWidth, pageHeight)
+	p.WaitFor(`document.querySelector('.option')`)
+	p.Click(`.option[data-option="accept"]`)
+	p.Click("#send")
+	run.outcome()
+	run.call(`::: settled acceptance
+You accepted the actual per-question interaction without messages. The integration build passes its full Go suite with no skipped tests and all three token thresholds. This accepts the interaction for your grilling sessions; it does not bypass the skills workspace boundary or permit either repository to land alone. The alternative was to address user-reported interaction changes first; none were submitted.
+:::
+# Confirm the acceptance outcome {id="confirmation"}
+## Capire
+::: recap
+:::
+## Decidere
+- [confirm] Confirm
+- [correct] Correct
+`, nil)
+	p.WaitFor(`document.querySelector('#round-label').textContent === 'r2'`)
+	p.Click(`.card[data-target="confirmation"]`)
+	p.WaitFor(`document.querySelector('#content')`)
+	f := p.Frame("#content")
+	f.WaitFor(`document.querySelector('.recap table')`)
+	const readable = `(() => {
+		const table = document.querySelector('table');
+		return [...table.querySelectorAll('thead th')].every(th => {
+			const range = document.createRange(); range.selectNodeContents(th);
+			return range.getClientRects().length === 1;
+		}) && document.documentElement.scrollWidth <= innerWidth;
+	})()`
+	for _, width := range []int{desktopWidth, phoneWidth} {
+		p.Resize(width, pageHeight, width == phoneWidth)
+		f.WaitFor(`innerWidth <= ` + jsonOf(width))
+		var ok bool
+		f.MustEval(readable, &ok)
+		if !ok {
+			t.Errorf("recap at %d px splits headers or overflows the frame", width)
+		}
+	}
+	p.Click(`.card[data-target=":overview"]`)
+	for _, width := range []int{desktopWidth, phoneWidth} {
+		p.Resize(width, pageHeight, width == phoneWidth)
+		var ok bool
+		p.MustEval(readable, &ok)
+		if !ok {
+			t.Errorf("Overview at %d px splits headers or overflows the page", width)
+		}
+	}
+}
+
 func TestNarrowWindowKeepsTheDiscussionAndPhoneOpensItAsASheet(t *testing.T) {
 	run := newPhaseRun(t)
 	run.call(wideRound, wideFiles())

@@ -348,7 +348,12 @@ func TestPageFollowsRoundsDecisionsAndReplacements(t *testing.T) {
 		t.Errorf("current round %v, want the unanswered question moved in before the new one", cards)
 	}
 	wantText(t, p, `.card[data-target=":overview"] .mark`, "1")
+	wantText(t, p, "#question-head h1", "Quanto teniamo le sessioni chiuse?")
+	if got := evalString(p, `document.querySelector('.card[aria-current="true"]').dataset.target`); got != "retention" {
+		t.Errorf("new round opened on %q, want its first current question", got)
+	}
 
+	p.Click(`.card[data-target="crash"]`)
 	wantText(t, p, "#question-head .state", "chiuso · deciso B")
 	wantText(t, p, "#question-head .banner", "Round chiuso. Puoi rileggerla e commentarla a destra: il commento parte col prossimo invio e l’agente decide se riaprirla.")
 	var options []string

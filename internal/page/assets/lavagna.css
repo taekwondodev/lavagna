@@ -139,10 +139,6 @@ button.option:disabled.on { opacity: 1; }
 .reason { font-size: 13px; color: var(--muted); margin: 10px 14px 0; }
 .reason strong { color: var(--analysis); }
 .decide > :last-child { margin-bottom: 14px; }
-.decisions { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 13px; border: 1px solid var(--line); }
-.decisions th, .decisions td { text-align: left; vertical-align: top; padding: 9px 11px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
-.decisions th { background: var(--action-soft); color: var(--action); border-top: 0; white-space: nowrap; }
-.decisions .struck td { color: var(--muted); text-decoration: line-through; }
 .empty { color: var(--muted); font-size: 13px; padding: 14px; border: 1px dashed var(--line); border-radius: 7px; list-style: none; }
 
 .discussion { grid-area: discussion; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; background: var(--neutral-soft); border-left: 1px solid var(--line); }
@@ -292,8 +288,12 @@ html.frame body { font-size: 14px; }
 .table tbody th { color: var(--muted); font-weight: 600; }
 .table .align-center { text-align: center; }
 .table .align-right { text-align: right; }
-.recap thead th { background: var(--action-soft); color: var(--action); }
-.recap .struck { color: var(--muted); }
+.recap table { table-layout: fixed; min-width: 640px; }
+.recap thead th { background: var(--action-soft); color: var(--action); white-space: nowrap; }
+.recap thead th:nth-child(1) { width: 23%; }
+.recap thead th:nth-child(2), .recap thead th:nth-child(5) { width: 20%; }
+.recap th:nth-child(3), .recap td:nth-child(3) { width: 4.5rem; white-space: nowrap; }
+.recap .struck > * { color: var(--muted); text-decoration: line-through; }
 .excerpt { margin: 16px 0; }
 .excerpt figcaption { font-size: 12px; color: var(--muted); margin-bottom: 5px; }
 .excerpt pre { margin: 0 0 8px; padding: 9px 0; overflow-x: auto; background: var(--neutral-soft); border: 1px solid var(--line); border-radius: 6px; font-size: 12.5px; line-height: 1.55; tab-size: 4; }

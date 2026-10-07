@@ -606,7 +606,7 @@ function markRead() {
 
 // renderCenter redraws the head and 03 when the question's place in the phase
 // changes, and the frame only when the question or its version changes, so a
-// reply or a round advance leaves the frame and its prototype state alone.
+// reply or a replacement of another question leaves its prototype state alone.
 function renderCenter() {
   const head = $('#question-head');
   const frameArea = $('#frame-area');
@@ -670,7 +670,9 @@ function overview() {
     body.append(tr);
   }
   table.append(thead, body);
-  nodes.push(table);
+  const wrap = element('div', undefined, 'table recap');
+  wrap.append(table);
+  nodes.push(wrap);
   return nodes;
 }
 
@@ -1279,13 +1281,15 @@ async function send() {
 
 // ---- view arrival ----
 
-// ensureActive keeps the center on a question the view can show, falling back
-// to the first question of the current round.
-function ensureActive() {
+// A new round opens on its first question. Within a round, keep the selected
+// question or Overview, including across reloads.
+function ensureActive(advanced = false) {
   const q = active === OVERVIEW ? null : question(active);
-  if (active === OVERVIEW || q && q.status !== 'planned') return;
+  if (!advanced && (active === OVERVIEW || q && q.status !== 'planned')) return;
   active = defaultActive();
+  record.active = active;
   composer.value = draftOf(active).composer;
+  $('#center').scrollTop = 0;
 }
 
 // reloadForBuild reloads a tab whose shell differs from the server's, once
@@ -1322,7 +1326,7 @@ function apply(next) {
     if (active) composer.value = draftOf(active).composer;
   }
   reconcile(prev);
-  ensureActive();
+  ensureActive(prev && prev.phase.round !== view.phase.round);
   $('#salvage').hidden = !salvaged;
   if (live) track(cacheView(next)).catch(() => { });
   $('#waiting').hidden = true;
