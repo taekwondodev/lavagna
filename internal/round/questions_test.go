@@ -360,3 +360,92 @@ func TestEmptyChaptersAreHiddenFromTheFrame(t *testing.T) {
 		t.Errorf("a question with only lead and 03 needs no frame document: %q", b)
 	}
 }
+
+func TestDiagramsDrawNowIn01AndTheVariantShownIn02(t *testing.T) {
+	phase, errs := ParsePhase([]byte(`# Cosa succede se crasha? {id="crash"}
+## Capire
+::: sequence Salvataggio
+Sessione | a.json.tmp [atomic] | a.json
+Sessione -> a.json: apre con O_TRUNC !1 [now]
+Sessione -> a.json.tmp: scrive [atomic]
+:::
+
+::: bars Senza varianti
+Scrittura: 4 ms
+:::
+## Decidere
+- [atomic] Scrittura atomica {recommended}
+- [journal] Journal
+`))
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	if errs := RenderPhase(&phase, nil, nil); errs != nil {
+		t.Fatal(errs)
+	}
+	html := phase.Questions[0].HTML
+	capire, confrontare, ok := strings.Cut(html, `id="confrontare"`)
+	if !ok {
+		t.Fatalf("a diagram with variants needs 02 even without ## Confrontare: %s", html)
+	}
+	if strings.Count(capire, "<svg") != 2 || strings.Contains(capire, "diagram-variant") || strings.Contains(capire, ">scrive<") || !strings.Contains(capire, ">apre con O_TRUNC<") {
+		t.Errorf("01 must draw only now: %s", capire)
+	}
+	if strings.Contains(confrontare, "Senza varianti") {
+		t.Errorf("02 repeats a diagram without variants: %s", confrontare)
+	}
+	for _, want := range []string{
+		`<figcaption class="content-label role-information">Salvataggio</figcaption><div class="diagram-variant" data-variant="now"><svg`,
+		`<div class="diagram-variant" data-variant="atomic" hidden><svg`,
+		`<div class="diagram-variant" data-variant="journal" hidden><svg`,
+	} {
+		if !strings.Contains(confrontare, want) {
+			t.Errorf("02 lacks %s: %s", want, confrontare)
+		}
+	}
+	if strings.Index(confrontare, `class="preview"`) > strings.Index(confrontare, "diagram-variant") {
+		t.Errorf("the repeated diagrams follow the Anteprima chips: %s", confrontare)
+	}
+}
+
+func TestDiagramsAuthoredIn02DrawEveryVariant(t *testing.T) {
+	phase, errs := ParsePhase([]byte("# Q {id=\"q\"}\n## Confrontare\nTesto.\n\n::: bars\nA: 1 [a]\nB: 2\n:::\n## Decidere\n- [a] A\n- [b] B\n"))
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	if errs := RenderPhase(&phase, nil, nil); errs != nil {
+		t.Fatal(errs)
+	}
+	html := phase.Questions[0].HTML
+	if strings.Contains(html, `id="capire"`) || strings.Count(html, `class="diagram-variant"`) != 3 || !strings.Contains(html, `<figcaption class="content-label role-information">Barre</figcaption>`) {
+		t.Errorf("02 diagram: %s", html)
+	}
+}
+
+func TestDiagramErrorsCarryTheirRoundLine(t *testing.T) {
+	phase, errs := ParsePhase([]byte("# Q {id=\"q\"}\n## Capire\n::: sequence\nA -> B: x [later]\n:::\n## Decidere\n- [a] A\n- [b] B\n"))
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	errs = RenderPhase(&phase, nil, nil)
+	if len(errs) != 1 || !strings.HasPrefix(errs[0], `round.md:4: unknown variant "later"`) {
+		t.Errorf("errors %v", errs)
+	}
+}
+
+// TestGrammarDiagramExampleRenders keeps the example of --help grammar valid.
+func TestGrammarDiagramExampleRenders(t *testing.T) {
+	_, rest, _ := strings.Cut(Grammar, "## Diagrams")
+	_, example, _ := strings.Cut(rest, "```text\n")
+	example, _, _ = strings.Cut(example, "```")
+	phase, errs := ParsePhase([]byte("# Q {id=\"q\"}\n## Capire\n" + example + "## Decidere\n- [atomic] Atomic\n- [journal] Journal\n"))
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	if errs := RenderPhase(&phase, nil, nil); errs != nil {
+		t.Fatal(errs)
+	}
+	if html := phase.Questions[0].HTML; strings.Count(html, `class="diagram-variant"`) != 6 {
+		t.Errorf("both diagrams vary, so 02 draws 3 variants of each: %s", html)
+	}
+}

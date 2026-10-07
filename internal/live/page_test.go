@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"io/fs"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -15,6 +17,8 @@ import (
 
 	"github.com/taekwondodev/lavagna/internal/cdptest"
 	"github.com/taekwondodev/lavagna/internal/conversation"
+	"github.com/taekwondodev/lavagna/internal/diagram"
+	"github.com/taekwondodev/lavagna/internal/page"
 )
 
 // phaseRun drives successive round calls of one conversation through
@@ -613,5 +617,64 @@ func TestDeliveryStagesShowInTitleBarAndFooter(t *testing.T) {
 	}
 	if got := evalString(p, `document.querySelector('#composer').value`); got != "Ancora una cosa" {
 		t.Errorf("a reload lost the composer draft: %q", got)
+	}
+}
+
+const diagramRound = `# Cosa succede se una sessione crasha a metà scrittura? {id="crash"}
+## Capire
+::: sequence Salvataggio interrotto
+Sessione A | a.json.tmp [atomic] | a.log [journal] | a.json [-journal]
+Sessione A -> a.json: apre con O_TRUNC !1 [now none]
+Sessione A -> a.json.tmp: scrive 9 KB e fsync [atomic]
+Sessione A -> a.log: append record e checksum [journal]
+:::
+## Decidere
+- [atomic] Scrittura atomica {recommended}
+- [journal] Journal
+- [none] Nessuna modifica
+`
+
+func TestDiagramsFollowTheVariantShown(t *testing.T) {
+	run := newPhaseRun(t)
+	run.call(diagramRound, nil)
+	p := cdptest.Start(t).Open(run.url, 1280, 860)
+	p.WaitFor(`document.querySelector('#content')`)
+	f := p.Frame("#content")
+	shown := `[...document.querySelectorAll('#confrontare .diagram-variant')].filter(d => !d.hidden).map(d => d.dataset.variant).join(' ')`
+	capire := `[...document.querySelectorAll('#capire svg text')].map(t => t.textContent).join('|')`
+	f.WaitFor(shown + ` === 'atomic'`)
+	p.Click(`.option[data-option="journal"]`)
+	f.WaitFor(shown + ` === 'journal'`)
+	f.Click(`.preview .chip[data-variant="none"]`)
+	f.WaitFor(shown + ` === 'none'`)
+	f.Click(`.preview .chip[data-variant="none"]`)
+	f.WaitFor(shown + ` === 'journal'`)
+	if got := frameString(f, capire); !strings.Contains(got, "apre con O_TRUNC") || strings.Contains(got, "a.json.tmp") || strings.Contains(got, "a.log") {
+		t.Errorf("01 must keep the present state: %s", got)
+	}
+
+	// The frame draws the labels as wide as the CLI measured them.
+	b, err := fs.ReadFile(page.Assets, page.Font)
+	if err != nil {
+		t.Fatal(err)
+	}
+	font, err := diagram.ParseFont(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var labels []struct {
+		Text                string
+		Size, Weight, Width float64
+	}
+	f.MustEval(`document.fonts.ready.then(() => [...document.querySelectorAll('#confrontare .diagram-variant:not([hidden]) text')]
+		.filter(t => t.children.length === 0)
+		.map(t => ({Text: t.textContent, Size: +t.getAttribute('font-size'), Weight: +t.getAttribute('font-weight'), Width: t.getComputedTextLength()})))`, &labels)
+	if len(labels) < 5 {
+		t.Fatalf("labels %v", labels)
+	}
+	for _, l := range labels {
+		if want := font.Width(l.Text, l.Size, l.Weight); math.Abs(l.Width-want) > 0.016 {
+			t.Errorf("%q at %v px, weight %v: Chrome %.4f, measured %.4f", l.Text, l.Size, l.Weight, l.Width, want)
+		}
 	}
 }

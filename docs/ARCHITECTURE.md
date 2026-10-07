@@ -8,6 +8,7 @@ Lavagna is a local CLI coordinating a browser page with one agent conversation. 
 | --- | --- | --- |
 | [`main.go`](../main.go) | Dispatch public commands and the internal relay entry point | [Commands](rounds.md#present-and-close) |
 | [`internal/round`](../internal/round) | Load bounded question inputs, parse the grammar and render isolated per-question documents | [Authoring](rounds.md#author-questions) |
+| [`internal/diagram`](../internal/diagram) | Parse diagram blocks, measure labels with the embedded font and draw one static SVG per variant; pure and used only by `internal/round` | [Diagrams](rounds.md#draw-diagrams) |
 | [`internal/conversation`](../internal/conversation) | Bind identity, persist private state and artifacts, serialize calls and sweep expired state | [Conversation and recovery](rounds.md#recover-an-interrupted-round) |
 | [`internal/live`](../internal/live) | Serve the loopback origin, admit feedback, store screenshot uploads and hand the listener between calls and relay | [Feedback](rounds.md#collect-feedback), [Security](../SECURITY.md) |
 | [`internal/page`](../internal/page) | Embed and render the shell and content frame; retain browser drafts and offline snapshots | [Recovery](rounds.md#recover-an-interrupted-round) |

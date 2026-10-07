@@ -1,7 +1,8 @@
 'use strict';
 
 // The content frame helper: it reports the document's layout to the shell and
-// follows the option the shell reports, so 02 shows the variant in use. The
+// follows the option the shell reports, so 02 shows the variant in use: its
+// effect line and the drawing of each diagram. The
 // shell sends only the selected option id and whether a free-text answer
 // exists; the preview chosen here never leaves the frame.
 (() => {
@@ -46,6 +47,8 @@
       chip.setAttribute('aria-pressed', String(on));
     }
     for (const effect of document.querySelectorAll('.effect')) effect.hidden = effect.dataset.variant !== shown;
+    // Diagrams draw the present state until a variant is shown.
+    for (const drawing of document.querySelectorAll('.diagram-variant')) drawing.hidden = drawing.dataset.variant !== (shown || 'now');
     const label = document.querySelector('.preview-note');
     if (label) label.textContent = note();
     const state = JSON.stringify([option, free, shown]);

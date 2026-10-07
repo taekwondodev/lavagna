@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/taekwondodev/lavagna/internal/diagram"
 )
 
 // MaxMessageBytes bounds one agent message, like the user's text per batch.
@@ -483,19 +485,29 @@ func RenderPhase(phase *Phase, excerpt Excerpter, recap []RecapRow) []string {
 			files[q.ID+"/"+file.Name] = true
 		}
 		p := parser{out: &strings.Builder{}, questions: map[string]bool{}, anchors: map[string]bool{}, in: Input{Files: files, Budget: remaining, Excerpt: excerpt}, recap: recap, phase: true}
+		for i, o := range q.Options {
+			p.options = append(p.options, diagram.Option{ID: o.ID, Key: optionKey(i)})
+		}
 		chapter := ""
+		compared := false
 		var body []line
-		// flush renders a frame chapter; one with no content is hidden.
+		// flush renders a frame chapter; one with no content is hidden. 02
+		// starts with the diagrams of 01 that declare variants.
 		flush := func() {
 			c, framed := frameChapters[chapter]
 			empty := !slices.ContainsFunc(body, func(l line) bool { return strings.TrimSpace(l.text) != "" })
+			if chapter == "Confrontare" {
+				compared, empty = true, empty && len(p.repeat) == 0
+			}
 			if framed && !empty {
 				id := strings.ToLower(chapter)
 				fmt.Fprintf(p.out, `<section class="chapter %s" id="%s"><header class="chapter-header"><span class="chapter-index" aria-hidden="true">%s</span><span class="chapter-name">%s</span><span class="chapter-purpose">%s</span></header><div class="chapter-body">`,
 					c.role, id, c.index, chapter, c.purpose)
 				if chapter == "Confrontare" {
 					p.out.WriteString(preview(q))
+					p.out.WriteString(strings.Join(p.repeat, ""))
 				}
+				p.current = chapter
 				p.blocks(body, scope{frame: true})
 				p.out.WriteString("</div></section>")
 			}
@@ -510,6 +522,10 @@ func RenderPhase(phase *Phase, excerpt Excerpter, recap []RecapRow) []string {
 			body = append(body, line{n: q.StartLine + 1 + j, text: text})
 		}
 		flush()
+		if !compared && len(p.repeat) > 0 {
+			chapter = "Confrontare"
+			flush()
+		}
 		q.HTML = p.out.String()
 		errs = append(errs, p.errs...)
 		remaining -= p.used

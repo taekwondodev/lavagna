@@ -250,3 +250,24 @@ html.frame body { font-size: 14px; }
 .excerpt .line.problem { background: var(--problem-soft); box-shadow: inset 3px 0 0 var(--problem); }
 .problem-badge { float: right; display: inline-grid; place-items: center; width: 18px; height: 18px; margin-right: -4px; border-radius: 50%; background: var(--problem); color: var(--on-accent); font: 800 10px/1 var(--sans); }
 .excerpt > p { font-size: 13px; color: var(--muted); }
+
+/* diagrams: static SVG drawn by the CLI; tones come from markers and variants */
+.diagram { margin: 16px 0; }
+.diagram-svg { display: block; max-width: 100%; height: auto; font-family: var(--sans); }
+.dg-neutral { --tone: var(--muted); --tone-soft: var(--surface); --tone-text: var(--ink); }
+.dg-change { --tone: var(--action); --tone-soft: var(--action-soft); --tone-text: var(--action); }
+.dg-risk { --tone: var(--analysis); --tone-soft: var(--analysis-soft); --tone-text: var(--analysis); }
+.dg-problem { --tone: var(--problem); --tone-soft: var(--problem-soft); --tone-text: var(--problem); }
+.dg-box { fill: var(--tone-soft); stroke: var(--tone); stroke-width: 1.2; }
+.dg-neutral .dg-box { stroke: var(--ink); }
+.dg-life { stroke: var(--line); stroke-dasharray: 4 4; }
+.dg-name { fill: var(--ink); }
+.dg-text { fill: var(--tone-text); }
+.dg-line { stroke: var(--tone); stroke-width: 1.5; }
+.dg-head { fill: var(--tone); }
+.dg-note { fill: var(--tone-soft); stroke: var(--tone); }
+.dg-bar { fill: var(--tone); }
+.dg-badge { fill: var(--tone); }
+.dg-badge-text { fill: var(--on-accent); }
+.dg-swatch { stroke: var(--tone); stroke-width: 3; }
+.dg-legend { fill: var(--muted); }

@@ -311,7 +311,7 @@ func TestRoundHelpPrintsPerQuestionFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 	help := string(out)
-	for _, want := range []string{`{id="crash"`, `after="storage"`, `45!1`, `{recommended}`, `=> consequence`, `/f/<key>/<question-id>/`, `--question ID`, `32 KiB`, `6 MiB`} {
+	for _, want := range []string{`{id="crash"`, `after="storage"`, `45!1`, `{recommended}`, `=> consequence`, `::: sequence`, `::: bars`, `[-a]`, `/f/<key>/<question-id>/`, `--question ID`, `32 KiB`, `6 MiB`} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help lacks %q", want)
 		}
