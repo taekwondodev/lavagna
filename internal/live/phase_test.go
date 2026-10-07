@@ -136,9 +136,9 @@ A partial write can corrupt the state.
 		Token string `json:"token"`
 		Phase struct {
 			Questions []struct {
-				ID      string `json:"id"`
-				Planned bool   `json:"planned"`
-				Frame   string `json:"frame"`
+				ID     string `json:"id"`
+				Status string `json:"status"`
+				Frame  string `json:"frame"`
 			} `json:"questions"`
 		} `json:"phase"`
 	}
@@ -151,7 +151,7 @@ A partial write can corrupt the state.
 		}
 	}
 	resp.Body.Close()
-	if view.Round != "r1" || len(view.Phase.Questions) != 2 || view.Phase.Questions[0].Frame == "" || !view.Phase.Questions[1].Planned {
+	if view.Round != "r1" || len(view.Phase.Questions) != 2 || view.Phase.Questions[0].Frame == "" || view.Phase.Questions[1].Status != "planned" || view.Phase.Questions[1].Frame != "" {
 		t.Fatalf("round event did not expose per-question frames and planned question: %+v", view)
 	}
 	body := fmt.Sprintf(`{"round":%q,"token":%q,"submission":"s-0123456789abcdef","questions":{"crash":{"choice":"atomic","messages":["keep the old copy"]}}}`, view.Round, view.Token)

@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/taekwondodev/lavagna/internal/round"
 )
 
 // The calls of the five-call walk in "What does the agent send on each call
@@ -262,7 +264,10 @@ func TestFiveCallWalkAcrossAGrillingPhase(t *testing.T) {
 	for _, q := range advance.page().Phase.Questions {
 		frames[q.ID] = q.Frame
 	}
-	if doc := advance.get(frames["crash"]); !strings.Contains(doc, "Cosa succede se una sessione crasha?") {
+	if frames["crash"] != "" {
+		t.Fatalf("a question with only 03 needs no frame: %q", frames["crash"])
+	}
+	if doc := advance.get(frames["storage"]); !strings.Contains(doc, "Lo stato vive in un solo file.") {
 		t.Fatalf("a question from an earlier call is served from its artifact: %s", doc)
 	}
 	v := advance.page()
@@ -309,18 +314,16 @@ func TestFiveCallWalkAcrossAGrillingPhase(t *testing.T) {
 	for id, q := range s.Ledger.Questions {
 		b, err := os.ReadFile(filepath.Join(dir, "artifacts", "question", fmt.Sprintf("%s-%d.json", id, q.Version)))
 		var stored struct {
-			HTML      string `json:"html"`
-			Resources []struct {
-				Body []byte `json:"body"`
-			} `json:"resources"`
+			Question  round.PhaseQuestion `json:"question"`
+			HTML      string              `json:"html"`
+			Resources []round.File        `json:"resources"`
 		}
 		if err != nil || json.Unmarshal(b, &stored) != nil {
 			t.Fatalf("%s: %v", id, err)
 		}
-		rendered := len(stored.HTML)
-		for _, r := range stored.Resources {
-			rendered += len(r.Body)
-		}
+		version := stored.Question
+		version.HTML, version.Resources = stored.HTML, stored.Resources
+		rendered := version.Size()
 		if rendered == 0 || rendered != q.Bytes {
 			t.Fatalf("%s records %d bytes for a version rendered in %d", id, q.Bytes, rendered)
 		}

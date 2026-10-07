@@ -8,75 +8,60 @@
   <script src="assets/shell.js" defer></script>
 </head>
 <body>
-  <header class="topbar" id="topbar">
-    <div class="topbar-inner">
-      <div class="brand">lavagna<span id="round-label"></span></div>
+  <div class="page" id="page">
+    <header class="titlebar">
+      <div class="brand">lavagna<span class="phase-title" id="phase-title"></span><span class="round-label" id="round-label"></span></div>
       <p class="turn" id="turn" data-state="connecting" role="status" aria-live="polite">Collegamento a lavagna…</p>
-    </div>
-    <nav aria-label="Percorso di lettura"><ol class="route" id="route"></ol></nav>
-    <div class="picker-hint" id="picker-hint" role="status" hidden>Scegli il punto da collegare al commento: i controlli del contenuto restano fermi. <kbd>Esc</kbd> annulla.</div>
-  </header>
+    </header>
 
-  <section class="notice" id="waiting">
-    <p class="notice-lead">In attesa del round dall’agente.</p>
-    <p class="muted">La pagina si aggiorna da sola appena il round è pronto.</p>
-  </section>
+    <nav class="rail" id="rail" aria-label="Round e domande" hidden></nav>
 
-  <section class="notice notice-done" id="closed" hidden>
-    <span class="done-mark" aria-hidden="true"></span>
-    <h1>Frontiera chiusa, torna al terminale</h1>
-    <p>L’agente continua nel terminale con il riepilogo delle decisioni e ti chiede il passo successivo.</p>
-    <p class="muted">Puoi chiudere questa scheda.</p>
-  </section>
+    <main class="center" id="center">
+      <section class="notice" id="waiting">
+        <p class="notice-lead">In attesa del round dall’agente.</p>
+        <p class="muted">La pagina si aggiorna da sola appena il round è pronto.</p>
+      </section>
+      <section class="notice notice-done" id="closed" hidden>
+        <span class="done-mark" aria-hidden="true"></span>
+        <h1>Frontiera chiusa, torna al terminale</h1>
+        <p>L’agente continua nel terminale con il riepilogo delle decisioni e ti chiede il passo successivo.</p>
+        <p class="muted">Puoi chiudere questa scheda.</p>
+      </section>
+      <div class="question" id="question">
+        <div id="question-head"></div>
+        <div class="frame-area" id="frame-area"></div>
+        <div id="decide-area"></div>
+      </div>
+    </main>
 
-  <form id="feedback-form" class="layout" hidden>
-    <main class="document" id="document"></main>
-
-    <aside class="feedback" id="feedback" aria-labelledby="feedback-title">
-      <header class="feedback-heading">
-        <div class="eyebrow" id="feedback-eyebrow">Qui agisci tu · bozza non inviata</div>
-        <h2 id="feedback-title">Il tuo feedback</h2>
-        <p id="feedback-lead">Domande, dubbi e richieste: tutto in un solo invio.</p>
+    <aside class="discussion" id="discussion" aria-labelledby="discussion-title" hidden>
+      <header class="discussion-head">
+        <p class="eyebrow">Discussione</p>
+        <p class="discussion-title" id="discussion-title"></p>
+        <p class="discussion-count" id="discussion-count"></p>
       </header>
-      <div class="feedback-body" id="draft-area">
-        <label for="comment-text">Che cosa vuoi chiarire o cambiare?</label>
-        <div class="anchor-line" id="anchor-line" hidden>
-          <button type="button" id="pick-anchor" aria-pressed="false">Collega un punto della pagina</button>
-          <button type="button" id="clear-anchor" hidden>Rimuovi riferimento</button>
-          <span class="anchor-label" id="anchor-label"></span>
+      <ol class="thread" id="thread" aria-label="Messaggi"></ol>
+      <div class="composer" id="composer-area">
+        <textarea id="composer" aria-describedby="composer-help"></textarea>
+        <div class="composer-row">
+          <button type="button" id="stage-message" disabled>Aggiungi</button>
         </div>
-        <textarea id="comment-text" aria-describedby="comment-counter editor-help image-help" placeholder="Scrivi qui una domanda o un commento."></textarea>
-        <p class="counter" id="comment-counter" aria-live="polite" hidden></p>
-        <div class="editor-actions">
-          <button type="button" id="add-comment" disabled>Aggiungi commento</button>
-          <button type="button" id="cancel-edit" hidden>Annulla modifica</button>
-        </div>
-        <p class="editor-help" id="editor-help">Per più commenti separati usa «Aggiungi commento». <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Invio</kbd> invia.</p>
-        <p class="editor-help" id="image-help"></p>
-        <p class="live-status" id="editor-status" role="status" aria-live="polite"></p>
-        <p class="attach-refusal" id="image-refusal" role="alert"></p>
-        <ol class="image-list" id="images" aria-label="Screenshot nella bozza"></ol>
-        <ol class="note-list" id="comments" aria-label="Commenti nella bozza"></ol>
+        <p class="composer-help" id="composer-help">Resta in bozza fino a Send to Agent. Incolla o trascina screenshot.</p>
+        <p class="composer-status" id="composer-status" role="status" aria-live="polite"></p>
+        <p class="refusal" id="composer-refusal" role="alert"></p>
       </div>
-      <div class="feedback-body sent-area" id="sent-area" tabindex="-1" hidden>
-        <p class="sent-title">Hai inviato</p>
-        <ul class="review-list" id="sent-list"></ul>
-      </div>
-      <footer class="send-area">
-        <div class="review" id="review" tabindex="-1">
-          <p class="review-title">Nel prossimo invio</p>
-          <ul class="review-list" id="review-list"></ul>
-        </div>
-        <button type="submit" id="send-feedback" class="primary" disabled>Invia feedback</button>
-        <p class="send-hint" id="send-hint" aria-live="polite"></p>
-        <p class="delivery" id="delivery" role="status" aria-live="polite"></p>
-      </footer>
     </aside>
-  </form>
 
-  <div class="mobile-bar" id="mobile-bar" hidden>
-    <p id="mobile-summary"></p>
-    <button type="button" id="to-feedback" class="primary">Rivedi e invia</button>
+    <footer class="footer" id="footer" hidden>
+      <div class="footer-status">
+        <p class="summary" id="summary" role="status" aria-live="polite"></p>
+        <p class="counter" id="counter" aria-live="polite" hidden></p>
+      </div>
+      <div class="footer-send">
+        <span class="kbd-hint" aria-hidden="true"><kbd>⌘</kbd><kbd>↩</kbd> invia</span>
+        <button type="button" id="send" class="primary" disabled>Send to Agent<span class="send-count" id="send-count" hidden></span></button>
+      </div>
+    </footer>
   </div>
 </body>
 </html>

@@ -63,17 +63,54 @@ func (s stage) MarshalText() ([]byte, error) {
 	return []byte([...]string{"", "accepted", "returned", "received", "unread", "ended", "aborted", "unread-aborted"}[s]), nil
 }
 
+// view is what the page renders for one call: the question ledger with the
+// current version of every question, the threads sent so far and the call's
+// credentials. Text reaches the shell as plain text; only frame documents
+// carry rendered HTML.
 type view struct {
 	ID         string                `json:"round"`
+	Call       string                `json:"call"`
 	Token      string                `json:"token"`
 	Limit      int                   `json:"limit"`
-	Frame      string                `json:"frame"`
-	Resources  []string              `json:"resources"`
 	ImageLimit int                   `json:"imageLimit"`
 	ImageBytes int                   `json:"imageBytes"`
 	Previous   *conversation.Outcome `json:"previous"`
-	Phase      *round.Phase          `json:"phase,omitempty"`
-	round.Round
+	Phase      phaseView             `json:"phase"`
+}
+
+type phaseView struct {
+	Title     string                  `json:"title,omitempty"`
+	Round     int                     `json:"round"`
+	Questions []questionView          `json:"questions"`
+	Overview  []messageView           `json:"overview"`
+	Decisions []conversation.Decision `json:"decisions"`
+}
+
+type questionView struct {
+	ID        string                `json:"id"`
+	Title     string                `json:"title"`
+	After     []string              `json:"after,omitempty"`
+	Status    conversation.Status   `json:"status"`
+	Round     int                   `json:"round,omitempty"`
+	Marks     []conversation.Marked `json:"marks,omitempty"`
+	Version   int                   `json:"version,omitempty"`
+	Lead      string                `json:"lead,omitempty"`
+	Options   []round.PhaseOption   `json:"options,omitempty"`
+	Reason    string                `json:"reason,omitempty"`
+	Answer    *conversation.Answer  `json:"answer,omitempty"`
+	Thread    []messageView         `json:"thread"`
+	Frame     string                `json:"frame,omitempty"`
+	Resources []string              `json:"resources,omitempty"`
+}
+
+// messageView is a sent thread message; Images are upload ids the page reads
+// under images/, never host paths.
+type messageView struct {
+	Author     string   `json:"author"`
+	Round      int      `json:"round"`
+	Submission string   `json:"submission,omitempty"`
+	Text       string   `json:"text,omitempty"`
+	Images     []string `json:"images,omitempty"`
 }
 
 type frame struct {
@@ -98,9 +135,6 @@ type phaseFeedback struct {
 type batch struct {
 	round      string
 	submission string
-	choices    map[string]string
-	comments   []comment
-	images     []string
 	questions  map[string]phaseFeedback
 	overview   phaseFeedback
 }
@@ -190,21 +224,14 @@ type upload struct {
 	contentType string
 }
 
-type comment struct {
-	Anchor *string `json:"anchor"`
-	Text   string  `json:"text"`
-}
-
 type server struct {
 	origin      conversation.Origin
 	mu          sync.Mutex
 	gate        gate
 	view        *view
-	frame       *frame
 	frames      map[string]*frame
 	options     map[string]map[string]bool
 	answerable  map[string]bool
-	anchors     map[string]bool
 	imageDir    string
 	uploads     map[string]upload
 	stage       stage
@@ -225,36 +252,43 @@ type event struct {
 	data any
 }
 
+// roundSpec is everything one call serves. The relay receives it gob-encoded
+// and serves the same view during the agent's turn.
 type roundSpec struct {
 	Origin   conversation.Origin
 	ID       string
+	Call     string
 	Token    string
 	FrameKey string
-	Round    round.Round
-	Files    []round.File
 	Previous *conversation.Outcome
 	Images   string
-	Phase    *round.Phase
-	// Answerable names the questions open in the current round; only they take
-	// a choice or answer. Every other question takes messages and screenshots.
-	Answerable map[string]bool
+	Ledger   conversation.Ledger
+	// Questions holds the current version of every question in ledger order;
+	// planned questions carry only their id.
+	Questions []round.PhaseQuestion
 }
 
 func newRound(spec roundSpec) *server {
-	r := spec.Round
+	l := spec.Ledger
 	s := newServer(spec.Origin)
-	s.view = &view{ID: spec.ID, Token: spec.Token, Limit: maxCommentBytes, ImageLimit: maxImages, ImageBytes: maxImageBytes, Previous: spec.Previous, Round: r, Phase: spec.Phase}
 	s.imageDir = spec.Images
-	s.answerable = spec.Answerable
 	s.loadUploads()
 	s.gate = gate{cap: spec.Origin.Cap, round: spec.ID, token: spec.Token}
-	if spec.Phase != nil {
-		s.frames = map[string]*frame{}
-		for i := range spec.Phase.Questions {
-			q := &spec.Phase.Questions[i]
-			if q.Planned {
-				continue
-			}
+	s.frames = map[string]*frame{}
+	s.view = &view{ID: spec.ID, Call: spec.Call, Token: spec.Token, Limit: maxCommentBytes, ImageLimit: maxImages, ImageBytes: maxImageBytes, Previous: spec.Previous,
+		Phase: phaseView{Title: l.Title, Round: l.Round, Questions: []questionView{}, Overview: messages(l.Overview), Decisions: append([]conversation.Decision{}, l.Decisions...)}}
+	for _, q := range spec.Questions {
+		entry := l.Questions[q.ID]
+		v := questionView{ID: q.ID, Title: entry.Title, After: entry.After, Status: entry.Status, Round: entry.Round, Marks: entry.Marks, Version: entry.Version,
+			Lead: q.Lead, Options: q.Options, Reason: q.Reason, Answer: entry.Answer, Thread: messages(entry.Thread)}
+		// Only the current round's open questions take a choice or answer;
+		// every other question takes messages and screenshots.
+		s.answerable[q.ID] = entry.Status == conversation.Open && entry.Round == l.Round
+		s.options[q.ID] = map[string]bool{}
+		for _, o := range q.Options {
+			s.options[q.ID][o.ID] = true
+		}
+		if entry.Status != conversation.Planned && q.HTML != "" {
 			files := map[string]round.File{}
 			var names []string
 			for _, file := range q.Resources {
@@ -262,34 +296,30 @@ func newRound(spec roundSpec) *server {
 				names = append(names, "../"+q.ID+"/"+file.Name)
 			}
 			f := &frame{key: spec.FrameKey + q.ID, files: files, doc: page.Frame(q.HTML, names)}
-			q.FrameKey = f.key
-			q.Frame = "/f/" + f.key + "/" + q.ID + "/"
 			s.frames[q.ID] = f
+			v.Frame = "/f/" + f.key + "/" + q.ID + "/"
+			for _, name := range []string{"", page.FrameAsset + "lavagna.css", page.FrameAsset + "frame.js", page.FrameAsset + page.Font} {
+				v.Resources = append(v.Resources, v.Frame+name)
+			}
+			for _, file := range q.Resources {
+				v.Resources = append(v.Resources, v.Frame+(&url.URL{Path: file.Name}).EscapedPath())
+			}
 		}
-	} else if r.Content != "" {
-		f := &frame{key: spec.FrameKey, files: map[string]round.File{}}
-		var names []string
-		for _, file := range spec.Files {
-			f.files[file.Name] = file
-			names = append(names, file.Name)
-		}
-		f.doc = page.Frame(r.Content, names)
-		s.frame = f
-		s.view.Frame = "/f/" + f.key + "/"
-		for _, name := range append(names, "", page.FrameAsset+"lavagna.css", page.FrameAsset+"frame.js", page.FrameAsset+page.Font) {
-			s.view.Resources = append(s.view.Resources, s.view.Frame+(&url.URL{Path: name}).EscapedPath())
-		}
-	}
-	for _, a := range r.Anchors {
-		s.anchors[a] = true
-	}
-	for _, q := range r.Questions {
-		s.options[q.ID] = map[string]bool{}
-		for _, opt := range q.Options {
-			s.options[q.ID][opt] = true
-		}
+		s.view.Phase.Questions = append(s.view.Phase.Questions, v)
 	}
 	return s
+}
+
+func messages(thread []conversation.Message) []messageView {
+	out := []messageView{}
+	for _, m := range thread {
+		v := messageView{Author: m.Author, Round: m.Round, Submission: m.Submission, Text: m.Text}
+		for _, path := range m.Images {
+			v.Images = append(v.Images, strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 func (s *server) loadUploads() {
@@ -320,14 +350,14 @@ func newClose(o conversation.Origin) *server {
 
 func newServer(o conversation.Origin) *server {
 	return &server{
-		origin:   o,
-		options:  map[string]map[string]bool{},
-		anchors:  map[string]bool{},
-		uploads:  map[string]upload{},
-		streams:  map[chan event]struct{}{},
-		accepted: make(chan batch, 1),
-		seen:     make(chan struct{}),
-		done:     make(chan struct{}),
+		origin:     o,
+		options:    map[string]map[string]bool{},
+		answerable: map[string]bool{},
+		uploads:    map[string]upload{},
+		streams:    map[chan event]struct{}{},
+		accepted:   make(chan batch, 1),
+		seen:       make(chan struct{}),
+		done:       make(chan struct{}),
 	}
 }
 
@@ -423,21 +453,9 @@ func (s *server) asset(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) framed(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSuffix(r.PathValue("file"), "/")
-	var f *frame
-	if s.frames != nil {
-		question, rest, found := strings.Cut(name, "/")
-		if !found {
-			question, name = name, ""
-		} else {
-			name = rest
-		}
-		f = s.frames[question]
-		if strings.HasPrefix(name, question+"/") {
-			name = strings.TrimPrefix(name, question+"/")
-		}
-	} else {
-		f = s.frame
-	}
+	question, name, _ := strings.Cut(name, "/")
+	name = strings.TrimPrefix(name, question+"/")
+	f := s.frames[question]
 	if f == nil || !same(r.PathValue("key"), f.key) {
 		http.NotFound(w, r)
 		return
@@ -564,17 +582,11 @@ type sendQuestion struct {
 }
 
 type sendBody struct {
-	Round      string            `json:"round"`
-	Token      string            `json:"token"`
-	Submission string            `json:"submission"`
-	Choices    map[string]string `json:"choices"`
-	Comments   []struct {
-		Text   string  `json:"text"`
-		Anchor *string `json:"anchor"`
-	} `json:"comments"`
-	Images    []string                `json:"images"`
-	Questions map[string]sendQuestion `json:"questions"`
-	Overview  sendQuestion            `json:"overview"`
+	Round      string                  `json:"round"`
+	Token      string                  `json:"token"`
+	Submission string                  `json:"submission"`
+	Questions  map[string]sendQuestion `json:"questions"`
+	Overview   sendQuestion            `json:"overview"`
 }
 
 func reply(w http.ResponseWriter, status int, body any) {
@@ -650,64 +662,7 @@ func (s *server) send(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) validate(in sendBody) (batch, int, string) {
-	if s.view.Phase != nil {
-		return s.validatePhase(in)
-	}
-	b := batch{round: in.Round, submission: in.Submission, choices: map[string]string{}, comments: []comment{}, images: []string{}}
-	for q, opt := range in.Choices {
-		if !s.options[q][opt] {
-			return b, http.StatusBadRequest, "unknown choice"
-		}
-		b.choices[q] = opt
-	}
-	total := 0
-	for _, c := range in.Comments {
-		if strings.TrimSpace(c.Text) == "" {
-			return b, http.StatusBadRequest, "empty comment"
-		}
-		if c.Anchor != nil && !s.anchors[*c.Anchor] {
-			return b, http.StatusBadRequest, "unknown anchor"
-		}
-		total += encodedLen(c.Text) - len(`""`)
-		b.comments = append(b.comments, comment{Anchor: c.Anchor, Text: c.Text})
-	}
-	if total > maxCommentBytes {
-		return b, http.StatusRequestEntityTooLarge, fmt.Sprintf("comment text exceeds %d bytes", maxCommentBytes)
-	}
-	if len(in.Images) > maxImages {
-		return b, http.StatusRequestEntityTooLarge, fmt.Sprintf("more than %d images", maxImages)
-	}
-	attached := map[string]bool{}
-	for _, id := range in.Images {
-		u, ok := s.uploads[id]
-		if !ok || attached[id] {
-			return b, http.StatusBadRequest, "unknown image"
-		}
-		attached[id] = true
-		b.images = append(b.images, u.path)
-	}
-	if len(b.choices) == 0 && len(b.comments) == 0 && len(b.images) == 0 {
-		return b, http.StatusBadRequest, "empty batch"
-	}
-	if encodedLen(b.line()) > maxResultBytes {
-		return b, http.StatusRequestEntityTooLarge, fmt.Sprintf("feedback exceeds %d bytes", maxResultBytes)
-	}
-	return b, 0, ""
-}
-
-func (s *server) validatePhase(in sendBody) (batch, int, string) {
 	b := batch{round: in.Round, submission: in.Submission, questions: map[string]phaseFeedback{}}
-	if len(in.Choices) > 0 || len(in.Comments) > 0 || len(in.Images) > 0 {
-		return b, http.StatusBadRequest, "legacy feedback fields are not supported"
-	}
-	known := map[string]map[string]bool{}
-	for _, q := range s.view.Phase.Questions {
-		opts := map[string]bool{}
-		for _, o := range q.Options {
-			opts[o.ID] = true
-		}
-		known[q.ID] = opts
-	}
 	totalText := 0
 	attached := map[string]bool{}
 	useImages := func(ids []string) ([]string, string) {
@@ -723,7 +678,7 @@ func (s *server) validatePhase(in sendBody) (batch, int, string) {
 		return paths, ""
 	}
 	for id, item := range in.Questions {
-		options, ok := known[id]
+		options, ok := s.options[id]
 		if !ok {
 			return b, http.StatusBadRequest, "unknown question"
 		}

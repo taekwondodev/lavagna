@@ -37,13 +37,20 @@ Compare the alternatives and their tradeoffs.
 
 ## Decidere
 - [atomic] Write a temporary file, then rename {recommended}
+  The file is always old or new; one fsync per save.
   => The old file stays intact until rename.
 - [journal] Append records and recover the last valid record
+
+A few lines, and the format does not change.
 
 # What should be retained? {id="retention"}
 ```
 
-Ids match `[a-z0-9][a-z0-9_-]{0,39}` and are unique within the phase. Titles are one line and at most 120 characters. `after` names known questions and dependencies cannot cycle. Chapters `## Capire`, `## Confrontare`, and `## Decidere` are optional except that a complete question needs `## Decidere`; keep them in this order. A complete question has 2–6 options (`- [id] label`), with at most one `{recommended}` marker and at most one indented `=> consequence` per option. A free-text answer is always available without syntax. The option id `now` is reserved for diagram states.
+Ids match `[a-z0-9][a-z0-9_-]{0,39}` and are unique within the phase. Titles are one line and at most 120 characters. `after` names known questions and dependencies cannot cycle. Chapters `## Capire`, `## Confrontare`, and `## Decidere` are optional except that a complete question needs `## Decidere`; keep them in this order. A complete question has 2–6 options (`- [id] label`), with at most one `{recommended}` marker and at most one indented `=> consequence` per option; other indented lines describe the option, and a paragraph after the options gives the reason for the recommendation. A free-text answer is always available without syntax. The option id `now` is reserved for diagram states.
+
+The page shows the title, the lead (text before the first chapter) and Decidere as 03 in its own controls, as plain text with `` `code` `` and `**bold**`. Capire and Confrontare render as 01 and 02 in the question's content frame; an empty chapter is hidden, and a question with neither has no frame. 02 opens with one Anteprima chip per option and the `=>` effect line of the variant shown: the chip previewed, else the choice, else the recommended option. A free-text answer shows the recommended variant with a note that the agent draws it next turn.
+
+Question scripts follow the choice without asking for it. The frame's `<html>` carries `data-option` (the selected option id, absent when none), `data-free` (`true` when a free-text answer exists) and `data-variant` (the option 02 shows), and `document` receives a `lavagna:option` event with `detail: {option, free, variant}` on load and on every change, so CSS alone can follow the choice. The frame never receives the free text, messages or screenshots; see [Security](../SECURITY.md#accepted-residual-risk-unsent-choice-visible-to-round-scripts).
 
 A `45!1` excerpt mark identifies line 45 as a problem with badge 1; multiple marks are space-separated. `{ref}`, `data-ref`, and level-1 chapter headings are invalid. Each question owns resources under `DIR/<id>/`; there are no shared root resources. References use `<id>/file`; only that question's `.js` and `.css` run in its frame. Question frames are served at `/f/<key>/<question-id>/`.
 
@@ -82,6 +89,16 @@ Rename is atomic within one file system.
 Elements apply in the order phase, settled, replacements, reply, new questions, recap; a reply cannot address a question new in the same call. Replies, settles and replacements stay in the current round. Any invalid element rejects the whole call, and the ledger and stored questions stay unchanged.
 
 The current versions of all questions, rendered with their resources, are bounded to 16 MiB per phase; one agent message is bounded to 32 KiB.
+
+## Answer on the page
+
+The title bar shows the phase title and the delivery stage. Below it are the rail of rounds, the active question and its discussion; the footer holds the draft summary, Send to Agent and the <kbd>⌘</kbd><kbd>↩</kbd> hint.
+
+- The rail lists the Overview first, then each round: closed rounds, the current round marked CURRENT, and the planned questions in a locked round marked "dopo Qn", which may change. A card shows whether the question is unseen, a dot for a new agent reply, its message count and its choice. A closed round keeps a struck card for a question that moved on or was reopened. The first question of the current round opens by default; clicking a card switches the center.
+- 03 marks the recommended option and shows its reason. Clicking the selected option clears it; typing in the free-text card "Inserisci la tua risposta se nessuna opzione ti convince" replaces the option. A question of a closed round, or one already settled, can be reread and commented; its decision is fixed.
+- Each question and the Overview have their own discussion: sent messages read "Tu", agent replies come from the call. Messages added there, and screenshots pasted or dropped on it, stay marked as drafts until Send to Agent or <kbd>⌘</kbd><kbd>↩</kbd> submits all of them with the answers of the current round's open questions. An agent reply changes only its discussion; a replaced question is redrawn alone and becomes unseen again.
+- The Overview shows the decisions table; a reopened decision is struck through.
+- The draft belongs to the phase and survives each call, so you can keep writing while the agent works. It is frozen only while Send awaits lavagna's reply; Send then stays disabled until the next call. A counter appears near the 32 KiB text bound.
 
 ## Collect feedback
 
@@ -125,7 +142,7 @@ The selectors are mutually exclusive. An unknown id or a question with no feedba
 
 ## Delivery and recovery
 
-The page reports accepted and returned stages from server and CLI events. A supported Pi session witness can report receipt and turn completion; those are delivery observations, not proof that the agent understood feedback or that the phase is settled.
+The page reports accepted and returned stages from server and CLI events, in short form in the title bar and as a sentence in the footer, followed by "· N in bozza" while items are staged. A supported Pi session witness can report receipt and turn completion; those are delivery observations, not proof that the agent understood feedback or that the phase is settled.
 
 The relay keeps the page origin live during the agent's turn. If a call is interrupted, reload the page and inspect the displayed delivery state before retrying; a call with no element resumes waiting without resending content. Each call has its own round token and frame key, and delivery outcomes such as Interrupted and Uncertain belong to the call, so a reply-only call stays in its round. A returned batch is not resent automatically. A running call holds the conversation lease; concurrent calls report busy. `close` is destructive and repeatable. It removes retained local files even if no browser is connected; browser-cache deletion is confirmed only when a connected page acknowledges cleanup.
 

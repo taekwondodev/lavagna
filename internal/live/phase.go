@@ -89,10 +89,7 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, out, errw
 			return invalid(out, "question artifacts exceed the 6 MiB storage bound")
 		}
 		entry := ledger.Questions[q.ID]
-		entry.Bytes = len(q.HTML)
-		for _, r := range q.Resources {
-			entry.Bytes += len(r.Body)
-		}
+		entry.Bytes = q.Size()
 		ledger.Questions[q.ID] = entry
 		written[conversation.ArtifactName(q.ID, entry.Version)] = data
 	}
@@ -146,11 +143,7 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, out, errw
 		fmt.Fprintf(errw, "lavagna: cannot remove replaced question versions (%v); the next call retries\n", err)
 	}
 
-	answerable := map[string]bool{}
-	for id, q := range ledger.Questions {
-		answerable[id] = q.Status == conversation.Open && q.Round == ledger.Round
-	}
-	spec := roundSpec{Origin: origin, ID: st.RoundID(), Token: conversation.Secret(16), FrameKey: conversation.Secret(16), Round: round.Round{Questions: []round.Question{}, Anchors: []string{}}, Previous: st.Previous, Images: c.Images(), Phase: &round.Phase{Title: ledger.Title, Questions: questions}, Answerable: answerable}
+	spec := roundSpec{Origin: origin, ID: st.RoundID(), Call: st.Live, Token: conversation.Secret(16), FrameKey: conversation.Secret(16), Previous: st.Previous, Images: c.Images(), Ledger: st.Ledger, Questions: questions}
 	srv := newRound(spec)
 	h := listen(srv, ln)
 	defer h.stop()
@@ -180,6 +173,9 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, out, errw
 	}
 	st = st.Step(conversation.BatchReturned{})
 	record(errw, lease, st)
+	// The relay serves the ledger with this batch, so a page reloaded during
+	// the agent's turn shows the sent messages in their threads.
+	spec.Ledger = st.Ledger
 	srv.returned(handOver(getenv, errw, c.Relay(), ln, spec, got.submission))
 	return exitOK
 }

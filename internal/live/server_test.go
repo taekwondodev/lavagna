@@ -17,7 +17,8 @@ import (
 	"github.com/taekwondodev/lavagna/internal/round"
 )
 
-const anchoredRound = "# Capire\nIl problema. {ref=\"Problema\"}\n<img src=\"punto.png\" alt=\"\">\n\n# Decidere\n## Dove? {id=\"storage\"}\n- [file] File\n- [db] Database\n"
+// storageRound is one open question, storage, whose 01 shows its own resource.
+const storageRound = "# Dove? {id=\"storage\"}\n## Capire\n<img src=\"storage/punto.png\" alt=\"\">\n## Decidere\n- [file] File\n- [db] Database\n"
 
 func serve(t *testing.T) (*server, func(body string) int) {
 	t.Helper()
@@ -26,12 +27,7 @@ func serve(t *testing.T) (*server, func(body string) int) {
 		t.Fatal(err)
 	}
 	o := conversation.Origin{Port: ln.Addr().(*net.TCPAddr).Port, Cap: "cap-a"}
-	files := []round.File{{Name: "punto.png", Body: []byte("\x89PNG")}}
-	r, errs := round.Parse(round.Input{Source: []byte(anchoredRound), Files: map[string]bool{"punto.png": true}, Budget: round.MaxBytes})
-	if errs != nil {
-		t.Fatal(errs)
-	}
-	s := newRound(roundSpec{Origin: o, ID: "r1", Token: "tok-1", FrameKey: conversation.Secret(16), Round: r, Files: files, Images: t.TempDir()})
+	s := newRound(phaseSpec(t, o, storageRound, []round.File{{Name: "storage/punto.png", Body: []byte("\x89PNG")}}))
 	hs := &http.Server{Handler: s.handler()}
 	go hs.Serve(ln)
 	t.Cleanup(func() { hs.Close() })
@@ -51,16 +47,18 @@ func serve(t *testing.T) (*server, func(body string) int) {
 
 func sendBatch(submission, comment string) string {
 	c, _ := json.Marshal(comment)
-	return fmt.Sprintf(`{"round":"r1","token":"tok-1","submission":%q,"choices":{"storage":"db"},"comments":[{"text":%s}]}`, submission, c)
+	return fmt.Sprintf(`{"round":"r1","token":"tok-1","submission":%q,"questions":{"storage":{"choice":"db","messages":[%s]}}}`, submission, c)
 }
 
 func TestQuestionFramesServeOnlyTheirOwnResources(t *testing.T) {
 	o := conversation.Origin{Port: 43210, Cap: "cap-a"}
-	phase := &round.Phase{Questions: []round.PhaseQuestion{
+	ledger := conversation.Ledger{Round: 1, Order: []string{"one", "two"}, Questions: map[string]conversation.Question{
+		"one": {Status: conversation.Open, Round: 1, Version: 1}, "two": {Status: conversation.Open, Round: 1, Version: 1},
+	}}
+	s := newRound(roundSpec{Origin: o, ID: "r1", Token: "tok-1", FrameKey: "frame-key-", Images: t.TempDir(), Ledger: ledger, Questions: []round.PhaseQuestion{
 		{ID: "one", HTML: `<p>one</p>`, Resources: []round.File{{Name: "screen.js", Body: []byte("one-script")}}},
 		{ID: "two", HTML: `<p>two</p>`, Resources: []round.File{{Name: "screen.js", Body: []byte("two-script")}}},
-	}}
-	s := newRound(roundSpec{Origin: o, ID: "r1", Token: "tok-1", FrameKey: "frame-key-", Phase: phase, Images: t.TempDir()})
+	}})
 	request := func(path string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		r.Host = o.Host()
@@ -68,7 +66,7 @@ func TestQuestionFramesServeOnlyTheirOwnResources(t *testing.T) {
 		s.handler().ServeHTTP(w, r)
 		return w
 	}
-	for _, q := range phase.Questions {
+	for _, q := range s.view.Phase.Questions {
 		root := request(q.Frame)
 		if root.Code != http.StatusOK || !strings.Contains(root.Body.String(), "<p>"+q.ID+"</p>") {
 			t.Fatalf("frame %s: status %d, body %s", q.ID, root.Code, root.Body.String())
@@ -78,26 +76,35 @@ func TestQuestionFramesServeOnlyTheirOwnResources(t *testing.T) {
 			t.Fatalf("resource %s: status %d, body %s", q.ID, resource.Code, resource.Body.String())
 		}
 	}
-	wrong := request(phase.Questions[0].Frame + "missing.js")
+	wrong := request(s.view.Phase.Questions[0].Frame + "missing.js")
 	if wrong.Code != http.StatusNotFound {
 		t.Fatalf("missing resource status %d", wrong.Code)
 	}
-	other := request(phase.Questions[0].Frame + "two/screen.js")
+	other := request(s.view.Phase.Questions[0].Frame + "two/screen.js")
 	if other.Code != http.StatusNotFound {
 		t.Fatalf("cross-question resource status %d", other.Code)
 	}
 }
 
 func TestPhaseFeedbackIsGroupedByQuestionAndOverview(t *testing.T) {
-	s := newRound(roundSpec{Origin: conversation.Origin{Port: 43210, Cap: "cap-a"}, ID: "r1", Token: "tok-1", Round: round.Round{Questions: []round.Question{{ID: "one", Options: []string{"yes", "no"}}, {ID: "two", Options: []string{"a", "b"}}}}, Phase: &round.Phase{Questions: []round.PhaseQuestion{{ID: "one", Options: []round.PhaseOption{{ID: "yes"}, {ID: "no"}}}, {ID: "two", Options: []round.PhaseOption{{ID: "a"}, {ID: "b"}}}, {ID: "closed", Options: []round.PhaseOption{{ID: "x"}, {ID: "y"}}}}}, Answerable: map[string]bool{"one": true, "two": true}})
+	ledger := conversation.Ledger{Round: 2, Questions: map[string]conversation.Question{
+		"one":    {Status: conversation.Open, Round: 2},
+		"two":    {Status: conversation.Open, Round: 2},
+		"closed": {Status: conversation.Settled, Round: 1},
+	}}
+	s := newRound(roundSpec{Origin: conversation.Origin{Port: 43210, Cap: "cap-a"}, ID: "r2", Token: "tok-1", Ledger: ledger, Questions: []round.PhaseQuestion{
+		{ID: "one", Options: []round.PhaseOption{{ID: "yes"}, {ID: "no"}}},
+		{ID: "two", Options: []round.PhaseOption{{ID: "a"}, {ID: "b"}}},
+		{ID: "closed", Options: []round.PhaseOption{{ID: "x"}, {ID: "y"}}},
+	}})
 	s.uploads["img-1"] = upload{path: "/tmp/one.png"}
-	if _, status, problem := s.validatePhase(sendBody{Round: "r1", Submission: "s-12345678", Questions: map[string]sendQuestion{"closed": {Choice: "x"}}}); status != http.StatusBadRequest || problem != "question is not open in this round" {
+	if _, status, problem := s.validate(sendBody{Round: "r1", Submission: "s-12345678", Questions: map[string]sendQuestion{"closed": {Choice: "x"}}}); status != http.StatusBadRequest || problem != "question is not open in this round" {
 		t.Fatalf("choice on a question outside the current round: %d %s", status, problem)
 	}
-	if _, status, problem := s.validatePhase(sendBody{Round: "r1", Submission: "s-12345678", Questions: map[string]sendQuestion{"closed": {Messages: []string{"later thought"}}}}); status != 0 {
+	if _, status, problem := s.validate(sendBody{Round: "r1", Submission: "s-12345678", Questions: map[string]sendQuestion{"closed": {Messages: []string{"later thought"}}}}); status != 0 {
 		t.Fatalf("message on a closed-round question: %d %s", status, problem)
 	}
-	batch, status, problem := s.validatePhase(sendBody{Round: "r1", Submission: "s-12345678", Questions: map[string]sendQuestion{"one": {Choice: "yes", Messages: []string{"question note"}, Images: []string{"img-1"}}, "two": {Answer: "free text"}}, Overview: sendQuestion{Messages: []string{"overall"}}})
+	batch, status, problem := s.validate(sendBody{Round: "r1", Submission: "s-12345678", Questions: map[string]sendQuestion{"one": {Choice: "yes", Messages: []string{"question note"}, Images: []string{"img-1"}}, "two": {Answer: "free text"}}, Overview: sendQuestion{Messages: []string{"overall"}}})
 	if status != 0 {
 		t.Fatalf("status %d: %s", status, problem)
 	}
@@ -111,7 +118,7 @@ func TestPhaseFeedbackIsGroupedByQuestionAndOverview(t *testing.T) {
 			t.Errorf("missing %s in %s", want, got)
 		}
 	}
-	if _, status, _ := s.validatePhase(sendBody{Questions: map[string]sendQuestion{"one": {Choice: "yes", Answer: "no"}}}); status != http.StatusBadRequest {
+	if _, status, _ := s.validate(sendBody{Questions: map[string]sendQuestion{"one": {Choice: "yes", Answer: "no"}}}); status != http.StatusBadRequest {
 		t.Fatalf("choice and answer status %d", status)
 	}
 }
@@ -204,28 +211,10 @@ func TestSendRefusesTrailingDataAndBlankComments(t *testing.T) {
 
 func TestSendKeepsTheResultLineInsideTheTail(t *testing.T) {
 	_, post := serve(t)
-	comments := strings.TrimSuffix(strings.Repeat(`{"text":"a"},`, 2000), ",")
-	body := `{"round":"r1","token":"tok-1","submission":"s-00000000000000aa","comments":[` + comments + `]}`
+	messages := strings.TrimSuffix(strings.Repeat(`"a",`, 13000), ",")
+	body := `{"round":"r1","token":"tok-1","submission":"s-00000000000000aa","questions":{"storage":{"messages":[` + messages + `]}}}`
 	if status := post(body); status != http.StatusRequestEntityTooLarge {
-		t.Fatalf("2000 one-byte comments: status %d, want 413", status)
-	}
-}
-
-func TestSendKeepsAnchorsPresentInTheRound(t *testing.T) {
-	s, post := serve(t)
-	batch := func(anchor string) string {
-		return `{"round":"r1","token":"tok-1","submission":"s-00000000000000aa","comments":[{"text":"qui","anchor":` + anchor + `},{"text":"in generale","anchor":null}]}`
-	}
-	if status := post(batch(`"Inventato"`)); status != http.StatusBadRequest {
-		t.Fatalf("an anchor absent from the round: status %d, want 400", status)
-	}
-	if status := post(batch(`"Problema"`)); status != http.StatusAccepted {
-		t.Fatalf("an anchor of the round: status %d, want 202", status)
-	}
-	line, _ := json.Marshal((<-s.accepted).line())
-	want := `{"lavagna":"feedback","round":"r1","submission":"s-00000000000000aa","choices":{},"comments":[{"anchor":"Problema","text":"qui"},{"anchor":null,"text":"in generale"}],"images":[]}`
-	if string(line) != want {
-		t.Fatalf("result %s\nwant %s", line, want)
+		t.Fatalf("13000 one-byte messages: status %d, want 413", status)
 	}
 }
 
@@ -241,7 +230,7 @@ func TestFrameServesTheRoundUnderItsOwnKey(t *testing.T) {
 		resp.Body.Close()
 		return resp
 	}
-	frameURL := s.view.Frame
+	frameURL := s.view.Phase.Questions[0].Frame
 	if !strings.HasPrefix(frameURL, "/f/") || strings.Contains(frameURL, s.origin.Cap) || strings.Contains(frameURL, s.view.Token) {
 		t.Fatalf("frame URL %q must carry its own key, not the capability or the round token", frameURL)
 	}
@@ -312,7 +301,7 @@ func postImage(t *testing.T, s *server, body string, edits ...func(*http.Request
 
 func imageBatch(submission string, ids ...string) string {
 	b, _ := json.Marshal(ids)
-	return fmt.Sprintf(`{"round":"r1","token":"tok-1","submission":%q,"images":%s}`, submission, b)
+	return fmt.Sprintf(`{"round":"r1","token":"tok-1","submission":%q,"overview":{"images":%s}}`, submission, b)
 }
 
 func TestUploadAcceptsScreenshotsByMagicBytes(t *testing.T) {
@@ -394,14 +383,14 @@ func TestSendReturnsAttachedImagesAsAbsolutePaths(t *testing.T) {
 	if status := post(imageBatch("s-00000000000000aa", gif, png)); status != http.StatusAccepted {
 		t.Fatalf("send: %d", status)
 	}
-	got := (<-s.accepted).line()
-	if len(got.Images) != 2 {
-		t.Fatalf("images %q, want two paths", got.Images)
+	got := (<-s.accepted).overview.Images
+	if len(got) != 2 {
+		t.Fatalf("images %q, want two paths", got)
 	}
 	for i, want := range []string{screenshots["gif"], screenshots["png"]} {
-		b, err := os.ReadFile(got.Images[i])
-		if !filepath.IsAbs(got.Images[i]) || err != nil || string(b) != want {
-			t.Errorf("image %d at %q: %v, content %q, want an absolute path to %q", i, got.Images[i], err, b, want)
+		b, err := os.ReadFile(got[i])
+		if !filepath.IsAbs(got[i]) || err != nil || string(b) != want {
+			t.Errorf("image %d at %q: %v, content %q, want an absolute path to %q", i, got[i], err, b, want)
 		}
 	}
 }
@@ -409,7 +398,7 @@ func TestSendReturnsAttachedImagesAsAbsolutePaths(t *testing.T) {
 func TestUploadedImagesRemainValidAcrossRoundServers(t *testing.T) {
 	s, _ := serve(t)
 	_, id := postImage(t, s, screenshots["png"])
-	next := newRound(roundSpec{Origin: s.origin, ID: "r2", Token: "tok-2", Round: s.view.Round, Images: s.imageDir})
+	next := newRound(roundSpec{Origin: s.origin, ID: "r2", Token: "tok-2", Images: s.imageDir})
 	u, ok := next.uploads[id]
 	if !ok {
 		t.Fatalf("new server did not restore image reference %q", id)
@@ -469,5 +458,56 @@ func TestSendRefusesImagesOutsideTheBounds(t *testing.T) {
 	}
 	if status := post(imageBatch("s-00000000000000aa", ids[:8]...)); status != http.StatusAccepted {
 		t.Fatalf("eight images: status %d, want 202", status)
+	}
+}
+
+func TestViewCarriesTheLedgerThePageRenders(t *testing.T) {
+	ledger := conversation.Ledger{Title: "Archivio", Round: 2, Order: []string{"storage", "crash", "later"},
+		Questions: map[string]conversation.Question{
+			"storage": {Title: "Dove?", Status: conversation.Settled, Round: 1, Version: 1, Answer: &conversation.Answer{Choice: "file"},
+				Thread: []conversation.Message{
+					{Author: "user", Round: 1, Submission: "s-1", Text: "E SQLite?"},
+					{Author: "user", Round: 1, Submission: "s-1", Images: []string{"/cache/k/images/0123abcd.png"}},
+					{Author: "agent", Round: 2, Text: "Resta A."},
+				}},
+			"crash": {Title: "Crash?", After: []string{"storage"}, Status: conversation.Open, Round: 2, Version: 3, Marks: []conversation.Marked{{Round: 1, Mark: conversation.Moved}}, Answer: &conversation.Answer{Text: "a modo mio"}},
+			"later": {Title: "Pulizia?", After: []string{"crash"}, Status: conversation.Planned},
+		},
+		Overview:  []conversation.Message{{Author: "agent", Round: 1, Text: "Benvenuto"}},
+		Decisions: []conversation.Decision{{Question: "storage", Title: "Dove?", Decision: "File", Round: 1, Why: "Semplice", Rejected: []string{"Database"}}},
+	}
+	questions := []round.PhaseQuestion{
+		{ID: "storage", HTML: `<section class="chapter" id="capire"></section>`, Lead: "Due sessioni.", Reason: "Nessuna dipendenza.",
+			Options: []round.PhaseOption{{ID: "file", Label: "File", Detail: "Uno per sessione", Recommended: true}, {ID: "db", Label: "Database"}}},
+		{ID: "crash", Options: []round.PhaseOption{{ID: "atomic", Label: "Atomica"}, {ID: "none", Label: "Niente"}}},
+		{ID: "later", Planned: true},
+	}
+	s := newRound(roundSpec{Origin: conversation.Origin{Port: 43210, Cap: "cap-a"}, ID: "r2", Call: "c4", Token: "tok-4", FrameKey: "key-", Images: t.TempDir(), Ledger: ledger, Questions: questions})
+	got, err := json.Marshal(s.view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"round":"r2","call":"c4","token":"tok-4"`,
+		`"phase":{"title":"Archivio","round":2,"questions":[`,
+		`{"id":"storage","title":"Dove?","status":"settled","round":1,"version":1,"lead":"Due sessioni.","options":[{"id":"file","label":"File","detail":"Uno per sessione","recommended":true},{"id":"db","label":"Database"}],"reason":"Nessuna dipendenza.","answer":{"choice":"file"},"thread":[`,
+		`{"author":"user","round":1,"submission":"s-1","images":["0123abcd"]}`,
+		`{"author":"agent","round":2,"text":"Resta A."}`,
+		`"frame":"/f/key-storage/storage/","resources":["/f/key-storage/storage/","/f/key-storage/storage/.lavagna/lavagna.css"`,
+		`{"id":"crash","title":"Crash?","after":["storage"],"status":"open","round":2,"marks":[{"round":1,"mark":"moved"}],"version":3,`,
+		`"answer":{"text":"a modo mio"},"thread":[]}`,
+		`{"id":"later","title":"Pulizia?","after":["crash"],"status":"planned","thread":[]}`,
+		`"overview":[{"author":"agent","round":1,"text":"Benvenuto"}]`,
+		`"decisions":[{"question":"storage","title":"Dove?","decision":"File","round":1,"why":"Semplice","rejected":["Database"]}]`,
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("view lacks %s\n%s", want, got)
+		}
+	}
+	if strings.Contains(string(got), "/cache/") {
+		t.Errorf("the view exposes a host path: %s", got)
+	}
+	if !s.answerable["crash"] || s.answerable["storage"] || s.answerable["later"] {
+		t.Errorf("answerable %v, want only the current round's open question", s.answerable)
 	}
 }
