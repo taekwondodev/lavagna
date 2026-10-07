@@ -11,9 +11,9 @@ Lavagna is a local CLI for browser rounds in an agent conversation. Its trust mo
 
 ## Shell and content boundary
 
-Lavagna's shell owns decision controls, the feedback editor, send, the conversation capability and the per-round token. Agent-supplied explanations and prototypes render in an opaque-origin `<iframe sandbox="allow-scripts">`; frame responses repeat the sandbox in Content Security Policy (CSP).
+Lavagna's shell owns decision controls, the feedback editor, send, the conversation capability and the [round token](CONTEXT.md). Agent-supplied explanations and prototypes render in an opaque-origin `<iframe sandbox="allow-scripts">`; frame responses repeat the sandbox in Content Security Policy (CSP).
 
-The frame has its own per-round resource key, not the shell capability or feedback token. The shell accepts frame messages only from that frame's window; anchor selection must name an anchor defined by the round. The feedback endpoint requires POST, the shell's Origin and the round token. Round scripts cannot read the shell DOM or its editor, obtain its token through that DOM, or submit valid feedback on the user's behalf.
+The frame has its own [frame key](CONTEXT.md), not the shell capability or round token. The shell accepts frame messages only from that frame's window; anchor selection must name an anchor defined by the round. The feedback endpoint requires POST, the shell's Origin and the round token. Round scripts cannot read the shell DOM or its editor, obtain its token through that DOM, or submit valid feedback on the user's behalf.
 
 For offline reloads, the shell caches the rendered frame and its named resources and reconstructs an in-memory blob document. It retains `sandbox="allow-scripts"`, embeds resource bytes as data URLs, and pins the copied scripts with CSP hashes and integrity attributes. The shell permits these local snapshot transports; the frame still cannot read the shell or make HTTP, fetch or WebSocket connections. This does not add a script opt-in or change the accepted WebRTC behavior.
 
