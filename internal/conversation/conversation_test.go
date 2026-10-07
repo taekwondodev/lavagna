@@ -36,7 +36,7 @@ func used(t *testing.T, session string, age time.Duration) Conversation {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := l.Save(State{Rounds: 1}); err != nil {
+	if err := l.Save(State{Calls: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(c.Images(), 0o700); err != nil {

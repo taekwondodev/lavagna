@@ -196,7 +196,7 @@ A partial write can corrupt the state.
 	}
 	_, plannedErr := lease.ReadArtifact("question", "later-0", 6<<20)
 	lease.Release()
-	if state.Format != 1 || state.Questions["crash"].Version != 1 || state.Questions["crash"].Status != "open" || state.Questions["later"].Version != 0 || state.Questions["later"].Status != "planned" {
+	if state.Format != 1 || state.Ledger.Questions["crash"].Version != 1 || state.Ledger.Questions["crash"].Status != "open" || state.Ledger.Questions["later"].Version != 0 || state.Ledger.Questions["later"].Status != "planned" {
 		t.Fatalf("state ledger: %+v", state)
 	}
 	if !errors.Is(plannedErr, fs.ErrNotExist) {
@@ -225,5 +225,72 @@ A partial write can corrupt the state.
 		if dirInfo.Mode().Perm() != 0o700 {
 			t.Errorf("directory %s mode %o", directory, dirInfo.Mode().Perm())
 		}
+	}
+}
+
+func TestPhaseRoundRefusesCallsBeyondThePhaseBound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	getenv := func(key string) string {
+		if key == "LAVAGNA_SESSION" {
+			return "phase-bound-test"
+		}
+		return ""
+	}
+	conv, err := conversation.FromEnv(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := conversation.Acquire(conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	near := conversation.State{Format: conversation.Format, Ledger: conversation.Ledger{Round: 1, Order: []string{"big"}, Questions: map[string]conversation.Question{
+		"big": {Title: "Big", Status: conversation.Open, Round: 1, Version: 1, Bytes: conversation.PhaseBytes - 1024, Options: []conversation.Option{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}}},
+	}}}
+	if err := lease.Save(near); err != nil {
+		t.Fatal(err)
+	}
+	lease.Release()
+	source := "# Next {id=\"next\"}\n## Capire\n" + strings.Repeat("x", 2048) + "\n## Decidere\n- [a] A\n- [b] B\n"
+	var out bytes.Buffer
+	if code := PhaseRound(getenv, strings.NewReader(source), "", &out, io.Discard); code != exitInvalid || !strings.Contains(out.String(), "16 MiB phase bound") {
+		t.Fatalf("phase bound: %d %s", code, out.String())
+	}
+	lease, err = conversation.Acquire(conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+	if got, err := lease.Load(); err != nil || got.Calls != 0 || len(got.Ledger.Questions) != 1 {
+		t.Fatalf("refused call changed the ledger: %+v %v", got, err)
+	}
+	if _, err := lease.ReadArtifact("question", "next-1", 6<<20); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("refused call stored an artifact: %v", err)
+	}
+}
+
+func TestRetainReplacesAResentSubmissionRecord(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	conv, err := conversation.FromEnv(func(key string) string {
+		if key == "LAVAGNA_SESSION" {
+			return "retain-test"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := conversation.Acquire(conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+	for _, record := range []string{`{"round":"r1"}`, `{"round":"r2"}`} {
+		if err := retain(lease, "s-12345678", []byte(record)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if b, err := lease.ReadArtifact("feedback", "s-12345678", maxResultBytes); err != nil || string(b) != `{"round":"r2"}` {
+		t.Fatalf("resent record: %s %v", b, err)
 	}
 }

@@ -1,5 +1,5 @@
 lavagna round [DIR] < round.md
-Wait for one feedback batch; no timeout. Esc interrupts.
+Wait for the next feedback batch; no timeout. Esc interrupts.
 DIR supplies round.md and files under DIR/<question-id>/. Each question owns its
 resources. A bare question title plans it without presenting an artifact.
 Stdout: one JSON result grouped by question. URL/status: stderr. Large outcomes
@@ -16,5 +16,12 @@ Per-session files keep the state local.
 - [file] Per-session files {recommended}
 - [db] Database
 
-Several questions may be included in one call. Use # Capire, # Confrontare,
-and # Decidere in that order. More: lavagna round --help grammar.
+Several questions may be included in one call. Use ## Capire, ## Confrontare,
+and ## Decidere in that order.
+Lavagna keeps the phase's questions: later calls send only what changes. A new
+question opens the next round; a whole question with a known id replaces it.
+::: reply [ID] posts a message, ::: settled ID [OPTION] closes a question with
+its Why as body; close both with :::. An empty call only resumes waiting.
+Current question versions fit 16 MiB per phase; one message fits 32 KiB.
+After close, expiry or an upgrade the phase is empty: send complete questions.
+More: lavagna round --help grammar.

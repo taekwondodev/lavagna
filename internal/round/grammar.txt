@@ -64,9 +64,58 @@ Input text, resources and rendered excerpts are bounded to 4 MiB and at most
 32 files per call. Retained question artifacts are bounded to 6 MiB. Resource
 paths must be regular files below the question directory; symlinks are refused.
 
+## Calls after the first
+
+Lavagna keeps every question of the phase in its ledger, so a later call sends
+only what changes. Call elements stand outside questions, start at the line
+beginning and close with `:::`:
+
+```markdown
+::: phase Session archive
+:::
+::: settled storage
+No new dependency.
+:::
+::: settled retention week
+The weekend is covered.
+:::
+::: reply crash
+Rename is atomic on one file system.
+:::
+::: reply
+A message for the Overview.
+:::
+```
+
+- `::: phase TITLE` names the phase; only in the first call of a phase.
+- `::: settled ID` closes a question with the user's recorded answer;
+  `::: settled ID OPTION` closes it with that option of the current version.
+  The body is the Why of its decisions row. Settling needs a recorded answer
+  or an option, and may repeat in a later call to change the decision.
+- A whole question with a known id replaces it in its round. The recorded
+  choice survives when its option id survives; a free-text answer always does.
+  Replacing a settled question reopens it in the current round.
+- `::: reply ID` posts a message in that question's discussion, closed rounds
+  included; `::: reply` posts to the Overview. One message is at most 32 KiB.
+- A new question with a body opens the next round, and every unsettled
+  question of the current round moves into it. Replies, settles and
+  replacements stay in the current round.
+- `::: recap` with no body, inside a question, renders the decisions table
+  (question, decision, round, why, rejected options) after this call's settles.
+- A call with no element only resumes waiting, for example after Esc.
+
+Elements apply in the order phase, settled, replacements, reply, new
+questions; a reply cannot address a question new in the same call. Any
+invalid element rejects the whole call. The current versions of all questions
+must fit 16 MiB, rendered with their resources. After close, the one-day expiry or an upgrade the
+phase starts empty: `reply` or `settled` on an unknown id is invalid, and the
+agent sends complete questions again.
+
 ## Feedback
 
-One Send returns `questions`, keyed by id, and optional `overview`. A question may
+One Send returns `questions`, keyed by id, and optional `overview`. Each batch
+repeats the answers of the current round's open questions; questions of closed
+rounds carry only messages and images. A question may
 have `choice` or `answer` (never both), `messages`, and `images`; empty fields
 are omitted. Above 2 KiB the outcome is deferred: choices remain visible,
 messages and images become counts, and a free-text answer is `true`. Read full

@@ -28,48 +28,41 @@ func check(t *testing.T, cases []transition) {
 	}
 }
 
-func TestStepRoundStarted(t *testing.T) {
-	returned := &Outcome{Round: "r1", Submission: "s-1", End: endReturned}
+func TestStepCallStarted(t *testing.T) {
+	returned := &Outcome{Call: "c1", Round: "r1", Submission: "s-1", End: endReturned}
+	r1 := Ledger{Round: 1}
 	check(t, []transition{
-		{"first round of the conversation", State{}, RoundStarted{Origin: recorded},
-			State{Format: 1, Origin: &recorded, Rounds: 1, Live: "r1"}},
-		{"after a returned round", State{Origin: &recorded, Rounds: 1, Previous: returned}, RoundStarted{Origin: recorded},
-			State{Format: 1, Origin: &recorded, Rounds: 2, Live: "r2", Previous: returned}},
-		{"after Esc during the user's turn", State{Origin: &recorded, Rounds: 2, Live: "r2", Previous: returned}, RoundStarted{Origin: recorded},
-			State{Format: 1, Origin: &recorded, Rounds: 3, Live: "r3", Previous: &Outcome{Round: "r2", End: endInterrupted}}},
-		{"after Esc between Accepted and Returned", State{Origin: &recorded, Rounds: 2, Live: "r2", Accepted: "s-2", Previous: returned}, RoundStarted{Origin: recorded},
-			State{Format: 1, Origin: &recorded, Rounds: 3, Live: "r3", Previous: &Outcome{Round: "r2", Submission: "s-2", End: endUncertain}}},
-		{"anchor names survive rounds for carried drafts", State{Anchors: []string{"Old"}}, RoundStarted{Origin: recorded, Anchors: []string{"New", "Old"}},
-			State{Format: 1, Origin: &recorded, Rounds: 1, Live: "r1", Anchors: []string{"New", "Old"}}},
-		{"after EADDRINUSE on the recorded port", State{Origin: &recorded, Rounds: 1, Previous: returned}, RoundStarted{Origin: fresh},
-			State{Format: 1, Origin: &fresh, Rounds: 2, Live: "r2", Previous: returned}},
+		{"first call of the conversation", State{}, CallStarted{Origin: recorded, Ledger: r1},
+			State{Format: 1, Origin: &recorded, Calls: 1, Live: "c1", Ledger: r1}},
+		{"after a returned call", State{Format: 1, Origin: &recorded, Calls: 1, Previous: returned, Ledger: r1}, CallStarted{Origin: recorded, Ledger: r1},
+			State{Format: 1, Origin: &recorded, Calls: 2, Live: "c2", Previous: returned, Ledger: r1}},
+		{"after Esc during the user's turn, in the same round", State{Format: 1, Origin: &recorded, Calls: 2, Live: "c2", Previous: returned, Ledger: r1}, CallStarted{Origin: recorded, Ledger: r1},
+			State{Format: 1, Origin: &recorded, Calls: 3, Live: "c3", Previous: &Outcome{Call: "c2", Round: "r1", End: endInterrupted}, Ledger: r1}},
+		{"after Esc between Accepted and Returned", State{Format: 1, Origin: &recorded, Calls: 2, Live: "c2", Accepted: "s-2", Previous: returned, Ledger: r1}, CallStarted{Origin: recorded, Ledger: Ledger{Round: 2}},
+			State{Format: 1, Origin: &recorded, Calls: 3, Live: "c3", Previous: &Outcome{Call: "c2", Round: "r1", Submission: "s-2", End: endUncertain}, Ledger: Ledger{Round: 2}}},
+		{"after EADDRINUSE on the recorded port", State{Format: 1, Origin: &recorded, Calls: 1, Previous: returned, Ledger: r1}, CallStarted{Origin: fresh, Ledger: r1},
+			State{Format: 1, Origin: &fresh, Calls: 2, Live: "c2", Previous: returned, Ledger: r1}},
 	})
 }
 
-func TestStepRoundStartedStoresQuestionLedger(t *testing.T) {
-	questions := map[string]QuestionEntry{"storage": {Version: 1, Status: "open"}, "next": {Status: "planned"}}
-	got := (State{}).Step(RoundStarted{Origin: recorded, Questions: questions})
-	if got.Format != 1 || !reflect.DeepEqual(got.Questions, questions) {
-		t.Fatalf("ledger not stored in versioned state: %+v", got)
-	}
-}
-
 func TestStepBatchAccepted(t *testing.T) {
+	batch := Batch{Submission: "s-1", Overview: Feedback{Messages: []string{"ok"}}}
+	recordedBatch := Ledger{Round: 1, Overview: []Message{{Author: "user", Round: 1, Submission: "s-1", Text: "ok"}}}
 	check(t, []transition{
-		{"the live round accepts its batch", State{Origin: &recorded, Rounds: 1, Live: "r1"}, BatchAccepted{"s-1"},
-			State{Origin: &recorded, Rounds: 1, Live: "r1", Accepted: "s-1"}},
-		{"a round resolves once", State{Origin: &recorded, Rounds: 1, Live: "r1", Accepted: "s-1"}, BatchAccepted{"s-2"},
-			State{Origin: &recorded, Rounds: 1, Live: "r1", Accepted: "s-1"}},
-		{"no live round", State{Origin: &recorded, Rounds: 1}, BatchAccepted{"s-1"},
-			State{Origin: &recorded, Rounds: 1}},
+		{"the live call accepts its batch into the ledger", State{Origin: &recorded, Calls: 1, Live: "c1", Ledger: Ledger{Round: 1}}, BatchAccepted{batch},
+			State{Origin: &recorded, Calls: 1, Live: "c1", Accepted: "s-1", Ledger: recordedBatch}},
+		{"a call resolves once", State{Origin: &recorded, Calls: 1, Live: "c1", Accepted: "s-1", Ledger: Ledger{Round: 1}}, BatchAccepted{Batch{Submission: "s-2"}},
+			State{Origin: &recorded, Calls: 1, Live: "c1", Accepted: "s-1", Ledger: Ledger{Round: 1}}},
+		{"no live call", State{Origin: &recorded, Calls: 1}, BatchAccepted{batch},
+			State{Origin: &recorded, Calls: 1}},
 	})
 }
 
 func TestStepBatchReturned(t *testing.T) {
 	check(t, []transition{
-		{"the accepted batch is returned", State{Origin: &recorded, Rounds: 1, Live: "r1", Accepted: "s-1"}, BatchReturned{},
-			State{Origin: &recorded, Rounds: 1, Previous: &Outcome{Round: "r1", Submission: "s-1", End: endReturned}}},
-		{"nothing was accepted", State{Origin: &recorded, Rounds: 1, Live: "r1"}, BatchReturned{},
-			State{Origin: &recorded, Rounds: 1, Live: "r1"}},
+		{"the accepted batch is returned", State{Origin: &recorded, Calls: 1, Live: "c1", Accepted: "s-1", Ledger: Ledger{Round: 1}}, BatchReturned{},
+			State{Origin: &recorded, Calls: 1, Previous: &Outcome{Call: "c1", Round: "r1", Submission: "s-1", End: endReturned}, Ledger: Ledger{Round: 1}}},
+		{"nothing was accepted", State{Origin: &recorded, Calls: 1, Live: "c1"}, BatchReturned{},
+			State{Origin: &recorded, Calls: 1, Live: "c1"}},
 	})
 }
