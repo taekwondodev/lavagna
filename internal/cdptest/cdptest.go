@@ -195,10 +195,17 @@ func (b *Browser) Open(url string, width, height int) *Page {
 	p := &Page{t: b.t, b: b, target: target.TargetID, session: attached.SessionID}
 	b.must(nil, p.session, "Target.setAutoAttach",
 		map[string]any{"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true})
-	b.must(nil, p.session, "Emulation.setDeviceMetricsOverride",
-		map[string]any{"width": width, "height": height, "deviceScaleFactor": 1, "mobile": false})
+	p.Resize(width, height, false)
 	b.must(nil, p.session, "Page.navigate", map[string]any{"url": url})
 	return p
+}
+
+// Resize sets the page's viewport, as a resized window would. A mobile
+// viewport, as on a phone, has overlay scrollbars.
+func (p *Page) Resize(width, height int, mobile bool) {
+	p.t.Helper()
+	p.b.must(nil, p.session, "Emulation.setDeviceMetricsOverride",
+		map[string]any{"width": width, "height": height, "deviceScaleFactor": 1, "mobile": mobile})
 }
 
 func (p *Page) Close() {
