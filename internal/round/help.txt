@@ -1,20 +1,27 @@
-lavagna round [--reuse rN] [DIR] < round.md
-Wait for one feedback batch; no timeout. Esc interrupts.
-DIR supplies round.md and local assets. --reuse keeps rN's content snapshot;
-supply only new # Decidere on stdin (no DIR), never inherited choices.
-Stdout: one JSON result. URL/status: stderr. Small feedback is inline;
-deferred:true means more data is retained; see lavagna feedback --help.
-Omitted/cleared choices are unanswered, not approved.
-Feedback is not completion: continue with round; only close ends the phase.
-Read needed feedback/images before close: it deletes phase data.
+lavagna round [DIR] < round.md
+Wait for the next feedback batch; no timeout. Esc interrupts.
+DIR supplies round.md and files under DIR/<question-id>/. Each question owns its
+resources. A bare question title plans it without presenting an artifact.
+Stdout: one JSON result grouped by question. URL/status: stderr. Large outcomes
+are deferred; read them with lavagna feedback SUBMISSION [--question ID|--overview|--all].
+Use lavagna feedback --help for selectors and retained reads.
+An unanswered question is not approval. Feedback is not completion: continue with
+round; only close ends the phase. Close deletes the retained question artifacts.
 
-Minimal round (multiple questions allowed; choices are optional):
-# Decidere
-## Where? {id="storage"}
-- [file] Per-session files
+Minimal question:
+# Where do we store state? {id="storage"}
+## Capire
+Per-session files keep the state local.
+## Decidere
+- [file] Per-session files {recommended}
 - [db] Database
 
-Add # Capire, then # Confrontare before # Decidere when useful, not by default.
-Text: paragraphs, ##/### headings, - lists, **bold**, `code`.
-Anchor content with {ref="Name"}; comments return that name, or null.
-More: lavagna round --help grammar (components, tables, excerpts, HTML, assets).
+Several questions may be included in one call. Use ## Capire, ## Confrontare,
+and ## Decidere in that order.
+Lavagna keeps the phase's questions: later calls send only what changes. A new
+question opens the next round; a whole question with a known id replaces it.
+::: reply [ID] posts a message, ::: settled ID [OPTION] closes a question with
+its Why as body; close both with :::. An empty call only resumes waiting.
+Current question versions fit 16 MiB per phase; one message fits 32 KiB.
+After close, expiry or an upgrade the phase is empty: send complete questions.
+More: lavagna round --help grammar.

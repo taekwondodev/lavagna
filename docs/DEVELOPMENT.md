@@ -24,19 +24,23 @@ Run `go test ./...` for the existing unit, CLI and browser integration checks, a
 | Boundary | Existing evidence |
 | --- | --- |
 | Round grammar, directory limits and repository excerpts | `internal/round/*_test.go` |
+| Diagram grammar, variants, label widths against Chrome, flow layout and SVG drawing | `internal/diagram/*_test.go`; [`testdata/chrome-widths.json`](../internal/diagram/testdata/chrome-widths.json) holds the Chrome measurements of #14 and [`testdata/flow-examples.json`](../internal/diagram/testdata/flow-examples.json) the flow examples of #13 with their hand layouts; `BenchmarkFlowAtTheLimit` times a flow at the size limits; `internal/live/page_test.go` checks variant switching and drawn widths in the frame |
 | Conversation locking, sweep and lifecycle | `internal/conversation/*_test.go` |
 | Admission, screenshot uploads and frame isolation | `internal/live/*_test.go` |
 | Command results and concurrent calls | `cli_test.go` |
-| Page behavior, drafts, screenshots and offline rich rounds | `page_test.go`, `continuity_test.go`, `rich_continuity_test.go` |
+| Question rendering, the page's view, frame resource isolation, send admission and grouped feedback | `internal/round/questions_test.go`, `internal/live/server_test.go`, `internal/live/feedback_test.go`, `internal/live/phase_test.go` |
+| The three-column page: rail, 03, threads, drafts, delivery stages and the shell and frame boundary | `internal/live/page_test.go`, `internal/live/isolation_test.go` |
+| Narrow and phone layouts, fitted raw HTML blocks and Expand | `internal/live/layout_test.go` |
+| Page recovery: reloads, offline rereads, reconciliation, Uncertain, shared and detached tabs, build changes and close cleanup | `internal/live/recovery_test.go` |
 | Relay lifetime, listener handoff and delivery receipts | `relay_test.go`, `internal/witness/*_test.go` |
 
-Browser tests use [`internal/cdptest`](../internal/cdptest) to drive headless Chrome or Chromium over `--remote-debugging-pipe`, with a temporary profile and mock keychain. They skip when neither browser is installed; a passing Go command alone does not prove browser coverage. Tests invoke lavagna with `BROWSER=true`, so no tab opens in the user's browser. Exercise the actual page when changing interactive behavior.
+Browser tests drive a headless Chrome through [`internal/cdptest`](../internal/cdptest) and skip when no Chrome or Chromium is installed. The page tests run real calls through `PhaseRound`, answered from the page. Narrow and phone layouts are emulated viewports in headless Chrome, not real devices. CLI integration tests use `BROWSER=true`, so no tab opens in the user's browser.
 
 [`internal/witnesstest/testdata`](../internal/witnesstest/testdata) holds the witness fixtures. `answered`, `next-round` and `close` were cut from a real Pi 1.0.3 session with `cut.mjs`; `unread`, `retry` and `unrecognized` cover cases that run did not produce, written through Pi's `SessionManager` with modelled message bodies by `record.mjs`. The checked-in fixtures are consumed without launching a model session.
 
 For documentation-only work, inspect the full Markdown diff, verify local links and reading triggers, and confirm any documented commands or behavior against their owning source. Keep run-specific results in the issue or PR rather than this reusable guide.
 
-For agent-context changes, run `uv run scripts/measure-context.py`. This optional tool builds the frozen pre-change baseline and the current checkout, drives local rounds with fixed inputs, then counts authored input, command arguments and both output streams using the pinned `tiktoken` package and `o200k_base` encoding. It normalizes random capability URLs and ports only. Fixtures cover minimal help, two rounds sharing content, small feedback, selective large feedback and full reads. It reports tokens separately from bytes; it does not estimate reasoning, harness wrappers, image tokens or every model's tokenizer. Tokenization is a development-only dependency, not part of the binary.
+For agent-context changes, run `uv run scripts/measure-context.py`. This optional tool builds the pinned baseline (`main` before per-question rounds) and the current checkout, drives local calls with fixed inputs, then counts the command line, authored stdin and both output streams using the pinned `tiktoken` package and `o200k_base` encoding. It normalizes random capability URLs and ports only. The main fixture replays one grilling phase, the five-call walk of the call model, with questions of realistic size and the same simulated batches in both formats; on the baseline every turn is a complete round, because each one changes content. It counts `round --help` once per phase and exits non-zero when the phase exceeds 50 % of the baseline tokens, the reply-only call exceeds 10 % of the baseline round it replaces, or the first call exceeds 110 % of the baseline first round. The other fixtures measure help, a round with small feedback, and large deferred feedback read one question at a time or whole. It reports tokens separately from bytes; it does not estimate reasoning, harness wrappers, image tokens or every model's tokenizer. Tokenization is a development-only dependency, not part of the binary.
 
 ## Documentation ownership
 

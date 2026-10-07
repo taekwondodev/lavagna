@@ -7,8 +7,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/taekwondodev/lavagna/internal/diagram"
+	"github.com/taekwondodev/lavagna/internal/page"
 )
 
 const MaxBytes = 4 << 20
@@ -60,6 +64,7 @@ var components = map[string]component{
 	"proposal": {"recommendation", "role-analysis", "Proposta · non approvata"},
 	"why":      {"representation", "role-neutral", "Perché questa forma"},
 	"boundary": {"boundary", "role-neutral", "Confine"},
+	"flow":     {"diagram flow", "role-information", "Flusso"},
 }
 
 var evidenceKinds = map[string]component{
@@ -83,6 +88,7 @@ var (
 	parenItem      = regexp.MustCompile(`^\d+\) `)
 	listMarker     = regexp.MustCompile(`^(?:[-*+] |\d+[.)] )`)
 	excerptSpec    = regexp.MustCompile(`^(\S+):(\d+)-(\d+)$`)
+	excerptMark    = regexp.MustCompile(`^(\d+)!([1-9][0-9]*)$`)
 	dataRef        = regexp.MustCompile(`(?i)(?:^|[\s"'])data-ref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))`)
 	resourceAttr   = regexp.MustCompile(`(?i)(?:^|[\s"'])((?:xlink:)?href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))`)
 )
@@ -104,6 +110,13 @@ type parser struct {
 	anchors   map[string]bool
 	in        Input
 	used      int
+	recap     []RecapRow
+	phase     bool
+	// options are the question's variants for diagrams; current is the chapter
+	// being rendered; repeat holds the diagrams of 01 that 02 draws again.
+	options []diagram.Option
+	current string
+	repeat  []string
 }
 
 func (p *parser) fail(n int, format string, args ...any) {
@@ -289,6 +302,10 @@ func (p *parser) component(ls []line, i int, sc scope) int {
 	}
 	body := ls[i+1 : end]
 	inner := scope{nested: true, frame: sc.frame}
+	if diagram.Kind(kind) {
+		p.diagram(l.n, kind, label, body)
+		return end + 1
+	}
 	if c, ok := components[kind]; ok {
 		if label == "" {
 			label = c.label
@@ -313,10 +330,111 @@ func (p *parser) component(ls []line, i int, sc scope) int {
 		p.steps(body, label, attr, inner)
 	case "excerpt":
 		p.excerpt(l.n, label, body, attr, inner)
+	case "recap":
+		if !p.phase {
+			p.fail(l.n, "unknown block ::: %s", kind)
+			break
+		}
+		if label != "" || strings.TrimSpace(joined(body)) != "" {
+			p.fail(l.n, "::: recap takes no label or body; lavagna renders the decisions table")
+		}
+		p.recapTable(attr)
 	default:
 		p.fail(l.n, "unknown block ::: %s", kind)
 	}
 	return end + 1
+}
+
+// diagramFont measures diagram labels with the font the page embeds.
+var diagramFont = sync.OnceValues(func() (*diagram.Font, error) {
+	b, err := fs.ReadFile(page.Assets, page.Font)
+	if err != nil {
+		return nil, err
+	}
+	return diagram.ParseFont(b)
+})
+
+var diagramNames = map[string]string{"sequence": "Sequenza", "flow": "Flusso", "bars": "Barre"}
+
+// diagram draws a sequence, flow or bars block as static SVG. 01 shows the present
+// state and leaves a diagram that declares variants to 02, which draws one SVG
+// per variant for the frame helper to show.
+func (p *parser) diagram(n int, kind, title string, body []line) {
+	lines := make([]diagram.Line, len(body))
+	for i, l := range body {
+		lines[i] = diagram.Line{N: l.n, Text: l.text}
+	}
+	d, errs := diagram.Parse(kind, title, n, lines, p.options)
+	for _, e := range errs {
+		p.fail(e.Line, "%s", e.Msg)
+	}
+	if d == nil {
+		return
+	}
+	font, err := diagramFont()
+	if err != nil {
+		p.fail(n, "diagram font: %v", err)
+		return
+	}
+	if title == "" {
+		title = diagramNames[kind]
+	}
+	figure := func(variants []string) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, `<figure class="diagram %s"><figcaption class="content-label role-information">%s</figcaption>`, kind, html.EscapeString(title))
+		if len(variants) == 1 {
+			b.WriteString(d.SVG(font, variants[0]))
+		} else {
+			for _, v := range variants {
+				hidden := " hidden"
+				if v == diagram.Now {
+					hidden = ""
+				}
+				fmt.Fprintf(&b, `<div class="diagram-variant" data-variant="%s"%s>%s</div>`, html.EscapeString(v), hidden, d.SVG(font, v))
+			}
+		}
+		b.WriteString(`</figure>`)
+		return b.String()
+	}
+	out, repeat := figure([]string{diagram.Now}), ""
+	switch {
+	case d.Varies() && p.current == "Capire":
+		repeat = figure(d.Variants())
+	case d.Varies():
+		out = figure(d.Variants())
+	}
+	if p.used+len(out)+len(repeat) > p.in.Budget {
+		p.fail(n, "::: %s: the round exceeds the %d byte bound", kind, MaxBytes)
+		return
+	}
+	p.used += len(out) + len(repeat)
+	p.out.WriteString(out)
+	if repeat != "" {
+		p.repeat = append(p.repeat, repeat)
+	}
+}
+
+func (p *parser) recapTable(attr string) {
+	if len(p.recap) == 0 {
+		fmt.Fprintf(p.out, `<p class="recap"%s>Nessuna decisione ancora.</p>`, attr)
+		return
+	}
+	fmt.Fprintf(p.out, `<div class="table recap"%s><table><thead><tr><th scope="col">Domanda</th><th scope="col">Decisione</th><th scope="col">Round</th><th scope="col">Perché</th><th scope="col">Scartate</th></tr></thead><tbody>`, attr)
+	for _, row := range p.recap {
+		cell := func(s string) string {
+			if row.Struck && s != "" {
+				return "<s>" + inline(s) + "</s>"
+			}
+			return inline(s)
+		}
+		class := ""
+		if row.Struck {
+			class = ` class="struck"`
+		}
+		fmt.Fprintf(p.out, `<tr%s><th scope="row">%s</th><td data-label="Decisione">%s</td><td data-label="Round">%s</td><td data-label="Perché">%s</td><td data-label="Scartate">%s</td></tr>`,
+			class, cell(row.Question), cell(row.Decision), cell(row.Round), cell(row.Why), cell(strings.Join(row.Rejected, ", ")))
+	}
+	p.out.WriteString(`</tbody></table></div>`)
 }
 
 func (p *parser) items(ls []line, sc scope, each func(first line, rest []line, attr string)) {
@@ -394,7 +512,13 @@ func (p *parser) steps(ls []line, label, attr string, sc scope) {
 	p.out.WriteString(`</ol>`)
 }
 
-func (p *parser) excerpt(n int, spec string, body []line, attr string, sc scope) {
+func (p *parser) excerpt(n int, input string, body []line, attr string, sc scope) {
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		p.fail(n, "::: excerpt needs path:start-end")
+		return
+	}
+	spec := parts[0]
 	m := excerptSpec.FindStringSubmatch(spec)
 	if m == nil {
 		p.fail(n, "::: excerpt needs path:start-end")
@@ -411,14 +535,47 @@ func (p *parser) excerpt(n int, spec string, body []line, attr string, sc scope)
 		p.fail(n, "excerpt %s: the range starts at line 1 or later and ends at or after its start", spec)
 		return
 	}
+	if p.in.Excerpt == nil {
+		p.fail(n, "excerpt rendering is unavailable")
+		return
+	}
 	text, err := p.in.Excerpt(path, from, to)
 	if err != nil {
 		p.fail(n, "excerpt %s: %v", spec, err)
 		return
 	}
+	marks := map[int]string{}
+	for _, mark := range parts[1:] {
+		m := excerptMark.FindStringSubmatch(mark)
+		if m == nil {
+			p.fail(n, "excerpt mark %q must be line!badge", mark)
+			continue
+		}
+		line, _ := strconv.Atoi(m[1])
+		badge := m[2]
+		if line < from || line > to {
+			p.fail(n, "excerpt mark %q is outside the excerpt", mark)
+			continue
+		}
+		if _, exists := marks[line]; exists {
+			p.fail(n, "excerpt line %d has more than one problem mark", line)
+			continue
+		}
+		marks[line] = badge
+	}
 	var rendered strings.Builder
 	for i, l := range strings.Split(text, "\n") {
-		fmt.Fprintf(&rendered, `<span class="line" data-line="%d">%s</span>`, from+i, html.EscapeString(l))
+		line := from + i
+		class, badge := "line", marks[line]
+		if badge != "" {
+			class = "line problem"
+		}
+		fmt.Fprintf(&rendered, `<span class="%s" data-line="%d">`, class, line)
+		if badge != "" {
+			fmt.Fprintf(&rendered, `<span class="problem-badge">%s</span>`, html.EscapeString(badge))
+		}
+		rendered.WriteString(html.EscapeString(l))
+		rendered.WriteString(`</span>`)
 		if p.used+rendered.Len() > p.in.Budget {
 			p.fail(n, "excerpt %s: the round exceeds the %d byte bound", spec, MaxBytes)
 			return
@@ -532,6 +689,8 @@ func (p *parser) raw(ls []line, i int, sc scope) int {
 		p.fail(ls[i].n, "raw HTML belongs in # Capire or # Confrontare")
 		return end
 	}
+	// The frame helper fits a raw block wider than the column inside its stage.
+	p.out.WriteString(`<div class="raw"><div class="raw-stage">` + "\n")
 	for _, l := range ls[i:end] {
 		for _, m := range dataRef.FindAllStringSubmatch(l.text, -1) {
 			p.ref(l.n, html.UnescapeString(m[1]+m[2]+m[3]))
@@ -542,6 +701,7 @@ func (p *parser) raw(ls []line, i int, sc scope) int {
 		p.out.WriteString(l.text)
 		p.out.WriteString("\n")
 	}
+	p.out.WriteString("</div></div>")
 	return end
 }
 

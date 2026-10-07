@@ -35,6 +35,12 @@ var errNoIdentity = errors.New("no conversation identity: set PI_SESSION_ID and 
 
 var ErrBusy = errors.New("another lavagna call is live in this conversation")
 
+var ErrNewerFormat = errors.New("conversation state was written by a newer lavagna; run lavagna close to discard it")
+
+// Format is the state.json layout this binary writes. A missing field is the
+// layout before the question ledger.
+const Format = 1
+
 type Conversation struct {
 	Key  string
 	root string
@@ -74,12 +80,13 @@ func (o Origin) URL() string { return fmt.Sprintf("http://127.0.0.1:%d/s/%s/", o
 func (o Origin) Host() string { return fmt.Sprintf("127.0.0.1:%d", o.Port) }
 
 type State struct {
+	Format   int      `json:"format"`
 	Origin   *Origin  `json:"origin,omitempty"`
-	Rounds   int      `json:"rounds"`
+	Calls    int      `json:"calls"`
 	Live     string   `json:"live,omitempty"`
 	Accepted string   `json:"accepted,omitempty"`
 	Previous *Outcome `json:"previous,omitempty"`
-	Anchors  []string `json:"anchors,omitempty"`
+	Ledger   Ledger   `json:"ledger"`
 }
 
 type Lease struct {
@@ -177,6 +184,52 @@ func untouched(dir string, now time.Time) bool {
 func (l *Lease) Release() { l.lock.Close() }
 
 func (l *Lease) Load() (State, error) { return Peek(l.conv) }
+
+// Current loads the state for a call that changes the phase. State written by
+// an older lavagna yields a fresh phase on the same origin, with stale set so
+// the caller purges the old phase data once it has committed. A newer format is
+// ErrNewerFormat and nothing is touched.
+func (l *Lease) Current() (s State, stale bool, err error) {
+	b, err := os.ReadFile(filepath.Join(l.conv.dir, "state.json"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return State{Format: Format}, false, nil
+	}
+	if err != nil {
+		return State{}, false, err
+	}
+	var head struct {
+		Format int     `json:"format"`
+		Origin *Origin `json:"origin"`
+	}
+	if err := json.Unmarshal(b, &head); err != nil {
+		return State{}, false, fmt.Errorf("conversation state %s: %w", l.conv.dir, err)
+	}
+	switch {
+	case head.Format > Format:
+		return State{}, false, ErrNewerFormat
+	case head.Format < Format:
+		return State{Format: Format, Origin: head.Origin}, true, nil
+	}
+	s, err = l.Load()
+	return s, false, err
+}
+
+// Purge deletes a stale phase's data after the fresh phase commits: every
+// artifact kind except questions, which Prune keeps to the committed ledger,
+// and the screenshots. The lock, state and relay socket stay.
+func (l *Lease) Purge() error {
+	errs := []error{os.RemoveAll(filepath.Join(l.conv.dir, imagesDir))}
+	kinds, err := os.ReadDir(filepath.Join(l.conv.dir, artifactsDir))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		errs = append(errs, err)
+	}
+	for _, kind := range kinds {
+		if kind.Name() != "question" {
+			errs = append(errs, os.RemoveAll(filepath.Join(l.conv.dir, artifactsDir, kind.Name())))
+		}
+	}
+	return errors.Join(errs...)
+}
 
 func Peek(c Conversation) (State, error) {
 	var s State

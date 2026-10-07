@@ -61,17 +61,17 @@ func (rec *recorder) to(path string) []hit {
 	return out
 }
 
-const isolationRound = `# Capire
-Il contenuto prova a uscire dal frame. {ref="Isolamento"}
+const isolationRound = `# Procediamo? {id="go"}
+## Capire
+Il contenuto prova a uscire dal frame.
 <p id="styled">Stile del round</p>
-<img id="self" src="punto.png" alt="">
+<img id="self" src="go/punto.png" alt="">
 <img id="data" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="">
 <script>window.inline = true;</script>
 <p id="senza">Senza CORS</p>
 <p id="con">Con CORS</p>
 
-# Decidere
-## Procediamo? {id="go"}
+## Decidere
 - [yes] Sì
 - [no] No
 `
@@ -165,12 +165,8 @@ func TestFrameEscapesStayBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	probe := "const SEND = '" + send + "';\nconst OTHER = '" + otherServer.URL + "';\n" + isolationProbe
-	files := []round.File{{Name: "probe.js", Body: []byte(probe)}, {Name: "probe.css", Body: []byte(isolationStyle)}, {Name: "punto.png", Body: png}, {Name: "font.png", Body: font}}
-	r, errs := round.Parse(round.Input{Source: []byte(isolationRound), Files: map[string]bool{"probe.js": true, "probe.css": true, "punto.png": true, "font.png": true}, Budget: round.MaxBytes})
-	if errs != nil {
-		t.Fatal(errs)
-	}
-	s := newRound(roundSpec{Origin: o, ID: "r1", Token: "tok-1", FrameKey: conversation.Secret(16), Round: r, Files: files, Images: t.TempDir()})
+	files := []round.File{{Name: "go/probe.js", Body: []byte(probe)}, {Name: "go/probe.css", Body: []byte(isolationStyle)}, {Name: "go/punto.png", Body: png}, {Name: "go/font.png", Body: font}}
+	s := newRound(phaseSpec(t, o, isolationRound, files))
 	rec := &recorder{}
 	hs := &http.Server{Handler: rec.wrap(s.handler())}
 	go hs.Serve(ln)
@@ -180,8 +176,8 @@ func TestFrameEscapesStayBlocked(t *testing.T) {
 	}()
 
 	p := cdptest.Start(t).Open(o.URL(), 1280, 900)
-	p.WaitFor(`!document.querySelector('#feedback-form').hidden && document.querySelector('#content')`)
-	p.MustEval(`window.seen = []; addEventListener('message', e => { if (e.data && e.data.probe) seen.push({Origin: e.origin, Source: e.source === document.querySelector('#content').contentWindow}); })`, nil)
+	p.WaitFor(`document.querySelector('#content')`)
+	p.MustEval(`window.probeMessages = []; addEventListener('message', e => { if (e.data && e.data.probe) probeMessages.push({Origin: e.origin, Source: e.source === document.querySelector('#content').contentWindow}); })`, nil)
 	f := p.Frame("#content")
 	f.WaitFor(`window.probe && window.probe.done`)
 	var got map[string]any
@@ -190,7 +186,7 @@ func TestFrameEscapesStayBlocked(t *testing.T) {
 
 	var frameURL string
 	f.MustEval(`location.href`, &frameURL)
-	if strings.Contains(frameURL, o.Cap) || strings.Contains(frameURL, s.view.Token) {
+	if strings.Contains(frameURL, o.Cap) || strings.Contains(frameURL, s.view.Token) || !strings.Contains(frameURL, "/go/") {
 		t.Errorf("the frame URL %q carries the capability or the round token", frameURL)
 	}
 
@@ -240,21 +236,21 @@ func TestFrameEscapesStayBlocked(t *testing.T) {
 	}
 
 	f.MustEval(`parent.postMessage({probe: 'ciao'}, '*')`, nil)
-	p.WaitFor(`seen.length === 1`)
+	p.WaitFor(`probeMessages.length === 1`)
 	var seen []struct {
 		Origin string
 		Source bool
 	}
-	p.MustEval(`seen`, &seen)
+	p.MustEval(`probeMessages`, &seen)
 	if seen[0].Origin != "null" || !seen[0].Source {
 		t.Errorf("postMessage from the frame: %+v, want origin \"null\" from the frame's window", seen[0])
 	}
 
-	p.Click(`input[value="yes"]`)
-	p.Click("#send-feedback")
+	p.Click(`.option[data-option="yes"]`)
+	p.Click("#send")
 	select {
 	case b := <-s.accepted:
-		if b.choices["go"] != "yes" {
+		if b.questions["go"].Choice != "yes" {
 			t.Fatalf("shell batch %+v", b)
 		}
 	case <-time.After(5 * time.Second):

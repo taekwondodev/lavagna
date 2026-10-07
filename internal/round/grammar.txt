@@ -1,76 +1,208 @@
-lavagna round: present one round and wait for one feedback batch.
+# Per-question round grammar
 
-  lavagna round < round.md     text from stdin
-  lavagna round DIR            DIR/round.md plus the .js, .css and image files beside it
+A call contains one or more questions. A level-1 title starts each question and
+requires an id; `after` is optional and names question ids in the phase.
 
-DIR holds at most 32 files and 4 MiB, rendered excerpts included: round.md, .js,
-.css, .png, .jpg, .jpeg, .gif, .webp and .svg files under relative paths, with no
-symlinks; .lavagna is reserved. Every .css file is linked and every .js file
-runs, in path order. Rendered snapshot JSON plus decisions must fit 6 MiB.
-Use --reuse rN with decisions-only stdin to keep an earlier content snapshot;
-no directory, new content or inherited decisions. Read round --help for the fast path.
-Any other construct is invalid, with line-numbered errors before the page opens.
+```markdown
+# What should happen after a crash? {id="crash" after="storage"}
+A concise lead for this question.
 
-Chapters, in this order, each at most once:
-  # Capire   # Confrontare   # Decidere
-Capire and Confrontare render in a sandboxed frame; Decidere renders in the page.
+## Capire
+Explain the current behavior and problem.
 
-Blocks:
-  ## Heading, ### Heading
-  Paragraph lines, joined until a blank line
-  - item / 1. item           lines indented by two spaces continue the item
-  | A | B |                  table: header row, | --- | :-: | --: | row, body rows;
-  | --- | --- |              the first column heads its row; \| is a literal pipe
-  ::: info [Label]           information             (default "Informazione")
-  ::: proposal [Label]       proposal, unapproved    (default "Proposta · non approvata")
-  ::: why [Label]            why this representation (default "Perché questa forma")
-  ::: boundary [Label]       scope or limit          (default "Confine")
-  ::: steps [Label]          only list items: first line title, indented lines detail
-  ::: evidence               only items - [observed|unverified|outside [Label]] text
-  ::: excerpt path:12-30     lines 12-30 of a file under the git root, at most 64 KiB;
-                             the body is an optional caption
-  :::                        closes a block; blocks do not nest; ## is not allowed inside
-  <tag ...> ...              raw HTML or SVG until a blank line, Capire and Confrontare
-                             only; src and href name round files (./ and #id allowed),
-                             data: images or #ids, and the frame blocks anything else;
-                             inline <script>, on* handlers and style attributes do not run
-
-Inline, anywhere: **bold** and `code`; everything else shows as written.
-
-Anchors, Capire and Confrontare only: end a heading, paragraph, list item, table
-cell or ::: line with {ref="Label"}, or write data-ref="Label" in raw HTML. Labels
-are unique, at most 80 characters. A comment the user links to one returns
-"anchor":"Label"; a general comment returns "anchor":null.
-
-Decisions, under # Decidere after any introduction:
-  ## Question {id="storage"}  one question; ids match [a-z0-9][a-z0-9_-]{0,39}
-  Introduction text           optional, before the options
-  - [file] Option label       at least two options; indented lines are the detail
-
-Example (DIR/round.md, with DIR/flow.svg and DIR/demo.js):
-
-# Capire
-## Il problema {ref="Problema"}
-Due sessioni scrivono lo stesso file di stato.
-::: excerpt internal/state/store.go:40-58
-La scrittura non prende un lock.
+::: excerpt internal/store/store.go:40-46 45!1
+`os.WriteFile` truncates before writing.
 :::
 
-# Confrontare
-| Criterio | File per sessione | Database |
-| --- | --- | --- |
-| Contesa | nessuna {ref="File · contesa"} | gestita dal database |
-::: proposal
-Un file per sessione: nessuna dipendenza nuova.
-:::
-::: evidence
-- [observed] Oggi un solo file. {ref="Stato attuale"}
-- [unverified] La pulizia dei file vecchi.
-:::
-<img src="flow.svg" alt="Flusso delle scritture" data-ref="Flusso">
+## Confrontare
+Compare alternatives and consequences.
 
-# Decidere
-## Dove salviamo lo stato? {id="storage"}
-- [file] Un file per sessione
-  Nessuna contesa, più file da pulire.
-- [db] Un database locale
+## Decidere
+- [atomic] Write a temporary file, then rename {recommended}
+  The file is always old or new; one fsync per save.
+  => The old file remains intact until rename.
+- [journal] Append records and recover the last valid record
+
+A final paragraph may explain the recommendation.
+
+# What should be retained? {id="retention"}
+```
+
+The second title above is a planned question: it has no body or artifact yet.
+A later call can supply its complete question with the same id. A complete
+question replaces its previous version together with its resources.
+
+## Titles, ids and dependencies
+
+- Question ids match `[a-z0-9][a-z0-9_-]{0,39}` and are unique in a phase.
+- A title is one line, at most 120 characters.
+- `after="id other-id"` names known questions; dependencies must not cycle.
+- `now` is reserved for the present state of diagrams.
+
+## Chapters and choices
+
+- `## Capire`, `## Confrontare`, `## Decidere` are optional except Decidere for
+  a complete question; use that order. `###` headings are content headings.
+- A complete question has 2 to 6 options, each written `- [id] label`.
+  Option ids use the question id pattern; `now` is reserved.
+- At most one option ends in `{recommended}`.
+- An indented `=> consequence` line gives that option's effect; at most one per
+  option. Other indented lines describe the option. A paragraph after the
+  options gives the reason for the recommendation. A free-text answer is
+  always available and needs no syntax.
+- The page shows the title, the lead (text before the first chapter) and
+  Decidere as 03 in its own controls, as plain text with `code` and **bold**.
+  Capire and Confrontare render as 01 and 02 in the question's frame; an empty
+  chapter is hidden. 02 starts with an Anteprima chip per option and the effect
+  line of the variant shown: the preview, else the choice, else the
+  recommended option.
+- A bare title is planned and has no question artifact.
+- A raw HTML block renders inside `.raw > .raw-stage`. A block wider than the
+  column is fitted, with Expand below 85 %; give screens their native width.
+- `::: excerpt path:start-end 45!1` includes a source excerpt; `45!1` marks
+  line 45 as a problem with badge 1. Separate marks with spaces.
+- `{ref}`, `data-ref`, level-1 chapter headings, and shared/root resources are
+  unsupported. Anchors are not part of per-question feedback.
+
+## Diagrams
+
+`::: sequence TITLE`, `::: flow TITLE` and `::: bars TITLE` draw a diagram as
+static SVG; `:::` closes the block and the title is optional. The author writes
+no coordinates, sizes, line breaks or colours: labels are measured with the
+page font and wrapped, and the legend is generated.
+
+```text
+::: sequence Salvataggio interrotto
+Sessione A | a.json.tmp [atomic] | a.json
+Sessione A -> a.json: apre con O_TRUNC [now]
+note Sessione A: crash !1 [now]
+Sessione A -> a.json.tmp: scrive e fsync [atomic]
+a.json --> Sessione A: JSON troncato ?2 [-atomic]
+:::
+
+::: flow Chi scrive il file
+s = Sessione A
+tmp = a.json.tmp [atomic]
+s -> a.json: sovrascrive !1 [-atomic]
+s -> tmp: scrive e fsync [atomic]
+tmp --> a.json: rename [atomic]
+group Disco: tmp, a.json
+:::
+
+::: bars Tempo per salvataggio
+Scrittura: 4 ms !1 [now]
+fsync: 5 ms +1 [atomic]
+:::
+```
+
+- Variants are `now`, the present state, and the question's option ids.
+  `[now a b]` at the end of a line draws the element only in those variants;
+  `[-a]` in every variant except those; no tag means always.
+- Before the tag, `!n` marks a problem, `?n` a risk and `+n` a change, each
+  with circled badge n; `!`, `?` and `+` set the tone without a badge. An
+  element drawn in an option variant and absent from `now` is drawn as a
+  change without any marker.
+- sequence: an optional first line `A | B [tag] | C` lists the participants
+  in order; without it they appear in order of use. `A -> B: text` is a
+  message, `A --> B: text` a dashed reply, `note A: text` a note. A line
+  cannot name a participant absent from one of its variants.
+- flow: laid out left to right. `id = Label` gives a node a short alias that
+  may not repeat another node's label; a node is named by its label or alias.
+  `A -> B: text` is an edge between two different nodes, its text optional,
+  `A --> B` a dashed edge and a name alone a node without edges; an edge adds
+  the nodes it names. `group Name: A, B` boxes nodes that other lines define,
+  and any line starting with `group ` is a group; a node is in at most one
+  group and groups do not nest. A line declaring a node gives it its tag and
+  marker. An edge cannot name a node absent from one of its variants.
+- bars: `Label: 830 B`, one non-negative value per bar; every bar shares one
+  unit. All variants use one scale.
+- A diagram written in Capire is drawn in 01 for `now`, whatever the choice.
+  02 repeats each one that has a variant tag, drawn for the variant shown, and
+  is added when the question has no Confrontare. A diagram written in
+  Confrontare appears only in 02, drawn for the variant shown.
+- Limits: sequence at most 8 participants and 40 lines; flow at most 20
+  nodes, 30 edges and 4 groups; bars at most 12 bars. Labels and titles are
+  plain text of at most 80 characters. An unknown variant, participant, alias
+  or node is an error with its line.
+
+## Resources and bounds
+
+For `DIR/round.md`, question `crash` owns files only under `DIR/crash/`. A
+question's frame is served at `/f/<key>/<question-id>/`; references name files
+as `<question-id>/file`. Only that question's `.js` and `.css` run in its frame.
+No resources are shared across questions.
+
+Scripts follow the choice without asking for it. The frame's `<html>` carries
+`data-option` (the selected option id, absent when none), `data-free` (`true`
+when a free-text answer exists) and `data-variant` (the option 02 shows), and
+`document` receives a `lavagna:option` event with `detail: {option, free,
+variant}` on load and on every change. The frame never receives the free text
+or any message.
+
+Input text, resources and rendered excerpts are bounded to 4 MiB and at most
+32 files per call. Retained question artifacts are bounded to 6 MiB. Resource
+paths must be regular files below the question directory; symlinks are refused.
+
+## Calls after the first
+
+Lavagna keeps every question of the phase in its ledger, so a later call sends
+only what changes. Call elements stand outside questions, start at the line
+beginning and close with `:::`:
+
+```markdown
+::: phase Session archive
+:::
+::: settled storage
+No new dependency.
+:::
+::: settled retention week
+The weekend is covered.
+:::
+::: reply crash
+Rename is atomic on one file system.
+:::
+::: reply
+A message for the Overview.
+:::
+```
+
+- `::: phase TITLE` names the phase; only in the first call of a phase.
+- `::: settled ID` closes a question with the user's recorded answer;
+  `::: settled ID OPTION` closes it with that option of the current version.
+  The body is the Why of its decisions row. Settling needs a recorded answer
+  or an option, and may repeat in a later call to change the decision.
+- A whole question with a known id replaces it in its round. The recorded
+  choice survives when its option id survives; a free-text answer always does.
+  Replacing a settled question reopens it in the current round.
+- `::: reply ID` posts a message in that question's discussion, closed rounds
+  included; `::: reply` posts to the Overview. One message is at most 32 KiB.
+- A new question with a body opens the next round, and every unsettled
+  question of the current round moves into it. Replies, settles and
+  replacements stay in the current round.
+- `::: recap` with no body, inside a question, renders the decisions table
+  (question, decision, round, why, rejected options) after this call's settles.
+- A call with no element only resumes waiting, for example after Esc.
+
+Elements apply in the order phase, settled, replacements, reply, new
+questions; a reply cannot address a question new in the same call. Any
+invalid element rejects the whole call. The current versions of all questions
+must fit 16 MiB, rendered with their resources. After close, the one-day expiry or an upgrade the
+phase starts empty: `reply` or `settled` on an unknown id is invalid, and the
+agent sends complete questions again.
+
+## Feedback
+
+One Send returns `questions`, keyed by id, and optional `overview`. Each batch
+repeats the answers of the current round's open questions; questions of closed
+rounds carry only messages and images. A question may
+have `choice` or `answer` (never both), `messages`, and `images`; empty fields
+are omitted. Above 2 KiB the outcome is deferred: choices remain visible,
+messages and images become counts, and a free-text answer is `true`. Read full
+feedback with `lavagna feedback SUBMISSION --question ID`, `--overview`, or
+`--all`. The selectors are mutually exclusive. The default reprints the
+summary. Unknown ids and questions without feedback in the selected batch are
+errors.
+
+A batch admits at most 32 KiB of text including answers, a 48 KiB record, and
+8 screenshots of up to 10 MiB each. `close` and the one-day sweep remove
+question artifacts and feedback.

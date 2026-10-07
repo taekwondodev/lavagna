@@ -138,7 +138,11 @@ func startRound(t *testing.T, environ []string, src string) *call {
 func writeFiles(t *testing.T, dir string, files map[string]string) {
 	t.Helper()
 	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -212,14 +216,14 @@ func (c *call) post(url, origin, contentType, body string) int {
 }
 
 func batch(round, token, submission string) string {
-	return fmt.Sprintf(`{"round":%q,"token":%q,"submission":%q,"choices":{"storage":"db"},"comments":[{"text":"ok, ma..."},{"text":"generale"}]}`, round, token, submission)
+	return fmt.Sprintf(`{"round":%q,"token":%q,"submission":%q,"questions":{"storage":{"choice":"db","messages":["ok, ma...","generale"]}}}`, round, token, submission)
 }
 
-const decision = `# Capire
+const decision = `# Dove salviamo lo stato? {id="storage"}
+## Capire
 Lo stato vive in un solo file.
 
-# Decidere
-## Dove salviamo lo stato? {id="storage"}
+## Decidere
 - [file] Un file per sessione
 - [db] Un database locale
 `
@@ -251,8 +255,9 @@ func TestCheck(t *testing.T) {
 }
 
 func TestRoundRefusesInvalidInputBeforeServing(t *testing.T) {
-	lines, code := run(t, env(t, "LAVAGNA_SESSION=a"), "# Capire\ntesto\n::: card\nx\n:::\n", "round")
-	if code != 2 || len(lines) != 1 || lines[0] != `{"lavagna":"invalid","errors":["round.md:3: unknown block ::: card"]}` {
+	bad := "# Q {id=\"q\"}\n## Capire\n::: card\nx\n:::\n## Decidere\n- [a] A\n- [b] B\n"
+	lines, code := run(t, env(t, "LAVAGNA_SESSION=a"), bad, "round")
+	if code != 2 || len(lines) != 1 || !strings.Contains(lines[0], `round.md:3: unknown block ::: card`) {
 		t.Fatalf("exit %d, output %q", code, lines)
 	}
 	lines, code = run(t, env(t), decision, "round")
@@ -260,7 +265,7 @@ func TestRoundRefusesInvalidInputBeforeServing(t *testing.T) {
 		t.Fatalf("exit %d, output %q", code, lines)
 	}
 	lines, code = run(t, env(t, "LAVAGNA_SESSION=a"), "", "round", "uno", "due")
-	if code != 2 || last(lines) != `{"lavagna":"invalid","errors":["usage: lavagna check | round [--reuse rN] [DIR] | round --help [grammar] | feedback SUBMISSION [--all | --comment N] [--offset N] | feedback --help | close"]}` {
+	if code != 2 || last(lines) != `{"lavagna":"invalid","errors":["usage: lavagna check | round [DIR] | round --help [grammar] | feedback SUBMISSION [--question ID | --overview | --all] | feedback --help | close"]}` {
 		t.Fatalf("exit %d, output %q", code, lines)
 	}
 }
@@ -270,10 +275,10 @@ func TestRoundDirRefusesBoundsBeforeServing(t *testing.T) {
 		files map[string]string
 		want  string
 	}{
-		"rendered snapshot": {map[string]string{"round.md": "# Capire\n" + strings.Repeat("&", 1<<20)}, `{"lavagna":"invalid","errors":["rendered content snapshot exceeds 6 MiB"]}`},
-		"33 files":          {map[string]string{"round.md": decision}, `{"lavagna":"invalid","errors":["round: more than 32 files"]}`},
-		"4 MiB":             {map[string]string{"round.md": decision, "grande.png": strings.Repeat("x", 4<<20)}, fmt.Sprintf(`{"lavagna":"invalid","errors":["round: %d bytes exceed the 4194304 byte bound"]}`, 4<<20+len(decision))},
-		"missing file":      {map[string]string{"round.md": "# Capire\n<img src=\"manca.png\" alt=\"\">\n"}, `{"lavagna":"invalid","errors":["round.md:2: src=\"manca.png\" is not a file of the round directory or a data: image"]}`},
+		"invalid resource": {map[string]string{"round.md": "# Q {id=\"q\"}\n## Capire\n<img src=\"q/missing.png\" alt=\"\">\n## Decidere\n- [a] A\n- [b] B\n"}, ""},
+		"33 files":         {map[string]string{"round.md": decision}, `{"lavagna":"invalid","errors":["round: more than 32 files"]}`},
+		"4 MiB":            {map[string]string{"round.md": decision, "storage/grande.png": strings.Repeat("x", 4<<20)}, fmt.Sprintf(`{"lavagna":"invalid","errors":["round: %d bytes exceed the 4194304 byte bound"]}`, (4<<20)+len(decision))},
+		"missing file":     {map[string]string{"round.md": "# Q {id=\"q\"}\n## Capire\n<img src=\"q/manca.png\" alt=\"\">\n## Decidere\n- [a] A\n- [b] B\n"}, `{"lavagna":"invalid","errors":["round.md:3: src=\"q/manca.png\" is not a file of the round directory or a data: image"]}`},
 	}
 	for i := range 32 {
 		cases["33 files"].files[fmt.Sprintf("%02d.css", i)] = ""
@@ -283,7 +288,7 @@ func TestRoundDirRefusesBoundsBeforeServing(t *testing.T) {
 			dir := t.TempDir()
 			writeFiles(t, dir, c.files)
 			lines, code := run(t, env(t, "LAVAGNA_SESSION=dir"), "", "round", dir)
-			if code != 2 || len(lines) != 1 || lines[0] != c.want {
+			if code != 2 || len(lines) != 1 || c.want != "" && lines[0] != c.want || c.want == "" && !strings.Contains(lines[0], `"lavagna":"invalid"`) {
 				t.Fatalf("exit %d, output %q", code, lines)
 			}
 		})
@@ -299,30 +304,22 @@ func TestRoundDirRefusesBoundsBeforeServing(t *testing.T) {
 	}
 }
 
-func TestRoundHelpPrintsTheGrammarAndAnExample(t *testing.T) {
+func TestRoundHelpPrintsPerQuestionFormat(t *testing.T) {
 	cmd := exec.Command(binary, "round", "--help", "grammar")
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)
 	}
 	help := string(out)
-	for _, want := range []string{"::: info", "::: proposal", "::: evidence", "::: steps", "::: boundary", "::: why", "::: excerpt path:12-30", "{ref=", "| --- |", "<tag", "## Question {id=", "Example (DIR/round.md"} {
+	for _, want := range []string{`{id="crash"`, `after="storage"`, `45!1`, `{recommended}`, `=> consequence`, `::: sequence`, `::: bars`, `[-a]`, `/f/<key>/<question-id>/`, `--question ID`, `32 KiB`, `6 MiB`} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help lacks %q", want)
 		}
 	}
-	example := help[strings.Index(help, "# Capire\n"):]
-	dir := t.TempDir()
-	writeFiles(t, dir, map[string]string{
-		"round.md": strings.Replace(example, "::: excerpt internal/state/store.go:40-58", "::: excerpt main.go:1-5", 1),
-		"flow.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
-		"demo.js":  "",
-	})
-	c := startDir(t, env(t, "LAVAGNA_SESSION=help"), dir)
-	round, token := c.view()
-	c.post(c.url+"send", c.origin, "application/json", fmt.Sprintf(`{"round":%q,"token":%q,"submission":"s-0123456789abcdef","comments":[{"text":"ok","anchor":"Flusso"}]}`, round, token))
-	if lines, code := c.finish(); code != 0 || !strings.Contains(last(lines), `"comments":[{"anchor":"Flusso","text":"ok"}]`) {
-		t.Fatalf("the help example: exit %d, output %q", code, lines)
+	for _, legacy := range []string{"--reuse", "{ref=", "--comment", "--offset"} {
+		if strings.Contains(help, legacy) {
+			t.Errorf("help retains removed syntax %q", legacy)
+		}
 	}
 }
 
@@ -340,7 +337,7 @@ func TestRoundReturnsOneFeedbackBatch(t *testing.T) {
 		t.Fatalf("send: %d", status)
 	}
 	lines, code = c.finish()
-	want := `{"lavagna":"feedback","round":"r1","submission":"s-0123456789abcdef","choices":{"storage":"db"},"comments":[{"anchor":null,"text":"ok, ma..."},{"anchor":null,"text":"generale"}],"images":[]}`
+	want := `{"lavagna":"feedback","round":"r1","submission":"s-0123456789abcdef","questions":{"storage":{"choice":"db","messages":["ok, ma...","generale"]}}}`
 	if code != 0 || len(lines) != 1 || lines[0] != want {
 		t.Fatalf("exit %d, output %q", code, lines)
 	}
@@ -348,6 +345,36 @@ func TestRoundReturnsOneFeedbackBatch(t *testing.T) {
 	lines, code = run(t, environ, "", "close")
 	if code != 0 || last(lines) != `{"lavagna":"closed","page":"not-connected"}` {
 		t.Fatalf("close: exit %d, output %q", code, lines)
+	}
+}
+
+func TestDeferredQuestionFeedbackAndSelectors(t *testing.T) {
+	environ := env(t, "LAVAGNA_SESSION=deferred")
+	c := startRound(t, environ, decision)
+	roundID, token := c.view()
+	message := strings.Repeat("feedback ", 300)
+	body := fmt.Sprintf(`{"round":%q,"token":%q,"submission":"s-0123456789abcdef","questions":{"storage":{"choice":"db","messages":[%q]}},"overview":{"messages":["general"]}}`, roundID, token, message)
+	if status := c.post(c.url+"send", c.origin, "application/json", body); status != http.StatusAccepted {
+		t.Fatalf("send %d", status)
+	}
+	if lines, code := c.finish(); code != 0 || len(lines) != 1 || !strings.Contains(lines[0], `"deferred":true`) || !strings.Contains(lines[0], `"messages":1`) {
+		t.Fatalf("deferred outcome: exit %d %q", code, lines)
+	}
+	lines, code := run(t, environ, "", "feedback", "s-0123456789abcdef")
+	if code != 0 || len(lines) != 1 || !strings.Contains(lines[0], `"deferred":true`) {
+		t.Fatalf("summary read: %d %q", code, lines)
+	}
+	lines, code = run(t, environ, "", "feedback", "s-0123456789abcdef", "--question", "storage")
+	if code != 0 || len(lines) != 1 || !strings.Contains(lines[0], message) || !strings.Contains(lines[0], `"question":"storage"`) {
+		t.Fatalf("question read: %d %q", code, lines)
+	}
+	lines, code = run(t, environ, "", "feedback", "s-0123456789abcdef", "--overview")
+	if code != 0 || len(lines) != 1 || !strings.Contains(lines[0], `"messages":["general"]`) {
+		t.Fatalf("overview read: %d %q", code, lines)
+	}
+	lines, code = run(t, environ, "", "feedback", "s-0123456789abcdef", "--all")
+	if code != 0 || len(lines) != 1 || !strings.Contains(lines[0], message) || !strings.Contains(lines[0], `"overview"`) {
+		t.Fatalf("full read: %d %q", code, lines)
 	}
 }
 
@@ -447,11 +474,15 @@ func screenshot(t *testing.T) []byte { return encoded(t, png.Encode) }
 
 func images(t *testing.T, line string) []string {
 	t.Helper()
-	var got struct{ Images []string }
+	var got struct {
+		Questions map[string]struct {
+			Images []string `json:"images"`
+		} `json:"questions"`
+	}
 	if err := json.Unmarshal([]byte(line), &got); err != nil {
 		t.Fatalf("result %q: %v", line, err)
 	}
-	return got.Images
+	return got.Questions["storage"].Images
 }
 
 func (c *call) attach(round, token string, body []byte) string {
@@ -478,7 +509,7 @@ func sendScreenshot(t *testing.T, environ []string, shot []byte) string {
 	c := startRound(t, environ, decision)
 	round, token := c.view()
 	id := c.attach(round, token, shot)
-	body := fmt.Sprintf(`{"round":%q,"token":%q,"submission":"s-0123456789abcdef","images":[%q]}`, round, token, id)
+	body := fmt.Sprintf(`{"round":%q,"token":%q,"submission":"s-0123456789abcdef","questions":{"storage":{"images":[%q]}}}`, round, token, id)
 	if status := c.post(c.url+"send", c.origin, "application/json", body); status != http.StatusAccepted {
 		t.Fatalf("send: %d", status)
 	}
