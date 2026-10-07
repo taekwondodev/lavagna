@@ -114,7 +114,7 @@ A partial write can corrupt state.
 	if errs := AttachPhaseFiles(&phase, files); len(errs) > 0 {
 		t.Fatal(errs)
 	}
-	if errs := RenderPhase(&phase, func(_ string, from, to int) (string, error) { return "first\\nsecond", nil }); len(errs) > 0 {
+	if errs := RenderPhase(&phase, func(_ string, from, to int) (string, error) { return "first\\nsecond", nil }, nil); len(errs) > 0 {
 		t.Fatal(errs)
 	}
 	html := phase.Questions[0].HTML
@@ -187,5 +187,102 @@ See {ref="old"}
 	joined := strings.Join(errs, "\n")
 	if !strings.Contains(joined, "cycle") || !strings.Contains(joined, "anchors") {
 		t.Fatalf("missing expected errors: %v", errs)
+	}
+}
+
+func TestParsePhaseCallElements(t *testing.T) {
+	phase, errs := ParsePhase([]byte(`::: phase Archivio delle sessioni
+:::
+::: settled storage
+Nessuna dipendenza nuova.
+:::
+::: settled retention week
+:::
+# Quanto teniamo le sessioni chiuse? {id="retention"}
+## Decidere
+- [day] 1 giorno
+- [week] 7 giorni {recommended}
+
+::: reply retention
+Hai ragione sul weekend.
+:::
+::: reply
+Grazie a tutti.
+:::
+`))
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	if phase.Title != "Archivio delle sessioni" || phase.TitleLine != 1 {
+		t.Fatalf("phase: %q %d", phase.Title, phase.TitleLine)
+	}
+	settled := []Element{{Line: 3, ID: "storage", Text: "Nessuna dipendenza nuova."}, {Line: 6, ID: "retention", Option: "week"}}
+	if len(phase.Settled) != 2 || phase.Settled[0] != settled[0] || phase.Settled[1] != settled[1] {
+		t.Fatalf("settled: %+v", phase.Settled)
+	}
+	replies := []Element{{Line: 13, ID: "retention", Text: "Hai ragione sul weekend."}, {Line: 16, Text: "Grazie a tutti."}}
+	if len(phase.Replies) != 2 || phase.Replies[0] != replies[0] || phase.Replies[1] != replies[1] {
+		t.Fatalf("replies: %+v", phase.Replies)
+	}
+	if len(phase.Questions) != 1 || strings.Contains(phase.Questions[0].Source, "reply") || len(phase.Questions[0].Options) != 2 {
+		t.Fatalf("a call element ends the question before it: %+v", phase.Questions)
+	}
+	if empty, errs := ParsePhase(nil); errs != nil || len(empty.Questions)+len(empty.Replies)+len(empty.Settled) != 0 {
+		t.Fatalf("an empty call is valid: %+v %v", empty, errs)
+	}
+}
+
+func TestParsePhaseCallElementErrorsAreLineNumbered(t *testing.T) {
+	cases := map[string]struct{ source, want string }{
+		"unclosed":            {"::: reply q\ntext\n", "round.md:1: ::: reply is not closed"},
+		"empty reply":         {"::: reply q\n:::\n", "round.md:1: ::: reply needs a message"},
+		"reply id":            {"::: reply Bad\nx\n:::\n", `round.md:1: ::: reply names invalid question id "Bad"`},
+		"oversized reply":     {"::: reply\n" + strings.Repeat("x", MaxMessageBytes+1) + "\n:::\n", "round.md:1: ::: reply message exceeds 32768 bytes"},
+		"settled arguments":   {"::: settled\n:::\n", "round.md:1: ::: settled needs a question id"},
+		"settled twice":       {"::: settled q\n:::\n::: settled q a\n:::\n", "round.md:3: question q is settled twice"},
+		"phase body":          {"::: phase T\nbody\n:::\n", "round.md:1: ::: phase takes its title on the opening line"},
+		"phase twice":         {"::: phase A\n:::\n::: phase B\n:::\n", "round.md:3: only one ::: phase per call"},
+		"content after reply": {"::: reply\nx\n:::\nstray\n", "round.md:4: content outside a question"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, errs := ParsePhase([]byte(c.source))
+			if !strings.Contains(strings.Join(errs, "\n"), c.want) {
+				t.Fatalf("want %q, got %v", c.want, errs)
+			}
+		})
+	}
+}
+
+func TestRecapRendersTheDecisionsTable(t *testing.T) {
+	phase, errs := ParsePhase([]byte("# Confermi? {id=\"confirm\"}\n## Capire\n::: recap\n:::\n## Decidere\n- [yes] Sì\n- [fix] Correggo\n"))
+	if errs != nil {
+		t.Fatal(errs)
+	}
+	rows := []RecapRow{
+		{Question: "Dove salviamo?", Decision: "Database", Round: "r1", Why: "Serve SQL.", Rejected: []string{"File"}, Struck: true},
+		{Question: "Dove salviamo?", Decision: "Un `file`", Round: "r2", Why: "Più semplice.", Rejected: []string{"Database", "<script>"}},
+	}
+	if errs := RenderPhase(&phase, nil, rows); errs != nil {
+		t.Fatal(errs)
+	}
+	html := phase.Questions[0].HTML
+	for _, want := range []string{
+		`<th scope="col">Domanda</th><th scope="col">Decisione</th><th scope="col">Round</th><th scope="col">Perché</th><th scope="col">Scartate</th>`,
+		`<tr class="struck"><th scope="row"><s>Dove salviamo?</s></th><td data-label="Decisione"><s>Database</s></td>`,
+		`<td data-label="Decisione">Un <code>file</code></td><td data-label="Round">r2</td>`,
+		`<td data-label="Scartate">Database, &lt;script&gt;</td>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("recap lacks %s:\n%s", want, html)
+		}
+	}
+	empty, _ := ParsePhase([]byte("# Confermi? {id=\"confirm\"}\n## Capire\n::: recap\n:::\n## Decidere\n- [yes] Sì\n- [fix] Correggo\n"))
+	if errs := RenderPhase(&empty, nil, nil); errs != nil || !strings.Contains(empty.Questions[0].HTML, "Nessuna decisione ancora.") {
+		t.Fatalf("empty recap: %v %s", errs, empty.Questions[0].HTML)
+	}
+	body, _ := ParsePhase([]byte("# Confermi? {id=\"confirm\"}\n## Capire\n::: recap\n| a |\n:::\n## Decidere\n- [yes] Sì\n- [fix] Correggo\n"))
+	if errs := RenderPhase(&body, nil, nil); !strings.Contains(strings.Join(errs, "\n"), "round.md:3: ::: recap takes no label or body") {
+		t.Fatalf("authored recap body: %v", errs)
 	}
 }

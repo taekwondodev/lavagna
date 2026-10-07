@@ -1,7 +1,6 @@
 package live
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,9 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -109,7 +106,7 @@ func busy(w io.Writer, c conversation.Conversation) int {
 			return result(w, exitBusy, struct {
 				Lavagna string `json:"lavagna"`
 				Round   string `json:"round"`
-			}{"busy", st.Live})
+			}{"busy", st.RoundID()})
 		}
 		if time.Now().After(deadline) {
 			return failure(w, errors.New("another lavagna call holds this conversation"))
@@ -141,137 +138,6 @@ func RoundHelp(out io.Writer, topic string) int {
 		return invalid(out, "unknown help topic; use: lavagna round --help [grammar]")
 	}
 	return exitOK
-}
-
-var reuseID = regexp.MustCompile(`^r[1-9][0-9]{0,18}$`)
-
-func Round(getenv func(string) string, src io.Reader, dir, reuse string, out, errw io.Writer) int {
-	c, err := conversation.FromEnv(getenv)
-	if err != nil {
-		return invalid(out, err.Error())
-	}
-	conversation.Sweep(c, time.Now())
-	in, files, errs := input(src, dir)
-	if errs != nil {
-		return invalid(out, errs...)
-	}
-	lease, err := conversation.Acquire(c)
-	if errors.Is(err, conversation.ErrBusy) {
-		return busy(out, c)
-	}
-	if err != nil {
-		return failure(out, err)
-	}
-	defer lease.Release()
-
-	st, err := lease.Load()
-	if err != nil {
-		return failure(out, err)
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return failure(out, err)
-	}
-	var r round.Round
-	if reuse != "" {
-		if !reuseID.MatchString(reuse) {
-			return invalid(out, "invalid reuse round")
-		}
-		if dir != "" {
-			return invalid(out, "reused rounds accept decisions-only text, not a directory")
-		}
-		baseData, err := lease.ReadArtifact("round", reuse, round.MaxSnapshotBytes)
-		if err != nil {
-			return invalid(out, "reuse round not found")
-		}
-		base, baseFiles, err := round.DecodeSnapshot(baseData)
-		if err != nil {
-			return failure(out, errors.New("stored round snapshot is invalid"))
-		}
-		decisions, parseErrs := round.Parse(round.Input{Source: in.Source, Budget: round.MaxBytes, Excerpt: round.Repository(wd)})
-		if parseErrs != nil {
-			return invalid(out, parseErrs...)
-		}
-		r, err = round.Reuse(base, decisions)
-		if err != nil {
-			return invalid(out, err.Error())
-		}
-		files = baseFiles
-	} else {
-		in.Excerpt = round.Repository(wd)
-		r, errs = round.Parse(in)
-		if errs != nil {
-			return invalid(out, errs...)
-		}
-	}
-	snapshot, err := round.EncodeSnapshot(r, files)
-	if err != nil {
-		return invalid(out, err.Error())
-	}
-	ln, origin, fresh, err := bind(c, st.Origin)
-	if err != nil {
-		return failure(out, err)
-	}
-	defer ln.Close()
-	st = st.Step(conversation.RoundStarted{Origin: origin, Anchors: r.Anchors})
-	if err := lease.Save(st); err != nil {
-		return failure(out, err)
-	}
-	if r.Content != "" {
-		if err := lease.StoreArtifact("round", st.Live, snapshot); err != nil {
-			return failure(out, err)
-		}
-	}
-
-	spec := roundSpec{
-		Origin: origin, ID: st.Live, Token: conversation.Secret(16), FrameKey: conversation.Secret(16),
-		Round: r, Files: files, Previous: st.Previous, Images: c.Images(),
-	}
-	srv := newRound(spec)
-	for _, anchor := range st.Anchors {
-		srv.anchors[anchor] = true
-	}
-	h := listen(srv, ln)
-	defer h.stop()
-	fmt.Fprintf(errw, "lavagna · round %s · %s · Esc per interrompere\n", st.Live, origin.URL())
-	go reveal(getenv, errw, origin.URL(), fresh, srv.seen)
-
-	got := <-srv.accepted
-	st = st.Step(conversation.BatchAccepted{Submission: got.submission})
-	record(errw, lease, st)
-	line := got.line()
-	var full bytes.Buffer
-	if err := encodeJSON(&full, line); err != nil {
-		return failure(out, err)
-	}
-	encoded := bytes.TrimSuffix(full.Bytes(), []byte("\n"))
-	if err := lease.StoreArtifact("feedback", got.submission, encoded); err != nil {
-		return failure(out, err)
-	}
-	var response any = line
-	if len(encoded) > 2048 {
-		deferred := struct {
-			Lavagna    string `json:"lavagna"`
-			Round      string `json:"round"`
-			Submission string `json:"submission"`
-			Deferred   bool   `json:"deferred"`
-			Counts     struct {
-				Choices  int `json:"choices"`
-				Comments int `json:"comments"`
-				Images   int `json:"images"`
-			} `json:"counts"`
-		}{Lavagna: "feedback", Round: line.Round, Submission: line.Submission, Deferred: true}
-		deferred.Counts.Choices, deferred.Counts.Comments, deferred.Counts.Images = len(line.Choices), len(line.Comments), len(line.Images)
-		response = deferred
-	}
-	code := result(out, exitOK, response)
-	if code != exitOK {
-		return code
-	}
-	st = st.Step(conversation.BatchReturned{})
-	record(errw, lease, st)
-	srv.returned(handOver(getenv, errw, c.Relay(), ln, spec, got.submission))
-	return code
 }
 
 func input(src io.Reader, dir string) (round.Input, []round.File, []string) {

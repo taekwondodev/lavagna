@@ -149,6 +149,14 @@ func (b batch) phaseLine() phaseOutcomeLine {
 	return phaseOutcomeLine{Lavagna: "feedback", Round: b.round, Submission: b.submission, Questions: questions, Overview: overview}
 }
 
+func (b batch) ledgerBatch() conversation.Batch {
+	out := conversation.Batch{Submission: b.submission, Questions: map[string]conversation.Feedback{}, Overview: conversation.Feedback{Messages: b.overview.Messages, Images: b.overview.Images}}
+	for id, f := range b.questions {
+		out.Questions[id] = conversation.Feedback{Choice: f.Choice, Answer: f.Answer, Messages: f.Messages, Images: f.Images}
+	}
+	return out
+}
+
 func (b batch) deferredPhaseLine() phaseOutcomeLine {
 	questions := map[string]phaseQuestionLine{}
 	for id, f := range b.questions {
@@ -195,6 +203,7 @@ type server struct {
 	frame       *frame
 	frames      map[string]*frame
 	options     map[string]map[string]bool
+	answerable  map[string]bool
 	anchors     map[string]bool
 	imageDir    string
 	uploads     map[string]upload
@@ -226,6 +235,9 @@ type roundSpec struct {
 	Previous *conversation.Outcome
 	Images   string
 	Phase    *round.Phase
+	// Answerable names the questions open in the current round; only they take
+	// a choice or answer. Every other question takes messages and screenshots.
+	Answerable map[string]bool
 }
 
 func newRound(spec roundSpec) *server {
@@ -233,6 +245,7 @@ func newRound(spec roundSpec) *server {
 	s := newServer(spec.Origin)
 	s.view = &view{ID: spec.ID, Token: spec.Token, Limit: maxCommentBytes, ImageLimit: maxImages, ImageBytes: maxImageBytes, Previous: spec.Previous, Round: r, Phase: spec.Phase}
 	s.imageDir = spec.Images
+	s.answerable = spec.Answerable
 	s.loadUploads()
 	s.gate = gate{cap: spec.Origin.Cap, round: spec.ID, token: spec.Token}
 	if spec.Phase != nil {
@@ -716,6 +729,9 @@ func (s *server) validatePhase(in sendBody) (batch, int, string) {
 		}
 		if item.Choice != "" && item.Answer != "" {
 			return b, http.StatusBadRequest, "a question cannot have both choice and answer"
+		}
+		if (item.Choice != "" || item.Answer != "") && !s.answerable[id] {
+			return b, http.StatusBadRequest, "question is not open in this round"
 		}
 		if item.Choice != "" && !options[item.Choice] {
 			return b, http.StatusBadRequest, "unknown choice"

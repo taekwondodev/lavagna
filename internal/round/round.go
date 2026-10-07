@@ -108,6 +108,8 @@ type parser struct {
 	anchors   map[string]bool
 	in        Input
 	used      int
+	recap     []RecapRow
+	phase     bool
 }
 
 func (p *parser) fail(n int, format string, args ...any) {
@@ -317,10 +319,42 @@ func (p *parser) component(ls []line, i int, sc scope) int {
 		p.steps(body, label, attr, inner)
 	case "excerpt":
 		p.excerpt(l.n, label, body, attr, inner)
+	case "recap":
+		if !p.phase {
+			p.fail(l.n, "unknown block ::: %s", kind)
+			break
+		}
+		if label != "" || strings.TrimSpace(joined(body)) != "" {
+			p.fail(l.n, "::: recap takes no label or body; lavagna renders the decisions table")
+		}
+		p.recapTable(attr)
 	default:
 		p.fail(l.n, "unknown block ::: %s", kind)
 	}
 	return end + 1
+}
+
+func (p *parser) recapTable(attr string) {
+	if len(p.recap) == 0 {
+		fmt.Fprintf(p.out, `<p class="recap"%s>Nessuna decisione ancora.</p>`, attr)
+		return
+	}
+	fmt.Fprintf(p.out, `<div class="table recap"%s><table><thead><tr><th scope="col">Domanda</th><th scope="col">Decisione</th><th scope="col">Round</th><th scope="col">Perché</th><th scope="col">Scartate</th></tr></thead><tbody>`, attr)
+	for _, row := range p.recap {
+		cell := func(s string) string {
+			if row.Struck && s != "" {
+				return "<s>" + inline(s) + "</s>"
+			}
+			return inline(s)
+		}
+		class := ""
+		if row.Struck {
+			class = ` class="struck"`
+		}
+		fmt.Fprintf(p.out, `<tr%s><th scope="row">%s</th><td data-label="Decisione">%s</td><td data-label="Round">%s</td><td data-label="Perché">%s</td><td data-label="Scartate">%s</td></tr>`,
+			class, cell(row.Question), cell(row.Decision), cell(row.Round), cell(row.Why), cell(strings.Join(row.Rejected, ", ")))
+	}
+	p.out.WriteString(`</tbody></table></div>`)
 }
 
 func (p *parser) items(ls []line, sc scope, each func(first line, rest []line, attr string)) {

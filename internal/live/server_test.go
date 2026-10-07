@@ -89,8 +89,14 @@ func TestQuestionFramesServeOnlyTheirOwnResources(t *testing.T) {
 }
 
 func TestPhaseFeedbackIsGroupedByQuestionAndOverview(t *testing.T) {
-	s := newRound(roundSpec{Origin: conversation.Origin{Port: 43210, Cap: "cap-a"}, ID: "r1", Token: "tok-1", Round: round.Round{Questions: []round.Question{{ID: "one", Options: []string{"yes", "no"}}, {ID: "two", Options: []string{"a", "b"}}}}, Phase: &round.Phase{Questions: []round.PhaseQuestion{{ID: "one", Options: []round.PhaseOption{{ID: "yes"}, {ID: "no"}}}, {ID: "two", Options: []round.PhaseOption{{ID: "a"}, {ID: "b"}}}}}})
+	s := newRound(roundSpec{Origin: conversation.Origin{Port: 43210, Cap: "cap-a"}, ID: "r1", Token: "tok-1", Round: round.Round{Questions: []round.Question{{ID: "one", Options: []string{"yes", "no"}}, {ID: "two", Options: []string{"a", "b"}}}}, Phase: &round.Phase{Questions: []round.PhaseQuestion{{ID: "one", Options: []round.PhaseOption{{ID: "yes"}, {ID: "no"}}}, {ID: "two", Options: []round.PhaseOption{{ID: "a"}, {ID: "b"}}}, {ID: "closed", Options: []round.PhaseOption{{ID: "x"}, {ID: "y"}}}}}, Answerable: map[string]bool{"one": true, "two": true}})
 	s.uploads["img-1"] = upload{path: "/tmp/one.png"}
+	if _, status, problem := s.validatePhase(sendBody{Round: "r1", Submission: "s-12345678", Questions: map[string]sendQuestion{"closed": {Choice: "x"}}}); status != http.StatusBadRequest || problem != "question is not open in this round" {
+		t.Fatalf("choice on a question outside the current round: %d %s", status, problem)
+	}
+	if _, status, problem := s.validatePhase(sendBody{Round: "r1", Submission: "s-12345678", Questions: map[string]sendQuestion{"closed": {Messages: []string{"later thought"}}}}); status != 0 {
+		t.Fatalf("message on a closed-round question: %d %s", status, problem)
+	}
 	batch, status, problem := s.validatePhase(sendBody{Round: "r1", Submission: "s-12345678", Questions: map[string]sendQuestion{"one": {Choice: "yes", Messages: []string{"question note"}, Images: []string{"img-1"}}, "two": {Answer: "free text"}}, Overview: sendQuestion{Messages: []string{"overall"}}})
 	if status != 0 {
 		t.Fatalf("status %d: %s", status, problem)

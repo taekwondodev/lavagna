@@ -9,7 +9,7 @@ Identity is `PI_SESSION_ID` plus `PI_SESSION_FILE`, otherwise `LAVAGNA_SESSION`.
 ## Present and close
 
 - `lavagna check` returns `{"lavagna":"ready"}` when the conversation identity is bindable; otherwise it returns an invalid result.
-- `lavagna round < round.md` presents one or more authored questions and waits for one feedback batch. Pass no timeout; Esc interrupts.
+- `lavagna round < round.md` applies one call to the phase and waits for the next feedback batch. Pass no timeout; Esc interrupts.
 - `lavagna round DIR` reads `DIR/round.md` and its question-scoped resources.
 - `lavagna round --help` prints the minimal format; `lavagna round --help grammar` prints the authoring reference.
 - `lavagna feedback --help` describes retained feedback reads.
@@ -51,9 +51,41 @@ The aggregate of authored text, resource bytes and rendered excerpts is bounded 
 
 Anything invalid is reported with source line numbers before the page changes. Fix the reported errors and retry.
 
+## Continue a phase
+
+Lavagna keeps the phase's questions in its question ledger, so each call after the first sends only what changes. Call elements stand outside questions, start at the beginning of a line and close with `:::`.
+
+```text
+::: settled storage
+No new dependency and no wait between sessions.
+:::
+::: reply crash
+Rename is atomic within one file system.
+:::
+# Who runs the cleanup? {id="cleanup" after="retention"}
+## Decidere
+- [sweep] The sweep at startup {recommended}
+- [manual] A manual command
+```
+
+| Element | Effect |
+| --- | --- |
+| `::: phase TITLE` | Names the phase; valid only in the first call. |
+| A new question with a body | Opens the next round. Every unsettled question of the current round moves into it, answered or not; the old round marks it moved. |
+| A whole question with a known id | Replaces it in place. The thread stays; the recorded choice survives when its option id does, and a free-text answer always survives. A replaced settled question reopens in the current round, its old round marks it reopened and its decisions row is struck through. |
+| A bare title | Plans a question, or updates a planned one; a question with a body is replaced only by a whole question. |
+| `::: reply ID` or `::: reply` | Posts the body as an agent message in that question's discussion, closed rounds included, or in the Overview. |
+| `::: settled ID [OPTION]` | Closes the question with the recorded answer, or with that option of the current version. The body is the Why of its decisions row, which also copies the title, decision, round and rejected options. Settling again replaces the decision. |
+| `::: recap` | Inside a question, renders the decisions table after this call's settles. Write only risks, evidence and the confirm-or-correct options around it. |
+| No element | Resumes waiting, for example after Esc. |
+
+Elements apply in the order phase, settled, replacements, reply, new questions, recap; a reply cannot address a question new in the same call. Replies, settles and replacements stay in the current round. Any invalid element rejects the whole call, and the ledger and stored questions stay unchanged.
+
+The current versions of all questions, rendered with their resources, are bounded to 16 MiB per phase; one agent message is bounded to 32 KiB.
+
 ## Collect feedback
 
-One Send submits the current choices or free-text answers, question messages and screenshots, plus optional Overview messages and screenshots. An unanswered question is not approval. PNG, JPEG, WebP and GIF screenshots are accepted by file signature, at most 10 MiB each and 8 per batch. Lavagna accepts uploaded bytes, not a URL or host path to fetch. Screenshots remain until close or the one-day sweep.
+One Send submits the current choices or free-text answers of the current round's open questions, messages and screenshots on any question, plus optional Overview messages and screenshots. Questions of closed rounds carry only messages and screenshots; their decision is already recorded. An unanswered question is not approval. PNG, JPEG, WebP and GIF screenshots are accepted by file signature, at most 10 MiB each and 8 per batch. Lavagna accepts uploaded bytes, not a URL or host path to fetch. Screenshots remain until close or the one-day sweep.
 
 Feedback text, including free-text answers, is capped at 32 KiB per batch; the complete retained record is bounded to 48 KiB. These are admission bounds, not token budgets.
 
@@ -95,4 +127,6 @@ The selectors are mutually exclusive. An unknown id or a question with no feedba
 
 The page reports accepted and returned stages from server and CLI events. A supported Pi session witness can report receipt and turn completion; those are delivery observations, not proof that the agent understood feedback or that the phase is settled.
 
-The relay keeps the page origin live during the agent's turn. If a call is interrupted, reload the page and inspect the displayed delivery state before retrying. A returned batch is not resent automatically. A running call holds the conversation lease; concurrent calls report busy. `close` is destructive and repeatable. It removes retained local files even if no browser is connected; browser-cache deletion is confirmed only when a connected page acknowledges cleanup.
+The relay keeps the page origin live during the agent's turn. If a call is interrupted, reload the page and inspect the displayed delivery state before retrying; a call with no element resumes waiting without resending content. Each call has its own round token and frame key, and delivery outcomes such as Interrupted and Uncertain belong to the call, so a reply-only call stays in its round. A returned batch is not resent automatically. A running call holds the conversation lease; concurrent calls report busy. `close` is destructive and repeatable. It removes retained local files even if no browser is connected; browser-cache deletion is confirmed only when a connected page acknowledges cleanup.
+
+After `close`, the one-day expiry or an upgrade, the phase starts empty. A `reply` or `settled` naming a question the ledger lacks is invalid; send the complete questions again. State written by an older lavagna starts a fresh phase on the same page origin, deletes the old phase data and notes the restart on stderr. State written by a newer lavagna makes `round` and `feedback` return an error asking for `lavagna close`, without touching anything; `close` works on every format. `lavagna feedback S --all` returns a record as its version wrote it; `--question` and `--overview` on a record older than per-question feedback are errors suggesting `--all`.

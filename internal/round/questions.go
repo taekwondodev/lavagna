@@ -11,11 +11,34 @@ import (
 	"unicode/utf8"
 )
 
-// Phase is one authored batch of questions. Question source is retained so
-// callers can version and render each question independently.
+// MaxMessageBytes bounds one agent message, like the user's text per batch.
+const MaxMessageBytes = 32 << 10
+
+// Phase is one call: its questions and the call elements phase, reply and
+// settled. Question source is retained so callers can version and render each
+// question independently.
 type Phase struct {
+	Title     string `json:"title,omitempty"`
+	TitleLine int    `json:"-"`
 	Questions []PhaseQuestion
-	Budget    int `json:"-"`
+	Replies   []Element `json:"-"`
+	Settled   []Element `json:"-"`
+	Budget    int       `json:"-"`
+}
+
+// Element is one ::: reply [ID] or ::: settled ID [OPTION] block; Text is its body.
+type Element struct {
+	Line   int
+	ID     string
+	Option string
+	Text   string
+}
+
+// RecapRow is one row of the decisions table rendered by ::: recap.
+type RecapRow struct {
+	Question, Decision, Round, Why string
+	Rejected                       []string
+	Struck                         bool
 }
 
 type PhaseQuestion struct {
@@ -43,6 +66,7 @@ var (
 	phaseIDRE     = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,39}$`)
 	phaseMetaRE   = regexp.MustCompile(`^(.*?)\s+\{id="([^"]+)"(?:\s+after="([^"]*)")?\}$`)
 	phaseOptionRE = regexp.MustCompile(`^- \[([^\]]+)\]\s*(.*)$`)
+	callElementRE = regexp.MustCompile(`^::: (phase|reply|settled)(?:\s+(.*))?$`)
 )
 
 // ParsePhase validates and parses the per-question authoring format.
@@ -65,10 +89,27 @@ func ParsePhaseKnown(src []byte, prior map[string][]string) (Phase, []string) {
 	}
 	var sections []section
 	var errs []string
-	for i, raw := range lines {
-		line := strings.TrimRight(raw, " \t")
+	// inQuestion holds lines for the last section; skip drops the body of a
+	// rejected title, already reported once.
+	inQuestion, skip := false, false
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimRight(lines[i], " \t")
+		if m := callElementRE.FindStringSubmatch(line); m != nil {
+			end := i + 1
+			for end < len(lines) && strings.TrimRight(lines[end], " \t") != ":::" {
+				end++
+			}
+			if end == len(lines) {
+				errs = append(errs, fmt.Sprintf("round.md:%d: ::: %s is not closed", i+1, m[1]))
+				break
+			}
+			phase.element(i+1, m[1], strings.TrimSpace(m[2]), strings.TrimSpace(strings.Join(lines[i+1:end], "\n")), &errs)
+			i, inQuestion, skip = end, false, false
+			continue
+		}
 		if strings.HasPrefix(line, "# ") {
 			m := phaseMetaRE.FindStringSubmatch(strings.TrimSpace(line[2:]))
+			inQuestion, skip = m != nil, m == nil
 			if m == nil {
 				errs = append(errs, fmt.Sprintf("round.md:%d: title needs {id=\"…\"}", i+1))
 				continue
@@ -77,9 +118,9 @@ func ParsePhaseKnown(src []byte, prior map[string][]string) (Phase, []string) {
 			sections = append(sections, section{line: i + 1, title: strings.TrimSpace(m[1]), id: m[2], after: after})
 			continue
 		}
-		if len(sections) == 0 {
-			if strings.TrimSpace(line) != "" {
-				errs = append(errs, fmt.Sprintf("round.md:%d: content before first question", i+1))
+		if !inQuestion {
+			if !skip && strings.TrimSpace(line) != "" {
+				errs = append(errs, fmt.Sprintf("round.md:%d: content outside a question", i+1))
 			}
 			continue
 		}
@@ -184,6 +225,59 @@ func ParsePhaseKnown(src []byte, prior map[string][]string) (Phase, []string) {
 		return Phase{}, errs
 	}
 	return phase, nil
+}
+
+func (phase *Phase) element(line int, kind, args, body string, errs *[]string) {
+	fail := func(format string, a ...any) {
+		*errs = append(*errs, fmt.Sprintf("round.md:%d: ", line)+fmt.Sprintf(format, a...))
+	}
+	fields := strings.Fields(args)
+	switch kind {
+	case "phase":
+		switch {
+		case phase.TitleLine != 0:
+			fail("only one ::: phase per call")
+		case args == "" || utf8.RuneCountInString(args) > 120:
+			fail("::: phase needs a title of at most 120 characters on its opening line")
+		case body != "":
+			fail("::: phase takes its title on the opening line and no body")
+		}
+		phase.Title, phase.TitleLine = args, line
+	case "reply":
+		e := Element{Line: line, Text: body}
+		switch {
+		case len(fields) > 1:
+			fail("::: reply takes at most one question id")
+		case len(fields) == 1 && !phaseIDRE.MatchString(fields[0]):
+			fail("::: reply names invalid question id %q", fields[0])
+		case body == "":
+			fail("::: reply needs a message")
+		case len(body) > MaxMessageBytes:
+			fail("::: reply message exceeds %d bytes", MaxMessageBytes)
+		}
+		if len(fields) == 1 {
+			e.ID = fields[0]
+		}
+		phase.Replies = append(phase.Replies, e)
+	case "settled":
+		if len(fields) < 1 || len(fields) > 2 {
+			fail("::: settled needs a question id and at most one option id")
+			return
+		}
+		e := Element{Line: line, ID: fields[0], Text: body}
+		if len(fields) == 2 {
+			e.Option = fields[1]
+		}
+		if !phaseIDRE.MatchString(e.ID) || e.Option != "" && !phaseIDRE.MatchString(e.Option) {
+			fail("::: settled names an invalid question or option id")
+		}
+		for _, prior := range phase.Settled {
+			if prior.ID == e.ID {
+				fail("question %s is settled twice in one call", e.ID)
+			}
+		}
+		phase.Settled = append(phase.Settled, e)
+	}
 }
 
 // AttachPhaseFiles binds every resource to exactly one question. Root-level
@@ -312,7 +406,9 @@ func parseQuestionBody(q *PhaseQuestion, start int, errs *[]string) {
 	}
 }
 
-func RenderPhase(phase *Phase, excerpt Excerpter) []string {
+// RenderPhase renders every complete question of the call. recap holds the
+// decisions table after the call's settled elements.
+func RenderPhase(phase *Phase, excerpt Excerpter, recap []RecapRow) []string {
 	var errs []string
 	remaining := phase.Budget
 	for i := range phase.Questions {
@@ -324,7 +420,7 @@ func RenderPhase(phase *Phase, excerpt Excerpter) []string {
 		for _, file := range q.Resources {
 			files[q.ID+"/"+file.Name] = true
 		}
-		p := parser{out: &strings.Builder{}, questions: map[string]bool{}, anchors: map[string]bool{}, in: Input{Files: files, Budget: remaining, Excerpt: excerpt}}
+		p := parser{out: &strings.Builder{}, questions: map[string]bool{}, anchors: map[string]bool{}, in: Input{Files: files, Budget: remaining, Excerpt: excerpt}, recap: recap, phase: true}
 		p.out.WriteString("<article data-question=\"" + html.EscapeString(q.ID) + "\"><h1>" + html.EscapeString(q.Title) + "</h1>")
 		chapter := ""
 		var body []line

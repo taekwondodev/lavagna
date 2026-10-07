@@ -3,14 +3,26 @@ package conversation
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 var artifactID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,80}$`)
 
+// StoreArtifact publishes a new artifact; an existing one is fs.ErrExist.
 func (l *Lease) StoreArtifact(kind, id string, data []byte) error {
+	return l.publish(kind, id, data, os.Link)
+}
+
+// ReplaceArtifact atomically publishes an artifact over an existing one.
+func (l *Lease) ReplaceArtifact(kind, id string, data []byte) error {
+	return l.publish(kind, id, data, os.Rename)
+}
+
+func (l *Lease) publish(kind, id string, data []byte, place func(tmp, name string) error) error {
 	if !artifactID.MatchString(kind) || !artifactID.MatchString(id) {
 		return errors.New("invalid artifact reference")
 	}
@@ -43,7 +55,7 @@ func (l *Lease) StoreArtifact(kind, id string, data []byte) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	return os.Link(tmp, name)
+	return place(tmp, name)
 }
 
 func (l *Lease) RemoveArtifact(kind, id string) error {
@@ -51,6 +63,30 @@ func (l *Lease) RemoveArtifact(kind, id string) error {
 		return errors.New("invalid artifact reference")
 	}
 	return os.Remove(filepath.Join(l.conv.dir, artifactsDir, kind, id+".json"))
+}
+
+// Prune deletes every artifact of kind not named in keep, including leftovers
+// of a call that died before its commit.
+func (l *Lease) Prune(kind string, keep map[string]bool) error {
+	if !artifactID.MatchString(kind) {
+		return errors.New("invalid artifact reference")
+	}
+	dir := filepath.Join(l.conv.dir, artifactsDir, kind)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		if id, ok := strings.CutSuffix(e.Name(), ".json"); ok && keep[id] {
+			continue
+		}
+		errs = append(errs, os.RemoveAll(filepath.Join(dir, e.Name())))
+	}
+	return errors.Join(errs...)
 }
 
 func (l *Lease) ReadArtifact(kind, id string, limit int) ([]byte, error) {
