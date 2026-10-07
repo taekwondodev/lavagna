@@ -10,6 +10,74 @@ import (
 	"github.com/taekwondodev/lavagna/internal/conversation"
 )
 
+func TestFeedbackSelectorsReadQuestionGroupedRecords(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	getenv := func(k string) string {
+		if k == "LAVAGNA_SESSION" {
+			return "phase-feedback"
+		}
+		return ""
+	}
+	c, err := conversation.FromEnv(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := conversation.Acquire(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := phaseOutcomeLine{Lavagna: "feedback", Round: "r1", Submission: "s-abcdef12", Questions: map[string]phaseQuestionLine{
+		"crash":     {Choice: "journal", Messages: []string{strings.Repeat("full text ", 230)}, Images: []string{"/tmp/crash.png"}},
+		"retention": {Answer: "two days"},
+	}, Overview: &phaseQuestionLine{Messages: []string{"clear"}}}
+	encoded, err := json.Marshal(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.StoreArtifact("feedback", line.Submission, encoded); err != nil {
+		t.Fatal(err)
+	}
+	lease.Release()
+	read := func(req FeedbackRequest) string {
+		var out bytes.Buffer
+		if code := Feedback(getenv, &out, req); code != 0 {
+			t.Fatalf("read code %d: %s", code, out.String())
+		}
+		return out.String()
+	}
+	var summary phaseOutcomeLine
+	if err := json.Unmarshal([]byte(read(FeedbackRequest{Submission: line.Submission})), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if !summary.Deferred || summary.Questions["crash"].Choice != "journal" || summary.Questions["crash"].Messages != float64(1) || summary.Questions["retention"].Answer != true {
+		t.Fatalf("summary: %+v", summary)
+	}
+	var question struct {
+		Question string   `json:"question"`
+		Choice   string   `json:"choice"`
+		Messages []string `json:"messages"`
+		Images   []string `json:"images"`
+	}
+	if err := json.Unmarshal([]byte(read(FeedbackRequest{Submission: line.Submission, Question: "crash"})), &question); err != nil {
+		t.Fatal(err)
+	}
+	if question.Question != "crash" || question.Choice != "journal" || len(question.Messages) != 1 || question.Images[0] != "/tmp/crash.png" {
+		t.Fatalf("question read: %+v", question)
+	}
+	if got := read(FeedbackRequest{Submission: line.Submission, Overview: true}); !strings.Contains(got, `"messages":["clear"]`) {
+		t.Fatalf("overview: %s", got)
+	}
+	var all phaseOutcomeLine
+	if err := json.Unmarshal([]byte(read(FeedbackRequest{Submission: line.Submission, All: true})), &all); err != nil || len(all.Questions) != 2 {
+		t.Fatalf("all: %+v, %v", all, err)
+	}
+	var out bytes.Buffer
+	if code := Feedback(getenv, &out, FeedbackRequest{Submission: line.Submission, Question: "missing"}); code != exitInvalid {
+		t.Fatalf("unknown question code %d: %s", code, out.String())
+	}
+}
+
 func TestFeedbackPagesExactUnicodeTextAndMetadata(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

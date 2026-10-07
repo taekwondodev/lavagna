@@ -22,8 +22,9 @@ type Outcome struct {
 type Event interface{ event() }
 
 type RoundStarted struct {
-	Origin  Origin
-	Anchors []string
+	Origin    Origin
+	Anchors   []string
+	Questions map[string]QuestionEntry
 }
 
 type BatchAccepted struct{ Submission string }
@@ -48,6 +49,17 @@ func (s State) Step(e Event) State {
 		slices.Sort(s.Anchors)
 		s.Anchors = slices.Compact(s.Anchors)
 		s.Origin = &e.Origin
+		if s.Format == 0 {
+			s.Format = 1
+		}
+		if len(e.Questions) > 0 {
+			if s.Questions == nil {
+				s.Questions = map[string]QuestionEntry{}
+			}
+			for id, entry := range e.Questions {
+				s.Questions[id] = entry
+			}
+		}
 		s.Rounds++
 		s.Live = fmt.Sprintf("r%d", s.Rounds)
 		s.Accepted = ""

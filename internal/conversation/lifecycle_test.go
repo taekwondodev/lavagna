@@ -32,18 +32,26 @@ func TestStepRoundStarted(t *testing.T) {
 	returned := &Outcome{Round: "r1", Submission: "s-1", End: endReturned}
 	check(t, []transition{
 		{"first round of the conversation", State{}, RoundStarted{Origin: recorded},
-			State{Origin: &recorded, Rounds: 1, Live: "r1"}},
+			State{Format: 1, Origin: &recorded, Rounds: 1, Live: "r1"}},
 		{"after a returned round", State{Origin: &recorded, Rounds: 1, Previous: returned}, RoundStarted{Origin: recorded},
-			State{Origin: &recorded, Rounds: 2, Live: "r2", Previous: returned}},
+			State{Format: 1, Origin: &recorded, Rounds: 2, Live: "r2", Previous: returned}},
 		{"after Esc during the user's turn", State{Origin: &recorded, Rounds: 2, Live: "r2", Previous: returned}, RoundStarted{Origin: recorded},
-			State{Origin: &recorded, Rounds: 3, Live: "r3", Previous: &Outcome{Round: "r2", End: endInterrupted}}},
+			State{Format: 1, Origin: &recorded, Rounds: 3, Live: "r3", Previous: &Outcome{Round: "r2", End: endInterrupted}}},
 		{"after Esc between Accepted and Returned", State{Origin: &recorded, Rounds: 2, Live: "r2", Accepted: "s-2", Previous: returned}, RoundStarted{Origin: recorded},
-			State{Origin: &recorded, Rounds: 3, Live: "r3", Previous: &Outcome{Round: "r2", Submission: "s-2", End: endUncertain}}},
+			State{Format: 1, Origin: &recorded, Rounds: 3, Live: "r3", Previous: &Outcome{Round: "r2", Submission: "s-2", End: endUncertain}}},
 		{"anchor names survive rounds for carried drafts", State{Anchors: []string{"Old"}}, RoundStarted{Origin: recorded, Anchors: []string{"New", "Old"}},
-			State{Origin: &recorded, Rounds: 1, Live: "r1", Anchors: []string{"New", "Old"}}},
+			State{Format: 1, Origin: &recorded, Rounds: 1, Live: "r1", Anchors: []string{"New", "Old"}}},
 		{"after EADDRINUSE on the recorded port", State{Origin: &recorded, Rounds: 1, Previous: returned}, RoundStarted{Origin: fresh},
-			State{Origin: &fresh, Rounds: 2, Live: "r2", Previous: returned}},
+			State{Format: 1, Origin: &fresh, Rounds: 2, Live: "r2", Previous: returned}},
 	})
+}
+
+func TestStepRoundStartedStoresQuestionLedger(t *testing.T) {
+	questions := map[string]QuestionEntry{"storage": {Version: 1, Status: "open"}, "next": {Status: "planned"}}
+	got := (State{}).Step(RoundStarted{Origin: recorded, Questions: questions})
+	if got.Format != 1 || !reflect.DeepEqual(got.Questions, questions) {
+		t.Fatalf("ledger not stored in versioned state: %+v", got)
+	}
 }
 
 func TestStepBatchAccepted(t *testing.T) {

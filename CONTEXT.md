@@ -6,20 +6,20 @@ Lavagna connects an agent conversation to a browser page for explicit user feedb
 | --- | --- |
 | **Harness** | The environment invoking lavagna on behalf of an agent conversation. |
 | **Conversation** | The identity binding successive CLI calls to one page origin and retained state. |
-| **Round** | One presentation of authored content and decisions, awaiting one explicit feedback batch. |
-| **Question ledger** | The questions lavagna retains for one conversation until close, each with its current content, round, discussion and settled answer, so that each call sends only what changes. |
-| **Content snapshot** | Retained rendered explanations and resource bytes reusable by another round without inheriting its decisions. |
+| **Phase** | The conversation's current question ledger and feedback lifecycle. |
+| **Round** | One presentation of authored questions, awaiting one explicit feedback batch. |
+| **Question** | One identified decision or planned decision, with its own authored content, resources, answer and discussion. |
+| **Overview** | Feedback attached to the phase as a whole rather than to one question. |
 | **Shell** | The trusted browser UI that owns decisions, the feedback editor and send. Not the invoking terminal shell. |
-| **Content frame** | The isolated browser frame displaying the round's explanations and prototypes. |
-| **Anchor** | An authored name identifying content to which the user can attach a comment. |
-| **Draft** | Editable choices, comments and screenshot attachments not yet conclusively returned by a round call. |
-| **Feedback batch** | The choices, comments and screenshots submitted by one explicit send action. |
+| **Content frame** | The isolated browser frame displaying one question's explanations and prototypes. |
+| **Draft** | Editable choices, free-text answers, messages and screenshot attachments not yet conclusively returned by a round call. |
+| **Feedback batch** | The question-grouped choices or answers, messages and screenshots submitted by one explicit send action, plus optional Overview feedback. |
 | **Deferred feedback** | A batch whose full retained record is accessed selectively instead of being returned entirely in the round's stdout. |
 | **Submission ID** | The identity of a batch, retained across retries to recognize duplicates. |
 | **Page origin** | The conversation's loopback address and port, accessed through its capability-bearing path. |
 | **Capability** | The secret in the page path that identifies access to the conversation's HTTP endpoints. |
 | **Round token** | The per-round secret required to upload screenshots or send feedback. |
-| **Frame key** | The separate per-round resource key used by the content frame, without the shell's capability or round token. |
+| **Frame key** | The separate per-question resource key used by the content frame, without the shell's capability or round token. |
 | **Lease** | The exclusive file lock serializing CLI calls for one conversation. |
 | **Relay** | The process holding the page origin between calls during the agent's turn. |
 | **Witness** | The read-only observer of a Pi session that supplies evidence of feedback receipt and turn completion. |

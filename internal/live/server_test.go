@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,6 +52,62 @@ func serve(t *testing.T) (*server, func(body string) int) {
 func sendBatch(submission, comment string) string {
 	c, _ := json.Marshal(comment)
 	return fmt.Sprintf(`{"round":"r1","token":"tok-1","submission":%q,"choices":{"storage":"db"},"comments":[{"text":%s}]}`, submission, c)
+}
+
+func TestQuestionFramesServeOnlyTheirOwnResources(t *testing.T) {
+	o := conversation.Origin{Port: 43210, Cap: "cap-a"}
+	phase := &round.Phase{Questions: []round.PhaseQuestion{
+		{ID: "one", HTML: `<p>one</p>`, Resources: []round.File{{Name: "screen.js", Body: []byte("one-script")}}},
+		{ID: "two", HTML: `<p>two</p>`, Resources: []round.File{{Name: "screen.js", Body: []byte("two-script")}}},
+	}}
+	s := newRound(roundSpec{Origin: o, ID: "r1", Token: "tok-1", FrameKey: "frame-key-", Phase: phase, Images: t.TempDir()})
+	request := func(path string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Host = o.Host()
+		w := httptest.NewRecorder()
+		s.handler().ServeHTTP(w, r)
+		return w
+	}
+	for _, q := range phase.Questions {
+		root := request(q.Frame)
+		if root.Code != http.StatusOK || !strings.Contains(root.Body.String(), "<p>"+q.ID+"</p>") {
+			t.Fatalf("frame %s: status %d, body %s", q.ID, root.Code, root.Body.String())
+		}
+		resource := request(q.Frame + "screen.js")
+		if resource.Code != http.StatusOK || resource.Body.String() != q.ID+"-script" {
+			t.Fatalf("resource %s: status %d, body %s", q.ID, resource.Code, resource.Body.String())
+		}
+	}
+	wrong := request(phase.Questions[0].Frame + "missing.js")
+	if wrong.Code != http.StatusNotFound {
+		t.Fatalf("missing resource status %d", wrong.Code)
+	}
+	other := request(phase.Questions[0].Frame + "two/screen.js")
+	if other.Code != http.StatusNotFound {
+		t.Fatalf("cross-question resource status %d", other.Code)
+	}
+}
+
+func TestPhaseFeedbackIsGroupedByQuestionAndOverview(t *testing.T) {
+	s := newRound(roundSpec{Origin: conversation.Origin{Port: 43210, Cap: "cap-a"}, ID: "r1", Token: "tok-1", Round: round.Round{Questions: []round.Question{{ID: "one", Options: []string{"yes", "no"}}, {ID: "two", Options: []string{"a", "b"}}}}, Phase: &round.Phase{Questions: []round.PhaseQuestion{{ID: "one", Options: []round.PhaseOption{{ID: "yes"}, {ID: "no"}}}, {ID: "two", Options: []round.PhaseOption{{ID: "a"}, {ID: "b"}}}}}})
+	s.uploads["img-1"] = upload{path: "/tmp/one.png"}
+	batch, status, problem := s.validatePhase(sendBody{Round: "r1", Submission: "s-12345678", Questions: map[string]sendQuestion{"one": {Choice: "yes", Messages: []string{"question note"}, Images: []string{"img-1"}}, "two": {Answer: "free text"}}, Overview: sendQuestion{Messages: []string{"overall"}}})
+	if status != 0 {
+		t.Fatalf("status %d: %s", status, problem)
+	}
+	encoded, err := json.Marshal(batch.phaseLine())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(encoded)
+	for _, want := range []string{`"questions"`, `"one"`, `"choice":"yes"`, `"messages":["question note"]`, `"images":["/tmp/one.png"]`, `"answer":"free text"`, `"overview":{"messages":["overall"]}`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %s", want, got)
+		}
+	}
+	if _, status, _ := s.validatePhase(sendBody{Questions: map[string]sendQuestion{"one": {Choice: "yes", Answer: "no"}}}); status != http.StatusBadRequest {
+		t.Fatalf("choice and answer status %d", status)
+	}
 }
 
 func TestCloseAcknowledgementRequiresOriginAndUnpredictableToken(t *testing.T) {

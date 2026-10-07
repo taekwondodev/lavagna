@@ -60,6 +60,9 @@ var components = map[string]component{
 	"proposal": {"recommendation", "role-analysis", "Proposta · non approvata"},
 	"why":      {"representation", "role-neutral", "Perché questa forma"},
 	"boundary": {"boundary", "role-neutral", "Confine"},
+	"sequence": {"diagram sequence", "role-information", "Sequenza"},
+	"flow":     {"diagram flow", "role-information", "Flusso"},
+	"bars":     {"diagram bars", "role-information", "Barre"},
 }
 
 var evidenceKinds = map[string]component{
@@ -83,6 +86,7 @@ var (
 	parenItem      = regexp.MustCompile(`^\d+\) `)
 	listMarker     = regexp.MustCompile(`^(?:[-*+] |\d+[.)] )`)
 	excerptSpec    = regexp.MustCompile(`^(\S+):(\d+)-(\d+)$`)
+	excerptMark    = regexp.MustCompile(`^(\d+)!([1-9][0-9]*)$`)
 	dataRef        = regexp.MustCompile(`(?i)(?:^|[\s"'])data-ref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))`)
 	resourceAttr   = regexp.MustCompile(`(?i)(?:^|[\s"'])((?:xlink:)?href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))`)
 )
@@ -394,7 +398,13 @@ func (p *parser) steps(ls []line, label, attr string, sc scope) {
 	p.out.WriteString(`</ol>`)
 }
 
-func (p *parser) excerpt(n int, spec string, body []line, attr string, sc scope) {
+func (p *parser) excerpt(n int, input string, body []line, attr string, sc scope) {
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		p.fail(n, "::: excerpt needs path:start-end")
+		return
+	}
+	spec := parts[0]
 	m := excerptSpec.FindStringSubmatch(spec)
 	if m == nil {
 		p.fail(n, "::: excerpt needs path:start-end")
@@ -411,14 +421,47 @@ func (p *parser) excerpt(n int, spec string, body []line, attr string, sc scope)
 		p.fail(n, "excerpt %s: the range starts at line 1 or later and ends at or after its start", spec)
 		return
 	}
+	if p.in.Excerpt == nil {
+		p.fail(n, "excerpt rendering is unavailable")
+		return
+	}
 	text, err := p.in.Excerpt(path, from, to)
 	if err != nil {
 		p.fail(n, "excerpt %s: %v", spec, err)
 		return
 	}
+	marks := map[int]string{}
+	for _, mark := range parts[1:] {
+		m := excerptMark.FindStringSubmatch(mark)
+		if m == nil {
+			p.fail(n, "excerpt mark %q must be line!badge", mark)
+			continue
+		}
+		line, _ := strconv.Atoi(m[1])
+		badge := m[2]
+		if line < from || line > to {
+			p.fail(n, "excerpt mark %q is outside the excerpt", mark)
+			continue
+		}
+		if _, exists := marks[line]; exists {
+			p.fail(n, "excerpt line %d has more than one problem mark", line)
+			continue
+		}
+		marks[line] = badge
+	}
 	var rendered strings.Builder
 	for i, l := range strings.Split(text, "\n") {
-		fmt.Fprintf(&rendered, `<span class="line" data-line="%d">%s</span>`, from+i, html.EscapeString(l))
+		line := from + i
+		class, badge := "line", marks[line]
+		if badge != "" {
+			class = "line problem"
+		}
+		fmt.Fprintf(&rendered, `<span class="%s" data-line="%d">`, class, line)
+		if badge != "" {
+			fmt.Fprintf(&rendered, `<span class="problem-badge">%s</span>`, html.EscapeString(badge))
+		}
+		rendered.WriteString(html.EscapeString(l))
+		rendered.WriteString(`</span>`)
 		if p.used+rendered.Len() > p.in.Budget {
 			p.fail(n, "excerpt %s: the round exceeds the %d byte bound", spec, MaxBytes)
 			return

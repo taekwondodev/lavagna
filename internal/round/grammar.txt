@@ -1,76 +1,80 @@
-lavagna round: present one round and wait for one feedback batch.
+# Per-question round grammar
 
-  lavagna round < round.md     text from stdin
-  lavagna round DIR            DIR/round.md plus the .js, .css and image files beside it
+A call contains one or more questions. A level-1 title starts each question and
+requires an id; `after` is optional and names question ids in the phase.
 
-DIR holds at most 32 files and 4 MiB, rendered excerpts included: round.md, .js,
-.css, .png, .jpg, .jpeg, .gif, .webp and .svg files under relative paths, with no
-symlinks; .lavagna is reserved. Every .css file is linked and every .js file
-runs, in path order. Rendered snapshot JSON plus decisions must fit 6 MiB.
-Use --reuse rN with decisions-only stdin to keep an earlier content snapshot;
-no directory, new content or inherited decisions. Read round --help for the fast path.
-Any other construct is invalid, with line-numbered errors before the page opens.
+```markdown
+# What should happen after a crash? {id="crash" after="storage"}
+A concise lead for this question.
 
-Chapters, in this order, each at most once:
-  # Capire   # Confrontare   # Decidere
-Capire and Confrontare render in a sandboxed frame; Decidere renders in the page.
+## Capire
+Explain the current behavior and problem.
 
-Blocks:
-  ## Heading, ### Heading
-  Paragraph lines, joined until a blank line
-  - item / 1. item           lines indented by two spaces continue the item
-  | A | B |                  table: header row, | --- | :-: | --: | row, body rows;
-  | --- | --- |              the first column heads its row; \| is a literal pipe
-  ::: info [Label]           information             (default "Informazione")
-  ::: proposal [Label]       proposal, unapproved    (default "Proposta · non approvata")
-  ::: why [Label]            why this representation (default "Perché questa forma")
-  ::: boundary [Label]       scope or limit          (default "Confine")
-  ::: steps [Label]          only list items: first line title, indented lines detail
-  ::: evidence               only items - [observed|unverified|outside [Label]] text
-  ::: excerpt path:12-30     lines 12-30 of a file under the git root, at most 64 KiB;
-                             the body is an optional caption
-  :::                        closes a block; blocks do not nest; ## is not allowed inside
-  <tag ...> ...              raw HTML or SVG until a blank line, Capire and Confrontare
-                             only; src and href name round files (./ and #id allowed),
-                             data: images or #ids, and the frame blocks anything else;
-                             inline <script>, on* handlers and style attributes do not run
-
-Inline, anywhere: **bold** and `code`; everything else shows as written.
-
-Anchors, Capire and Confrontare only: end a heading, paragraph, list item, table
-cell or ::: line with {ref="Label"}, or write data-ref="Label" in raw HTML. Labels
-are unique, at most 80 characters. A comment the user links to one returns
-"anchor":"Label"; a general comment returns "anchor":null.
-
-Decisions, under # Decidere after any introduction:
-  ## Question {id="storage"}  one question; ids match [a-z0-9][a-z0-9_-]{0,39}
-  Introduction text           optional, before the options
-  - [file] Option label       at least two options; indented lines are the detail
-
-Example (DIR/round.md, with DIR/flow.svg and DIR/demo.js):
-
-# Capire
-## Il problema {ref="Problema"}
-Due sessioni scrivono lo stesso file di stato.
-::: excerpt internal/state/store.go:40-58
-La scrittura non prende un lock.
+::: excerpt internal/store/store.go:40-46 45!1
+`os.WriteFile` truncates before writing.
 :::
 
-# Confrontare
-| Criterio | File per sessione | Database |
-| --- | --- | --- |
-| Contesa | nessuna {ref="File · contesa"} | gestita dal database |
-::: proposal
-Un file per sessione: nessuna dipendenza nuova.
-:::
-::: evidence
-- [observed] Oggi un solo file. {ref="Stato attuale"}
-- [unverified] La pulizia dei file vecchi.
-:::
-<img src="flow.svg" alt="Flusso delle scritture" data-ref="Flusso">
+## Confrontare
+Compare alternatives and consequences.
 
-# Decidere
-## Dove salviamo lo stato? {id="storage"}
-- [file] Un file per sessione
-  Nessuna contesa, più file da pulire.
-- [db] Un database locale
+## Decidere
+- [atomic] Write a temporary file, then rename {recommended}
+  => The old file remains intact until rename.
+- [journal] Append records and recover the last valid record
+
+A final paragraph may explain the recommendation.
+
+# What should be retained? {id="retention"}
+```
+
+The second title above is a planned question: it has no body or artifact yet.
+A later call can supply its complete question with the same id. A complete
+question replaces its previous version together with its resources.
+
+## Titles, ids and dependencies
+
+- Question ids match `[a-z0-9][a-z0-9_-]{0,39}` and are unique in a phase.
+- A title is one line, at most 120 characters.
+- `after="id other-id"` names known questions; dependencies must not cycle.
+- `now` is reserved for the present state of diagrams.
+
+## Chapters and choices
+
+- `## Capire`, `## Confrontare`, `## Decidere` are optional except Decidere for
+  a complete question; use that order. `###` headings are content headings.
+- A complete question has 2 to 6 options, each written `- [id] label`.
+  Option ids use the question id pattern; `now` is reserved.
+- At most one option ends in `{recommended}`.
+- An indented `=> consequence` line gives that option's effect; at most one per
+  option. A free-text answer is always available and needs no syntax.
+- A bare title is planned and has no question artifact.
+- `::: excerpt path:start-end 45!1` includes a source excerpt; `45!1` marks
+  line 45 as a problem with badge 1. Separate marks with spaces.
+- `{ref}`, `data-ref`, level-1 chapter headings, and shared/root resources are
+  unsupported. Anchors are not part of per-question feedback.
+
+## Resources and bounds
+
+For `DIR/round.md`, question `crash` owns files only under `DIR/crash/`. A
+question's frame is served at `/f/<key>/<question-id>/`; references name files
+as `<question-id>/file`. Only that question's `.js` and `.css` run in its frame.
+No resources are shared across questions.
+
+Input text, resources and rendered excerpts are bounded to 4 MiB and at most
+32 files per call. Retained question artifacts are bounded to 6 MiB. Resource
+paths must be regular files below the question directory; symlinks are refused.
+
+## Feedback
+
+One Send returns `questions`, keyed by id, and optional `overview`. A question may
+have `choice` or `answer` (never both), `messages`, and `images`; empty fields
+are omitted. Above 2 KiB the outcome is deferred: choices remain visible,
+messages and images become counts, and a free-text answer is `true`. Read full
+feedback with `lavagna feedback SUBMISSION --question ID`, `--overview`, or
+`--all`. The selectors are mutually exclusive. The default reprints the
+summary. Unknown ids and questions without feedback in the selected batch are
+errors.
+
+A batch admits at most 32 KiB of text including answers, a 48 KiB record, and
+8 screenshots of up to 10 MiB each. `close` and the one-day sweep remove
+question artifacts and feedback.

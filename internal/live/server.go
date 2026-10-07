@@ -72,6 +72,7 @@ type view struct {
 	ImageLimit int                   `json:"imageLimit"`
 	ImageBytes int                   `json:"imageBytes"`
 	Previous   *conversation.Outcome `json:"previous"`
+	Phase      *round.Phase          `json:"phase,omitempty"`
 	round.Round
 }
 
@@ -87,12 +88,93 @@ type receipt struct {
 	Unwitnessed bool   `json:"unwitnessed,omitempty"`
 }
 
+type phaseFeedback struct {
+	Choice   string
+	Answer   string
+	Messages []string
+	Images   []string
+}
+
 type batch struct {
 	round      string
 	submission string
 	choices    map[string]string
 	comments   []comment
 	images     []string
+	questions  map[string]phaseFeedback
+	overview   phaseFeedback
+}
+
+type phaseQuestionLine struct {
+	Choice   string `json:"choice,omitempty"`
+	Answer   any    `json:"answer,omitempty"`
+	Messages any    `json:"messages,omitempty"`
+	Images   any    `json:"images,omitempty"`
+}
+
+type phaseOutcomeLine struct {
+	Lavagna    string                       `json:"lavagna"`
+	Round      string                       `json:"round"`
+	Submission string                       `json:"submission"`
+	Deferred   bool                         `json:"deferred,omitempty"`
+	Questions  map[string]phaseQuestionLine `json:"questions"`
+	Overview   *phaseQuestionLine           `json:"overview,omitempty"`
+}
+
+func (b batch) phaseLine() phaseOutcomeLine {
+	questions := map[string]phaseQuestionLine{}
+	for id, f := range b.questions {
+		line := phaseQuestionLine{Choice: f.Choice}
+		if f.Answer != "" {
+			line.Answer = f.Answer
+		}
+		if len(f.Messages) > 0 {
+			line.Messages = f.Messages
+		}
+		if len(f.Images) > 0 {
+			line.Images = f.Images
+		}
+		questions[id] = line
+	}
+	var overview *phaseQuestionLine
+	if len(b.overview.Messages) > 0 || len(b.overview.Images) > 0 {
+		overview = &phaseQuestionLine{}
+		if len(b.overview.Messages) > 0 {
+			overview.Messages = b.overview.Messages
+		}
+		if len(b.overview.Images) > 0 {
+			overview.Images = b.overview.Images
+		}
+	}
+	return phaseOutcomeLine{Lavagna: "feedback", Round: b.round, Submission: b.submission, Questions: questions, Overview: overview}
+}
+
+func (b batch) deferredPhaseLine() phaseOutcomeLine {
+	questions := map[string]phaseQuestionLine{}
+	for id, f := range b.questions {
+		line := phaseQuestionLine{Choice: f.Choice}
+		if f.Answer != "" {
+			line.Answer = true
+		}
+		if len(f.Messages) > 0 {
+			line.Messages = len(f.Messages)
+		}
+		if len(f.Images) > 0 {
+			line.Images = len(f.Images)
+		}
+		questions[id] = line
+	}
+	var overview *phaseQuestionLine
+	if len(b.overview.Messages) > 0 || len(b.overview.Images) > 0 {
+		overview = &phaseQuestionLine{}
+		if len(b.overview.Messages) > 0 {
+			overview.Messages = len(b.overview.Messages)
+		}
+		if len(b.overview.Images) > 0 {
+			overview.Images = len(b.overview.Images)
+		}
+	}
+	return phaseOutcomeLine{Lavagna: "feedback", Round: b.round, Submission: b.submission, Deferred: true, Questions: questions, Overview: overview}
 }
 
 type upload struct {
@@ -111,6 +193,7 @@ type server struct {
 	gate        gate
 	view        *view
 	frame       *frame
+	frames      map[string]*frame
 	options     map[string]map[string]bool
 	anchors     map[string]bool
 	imageDir    string
@@ -142,16 +225,35 @@ type roundSpec struct {
 	Files    []round.File
 	Previous *conversation.Outcome
 	Images   string
+	Phase    *round.Phase
 }
 
 func newRound(spec roundSpec) *server {
 	r := spec.Round
 	s := newServer(spec.Origin)
-	s.view = &view{ID: spec.ID, Token: spec.Token, Limit: maxCommentBytes, ImageLimit: maxImages, ImageBytes: maxImageBytes, Previous: spec.Previous, Round: r}
+	s.view = &view{ID: spec.ID, Token: spec.Token, Limit: maxCommentBytes, ImageLimit: maxImages, ImageBytes: maxImageBytes, Previous: spec.Previous, Round: r, Phase: spec.Phase}
 	s.imageDir = spec.Images
 	s.loadUploads()
 	s.gate = gate{cap: spec.Origin.Cap, round: spec.ID, token: spec.Token}
-	if r.Content != "" {
+	if spec.Phase != nil {
+		s.frames = map[string]*frame{}
+		for i := range spec.Phase.Questions {
+			q := &spec.Phase.Questions[i]
+			if q.Planned {
+				continue
+			}
+			files := map[string]round.File{}
+			var names []string
+			for _, file := range q.Resources {
+				files[file.Name] = file
+				names = append(names, "../"+q.ID+"/"+file.Name)
+			}
+			f := &frame{key: spec.FrameKey + q.ID, files: files, doc: page.Frame(q.HTML, names)}
+			q.FrameKey = f.key
+			q.Frame = "/f/" + f.key + "/" + q.ID + "/"
+			s.frames[q.ID] = f
+		}
+	} else if r.Content != "" {
 		f := &frame{key: spec.FrameKey, files: map[string]round.File{}}
 		var names []string
 		for _, file := range spec.Files {
@@ -307,13 +409,27 @@ func (s *server) asset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) framed(w http.ResponseWriter, r *http.Request) {
-	f := s.frame
+	name := strings.TrimSuffix(r.PathValue("file"), "/")
+	var f *frame
+	if s.frames != nil {
+		question, rest, found := strings.Cut(name, "/")
+		if !found {
+			question, name = name, ""
+		} else {
+			name = rest
+		}
+		f = s.frames[question]
+		if strings.HasPrefix(name, question+"/") {
+			name = strings.TrimPrefix(name, question+"/")
+		}
+	} else {
+		f = s.frame
+	}
 	if f == nil || !same(r.PathValue("key"), f.key) {
 		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Security-Policy", frameCSP)
-	name := r.PathValue("file")
 	if asset, ok := strings.CutPrefix(name, page.FrameAsset); ok {
 		serveAsset(w, r, asset)
 		return
@@ -427,6 +543,13 @@ func writeEvent(w io.Writer, e event) error {
 	return err
 }
 
+type sendQuestion struct {
+	Choice   string   `json:"choice"`
+	Answer   string   `json:"answer"`
+	Messages []string `json:"messages"`
+	Images   []string `json:"images"`
+}
+
 type sendBody struct {
 	Round      string            `json:"round"`
 	Token      string            `json:"token"`
@@ -436,7 +559,9 @@ type sendBody struct {
 		Text   string  `json:"text"`
 		Anchor *string `json:"anchor"`
 	} `json:"comments"`
-	Images []string `json:"images"`
+	Images    []string                `json:"images"`
+	Questions map[string]sendQuestion `json:"questions"`
+	Overview  sendQuestion            `json:"overview"`
 }
 
 func reply(w http.ResponseWriter, status int, body any) {
@@ -512,6 +637,9 @@ func (s *server) send(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) validate(in sendBody) (batch, int, string) {
+	if s.view.Phase != nil {
+		return s.validatePhase(in)
+	}
 	b := batch{round: in.Round, submission: in.Submission, choices: map[string]string{}, comments: []comment{}, images: []string{}}
 	for q, opt := range in.Choices {
 		if !s.options[q][opt] {
@@ -549,6 +677,99 @@ func (s *server) validate(in sendBody) (batch, int, string) {
 		return b, http.StatusBadRequest, "empty batch"
 	}
 	if encodedLen(b.line()) > maxResultBytes {
+		return b, http.StatusRequestEntityTooLarge, fmt.Sprintf("feedback exceeds %d bytes", maxResultBytes)
+	}
+	return b, 0, ""
+}
+
+func (s *server) validatePhase(in sendBody) (batch, int, string) {
+	b := batch{round: in.Round, submission: in.Submission, questions: map[string]phaseFeedback{}}
+	if len(in.Choices) > 0 || len(in.Comments) > 0 || len(in.Images) > 0 {
+		return b, http.StatusBadRequest, "legacy feedback fields are not supported"
+	}
+	known := map[string]map[string]bool{}
+	for _, q := range s.view.Phase.Questions {
+		opts := map[string]bool{}
+		for _, o := range q.Options {
+			opts[o.ID] = true
+		}
+		known[q.ID] = opts
+	}
+	totalText := 0
+	attached := map[string]bool{}
+	useImages := func(ids []string) ([]string, string) {
+		paths := []string{}
+		for _, id := range ids {
+			u, ok := s.uploads[id]
+			if !ok || attached[id] {
+				return nil, "unknown image"
+			}
+			attached[id] = true
+			paths = append(paths, u.path)
+		}
+		return paths, ""
+	}
+	for id, item := range in.Questions {
+		options, ok := known[id]
+		if !ok {
+			return b, http.StatusBadRequest, "unknown question"
+		}
+		if item.Choice != "" && item.Answer != "" {
+			return b, http.StatusBadRequest, "a question cannot have both choice and answer"
+		}
+		if item.Choice != "" && !options[item.Choice] {
+			return b, http.StatusBadRequest, "unknown choice"
+		}
+		if item.Answer != "" {
+			totalText += encodedLen(item.Answer) - 2
+		}
+		f := phaseFeedback{Choice: item.Choice, Answer: item.Answer, Messages: []string{}}
+		for _, text := range item.Messages {
+			if strings.TrimSpace(text) == "" {
+				return b, http.StatusBadRequest, "empty message"
+			}
+			totalText += encodedLen(text) - 2
+			f.Messages = append(f.Messages, text)
+		}
+		paths, problem := useImages(item.Images)
+		if problem != "" {
+			return b, http.StatusBadRequest, problem
+		}
+		f.Images = paths
+		if f.Choice != "" || f.Answer != "" || len(f.Messages) > 0 || len(f.Images) > 0 {
+			b.questions[id] = f
+		}
+	}
+	if in.Overview.Choice != "" || in.Overview.Answer != "" {
+		return b, http.StatusBadRequest, "overview accepts messages and images only"
+	}
+	b.overview.Messages = []string{}
+	for _, text := range in.Overview.Messages {
+		if strings.TrimSpace(text) == "" {
+			return b, http.StatusBadRequest, "empty message"
+		}
+		totalText += encodedLen(text) - 2
+		b.overview.Messages = append(b.overview.Messages, text)
+	}
+	paths, problem := useImages(in.Overview.Images)
+	if problem != "" {
+		return b, http.StatusBadRequest, problem
+	}
+	b.overview.Images = paths
+	if totalText > maxCommentBytes {
+		return b, http.StatusRequestEntityTooLarge, fmt.Sprintf("feedback text exceeds %d bytes", maxCommentBytes)
+	}
+	countImages := len(b.overview.Images)
+	for _, f := range b.questions {
+		countImages += len(f.Images)
+	}
+	if countImages > maxImages {
+		return b, http.StatusRequestEntityTooLarge, fmt.Sprintf("more than %d images", maxImages)
+	}
+	if len(b.questions) == 0 && len(b.overview.Messages) == 0 && len(b.overview.Images) == 0 {
+		return b, http.StatusBadRequest, "empty batch"
+	}
+	if encodedLen(b.phaseLine()) > maxResultBytes {
 		return b, http.StatusRequestEntityTooLarge, fmt.Sprintf("feedback exceeds %d bytes", maxResultBytes)
 	}
 	return b, 0, ""
