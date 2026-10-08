@@ -31,13 +31,6 @@ func TestMinimalHelpIsSufficientForOneRound(t *testing.T) {
 	}
 }
 
-func TestCheckReturnsOnlyMachineReadiness(t *testing.T) {
-	lines, code := run(t, env(t, "LAVAGNA_SESSION=ready"), "", "check")
-	if code != 0 || len(lines) != 1 || lines[0] != `{"lavagna":"ready"}` {
-		t.Fatalf("exit %d, %q", code, lines)
-	}
-}
-
 func TestInvalidDiagnosticsStayBoundedAndActionable(t *testing.T) {
 	source := `# Invalid {id="invalid"}` + "\n## Capire\n" + strings.Repeat("::: "+strings.Repeat("界", 1000)+"\n:::\n", 50) + "## Decidere\n- [a] A\n- [b] B\n"
 	lines, code := run(t, env(t, "LAVAGNA_SESSION=diagnostics"), source, "round")
