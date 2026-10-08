@@ -296,10 +296,15 @@ html.frame body { font-size: 14px; }
 .recap .struck > * { color: var(--muted); text-decoration: line-through; }
 .excerpt { margin: 16px 0; }
 .excerpt figcaption { font-size: 12px; color: var(--muted); margin-bottom: 5px; }
-.excerpt pre { margin: 0 0 8px; padding: 9px 0; overflow-x: auto; background: var(--neutral-soft); border: 1px solid var(--line); border-radius: 6px; font-size: 12.5px; line-height: 1.55; tab-size: 4; }
+.excerpt pre { --code-muted: #8a99ae; --code-line: #33435a; margin: 0 0 8px; padding: 9px 0; overflow-x: auto; background: #1a2433; color: #e3e8ef; border: 1px solid #0f1722; border-radius: 6px; font-size: 12.5px; line-height: 1.55; tab-size: 4; color-scheme: dark; }
 .excerpt .line { display: block; padding: 0 14px 0 0; white-space: pre; }
-.excerpt .line::before { content: attr(data-line); display: inline-block; min-width: 3.5em; padding: 0 12px 0 10px; margin-right: 4px; text-align: right; color: var(--muted); border-right: 1px solid var(--line); user-select: none; }
-.excerpt .line.problem { background: var(--problem-soft); box-shadow: inset 3px 0 0 var(--problem); }
+.excerpt .line::before { content: attr(data-line); display: inline-block; min-width: 3.5em; padding: 0 12px 0 10px; margin-right: 4px; text-align: right; color: var(--code-muted); border-right: 1px solid var(--code-line); user-select: none; }
+.excerpt .line.problem { background: rgb(240 104 94 / .16); box-shadow: inset 3px 0 0 #f0685e; }
+.hl-k { color: #7fd1c1; }
+.hl-s { color: #e9c17f; }
+.hl-c { color: var(--code-muted); font-style: italic; }
+.hl-n, .hl-l { color: #f2a28f; }
+.hl-f { color: #8fbff2; }
 .problem-badge { float: right; display: inline-grid; place-items: center; width: 18px; height: 18px; margin-right: -4px; border-radius: 50%; background: var(--problem); color: var(--on-accent); font: 800 10px/1 var(--sans); }
 .excerpt > p { font-size: 13px; color: var(--muted); }
 .raw-head { display: none; }

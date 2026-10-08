@@ -564,7 +564,7 @@ func (p *parser) excerpt(n int, input string, body []line, attr string, sc scope
 		marks[line] = badge
 	}
 	var rendered strings.Builder
-	for i, l := range strings.Split(text, "\n") {
+	for i, l := range highlight(path, text) {
 		line := from + i
 		class, badge := "line", marks[line]
 		if badge != "" {
@@ -574,7 +574,7 @@ func (p *parser) excerpt(n int, input string, body []line, attr string, sc scope
 		if badge != "" {
 			fmt.Fprintf(&rendered, `<span class="problem-badge">%s</span>`, html.EscapeString(badge))
 		}
-		rendered.WriteString(html.EscapeString(l))
+		rendered.WriteString(l)
 		rendered.WriteString(`</span>`)
 		if p.used+rendered.Len() > p.in.Budget {
 			p.fail(n, "excerpt %s: the round exceeds the %d byte bound", spec, MaxBytes)
