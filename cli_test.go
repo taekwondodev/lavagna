@@ -148,15 +148,6 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 	}
 }
 
-func startDir(t *testing.T, environ []string, dir string) *call {
-	t.Helper()
-	c := spawn(t, environ, "", dir)
-	if c.url == "" {
-		t.Fatalf("status line %q", c.first)
-	}
-	return c
-}
-
 func (c *call) esc() {
 	if c.cmd.ProcessState != nil {
 		return
@@ -241,14 +232,12 @@ func TestCheck(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			cmd := exec.Command(binary, "check")
-			cmd.Env = env(t, c.vars...)
-			out, err := cmd.CombinedOutput()
-			if c.ok && err != nil {
-				t.Fatalf("exit %v: %s", err, out)
+			lines, code := run(t, env(t, c.vars...), "", "check")
+			if c.ok && (code != 0 || len(lines) != 1 || lines[0] != `{"lavagna":"ready"}`) {
+				t.Fatalf("exit %d, %q", code, lines)
 			}
-			if !c.ok && (err == nil || !strings.Contains(string(out), "LAVAGNA_SESSION")) {
-				t.Fatalf("want a non-zero exit with the reason, got %v: %s", err, out)
+			if !c.ok && (code == 0 || !strings.Contains(strings.Join(lines, "\n"), "LAVAGNA_SESSION")) {
+				t.Fatalf("want a non-zero exit with the reason, got %d: %q", code, lines)
 			}
 		})
 	}
@@ -275,10 +264,9 @@ func TestRoundDirRefusesBoundsBeforeServing(t *testing.T) {
 		files map[string]string
 		want  string
 	}{
-		"invalid resource": {map[string]string{"round.md": "# Q {id=\"q\"}\n## Capire\n<img src=\"q/missing.png\" alt=\"\">\n## Decidere\n- [a] A\n- [b] B\n"}, ""},
-		"33 files":         {map[string]string{"round.md": decision}, `{"lavagna":"invalid","errors":["round: more than 32 files"]}`},
-		"4 MiB":            {map[string]string{"round.md": decision, "storage/grande.png": strings.Repeat("x", 4<<20)}, fmt.Sprintf(`{"lavagna":"invalid","errors":["round: %d bytes exceed the 4194304 byte bound"]}`, (4<<20)+len(decision))},
-		"missing file":     {map[string]string{"round.md": "# Q {id=\"q\"}\n## Capire\n<img src=\"q/manca.png\" alt=\"\">\n## Decidere\n- [a] A\n- [b] B\n"}, `{"lavagna":"invalid","errors":["round.md:3: src=\"q/manca.png\" is not a file of the round directory or a data: image"]}`},
+		"33 files":     {map[string]string{"round.md": decision}, `{"lavagna":"invalid","errors":["round: more than 32 files"]}`},
+		"4 MiB":        {map[string]string{"round.md": decision, "storage/grande.png": strings.Repeat("x", 4<<20)}, fmt.Sprintf(`{"lavagna":"invalid","errors":["round: %d bytes exceed the 4194304 byte bound"]}`, (4<<20)+len(decision))},
+		"missing file": {map[string]string{"round.md": "# Q {id=\"q\"}\n## Capire\n<img src=\"q/manca.png\" alt=\"\">\n## Decidere\n- [a] A\n- [b] B\n"}, `{"lavagna":"invalid","errors":["round.md:3: src=\"q/manca.png\" is not a file of the round directory or a data: image"]}`},
 	}
 	for i := range 32 {
 		cases["33 files"].files[fmt.Sprintf("%02d.css", i)] = ""
@@ -288,7 +276,7 @@ func TestRoundDirRefusesBoundsBeforeServing(t *testing.T) {
 			dir := t.TempDir()
 			writeFiles(t, dir, c.files)
 			lines, code := run(t, env(t, "LAVAGNA_SESSION=dir"), "", "round", dir)
-			if code != 2 || len(lines) != 1 || c.want != "" && lines[0] != c.want || c.want == "" && !strings.Contains(lines[0], `"lavagna":"invalid"`) {
+			if code != 2 || len(lines) != 1 || lines[0] != c.want {
 				t.Fatalf("exit %d, output %q", code, lines)
 			}
 		})

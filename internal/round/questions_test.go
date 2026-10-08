@@ -124,6 +124,9 @@ A partial write can corrupt state.
 	if len(phase.Questions[0].Resources) != 2 || len(phase.Questions[1].Resources) != 0 {
 		t.Fatalf("resources escaped question: %#v", phase.Questions)
 	}
+	if errs := AttachPhaseFiles(&phase, []File{{Name: "shared.js"}}); len(errs) == 0 {
+		t.Fatal("accepted root-shared resource")
+	}
 }
 
 func TestQuestionIdsCannotDependOnThemselvesAndResourcesCannotTraverse(t *testing.T) {
@@ -140,23 +143,6 @@ func TestQuestionIdsCannotDependOnThemselvesAndResourcesCannotTraverse(t *testin
 		if errs := AttachPhaseFiles(&phase, []File{{Name: name}}); len(errs) == 0 {
 			t.Errorf("accepted traversal path %q", name)
 		}
-	}
-}
-
-func TestPhaseResourcesAreScopedToQuestion(t *testing.T) {
-	phase, errs := ParsePhase([]byte("# One {id=\"one\"}\n## Decidere\n- [a] A\n- [b] B\n# Two {id=\"two\"}\n"))
-	if len(errs) != 0 {
-		t.Fatal(errs)
-	}
-	resource := File{Name: "one/screen.js", Body: []byte("one")}
-	if errs := AttachPhaseFiles(&phase, []File{resource}); len(errs) != 0 {
-		t.Fatal(errs)
-	}
-	if len(phase.Questions[0].Resources) != 1 || len(phase.Questions[1].Resources) != 0 {
-		t.Fatalf("resource escaped its question: %#v", phase.Questions)
-	}
-	if errs := AttachPhaseFiles(&phase, []File{{Name: "shared.js"}}); len(errs) == 0 {
-		t.Fatal("accepted root-shared resource")
 	}
 }
 
