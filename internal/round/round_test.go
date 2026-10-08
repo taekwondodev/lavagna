@@ -241,7 +241,7 @@ Scegli il file.
 		`<div class="problem" data-ref="Esempio"><span class="content-label role-information">Esempio</span><p>Dentro un blocco.</p></div>`,
 		`<ol class="simple-flow" aria-label="Come procediamo"><li data-ref="Passo uno"><strong>Prima capisci</strong><p>Leggi la spiegazione.</p></li><li><strong>Poi scegli</strong></li></ol>`,
 		`<div class="boundary"><span class="content-label role-neutral">Un solo riferimento</span><p>La spec resta l&#39;unico documento durevole.</p></div>`,
-		`<figure class="excerpt" data-ref="Codice"><figcaption><code>main.go:3-4</code></figcaption><pre><code><span class="line" data-line="3">riga 3 &lt;3&gt;</span><span class="line" data-line="4">riga 4 &lt;4&gt;</span></code></pre><p>La scrittura senza lock.</p></figure>`,
+		`<figure class="excerpt" data-ref="Codice"><figcaption><code>main.go:3-4</code></figcaption><pre><code><span class="line" data-line="3">riga <span class="hl-n">3</span> &lt;<span class="hl-n">3</span>&gt;</span><span class="line" data-line="4">riga <span class="hl-n">4</span> &lt;<span class="hl-n">4</span>&gt;</span></code></pre><p>La scrittura senza lock.</p></figure>`,
 		`<svg viewBox="0 0 10 10" data-ref="Diagramma &amp; flusso"><use href="#punto"/></svg>` + "\n" + `<img src="diagramma.svg" alt="">`,
 		`<div class="representation"><span class="content-label role-neutral">Modulo scelto: confronto</span><p>Le alternative sugli stessi criteri.</p></div>`,
 		`<thead><tr><th scope="col">Aspetto</th><th scope="col" class="align-center">File</th><th scope="col" class="align-right">Database</th></tr></thead>`,
