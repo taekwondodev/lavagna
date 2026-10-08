@@ -19,27 +19,29 @@ For offline reloads, the shell caches the view and every question frame on arriv
 
 The sandbox and CSP restrict storage, popups, form submission, navigation and resource loading. Round resources and `data:` images are allowed; external HTTP resource loads and fetch, beacon and WebSocket connections are blocked by the policy. This is not a guarantee that all network traffic is blocked: WebRTC is an accepted exception below. The raw HTML resource check is a parser lint, not the isolation boundary; browser enforcement is the boundary.
 
-The CLI reads round files under bounded path rules. Code excerpts are read once from regular files under the working directory's Git root and included in the rendered frame. A round script cannot request arbitrary host files through this mechanism, but it can read content already included in its own frame.
+The CLI reads round files under [bounded path rules](docs/authoring.md#input-limits-and-errors). Code excerpts are read once from regular files under the working directory's Git root and included in the rendered frame. A round script cannot request arbitrary host files through this mechanism, but it can read content already included in its own frame.
 
-Versioned question artifacts, uploaded screenshots and exact feedback are retained in the private conversation directory for phase continuity and selective CLI reading. Feedback artifacts are not HTTP resources. They are scoped to the current conversation, deleted by `close`, or swept after one day of inactivity once their lease can be acquired. Source directories are not deleted. Browser storage is a separate copy: `close` can confirm its cleanup only when a connected page acknowledges it. A disconnected browser may retain its offline copy. File permissions and deletion are not secure erasure and do not remove copies already present in a harness transcript.
+## Retained data
+
+Conversation directories are private to the account (mode 0700), with retained files at mode 0600. Question artifacts, screenshots and exact feedback remain there for phase continuity and selective CLI reading. Feedback artifacts are not HTTP resources. [Architecture](docs/ARCHITECTURE.md#conversation-ownership) describes ownership and publication; [Browser rounds](docs/rounds.md#close-or-restart) describes retention, expiry and close.
+
+Browser storage is a separate copy. A disconnected browser may retain its offline content after local files have been deleted; cleanup is confirmed only when a connected page acknowledges it. File permissions and deletion are not secure erasure and do not remove copies already present in a harness transcript.
 
 ## Accepted residual risk: WebRTC
 
-Chrome permits WebRTC traffic despite the frame's CSP, including `connect-src 'none'`. A round script can initiate UDP/STUN traffic to a reachable destination. JavaScript-level blocking is not a reliable boundary; the implementation investigation bypassed it through alternate document and frame contexts.
+Chrome permits WebRTC traffic despite the frame's CSP, including `connect-src 'none'`. A round script can initiate UDP/STUN traffic to a reachable destination. JavaScript-level blocking is not a reliable boundary because alternate document and frame contexts can bypass it.
 
 Consequences include exposing the user's network address to a destination and a possible channel for transmitting information accessible to the script. That information includes the round's rendered text, data and code excerpts. The frame's lack of a shell token does **not** mean it contains no sensitive material.
-
-A review probe reproduced a STUN request from a round script using the actual sandboxed frame, with the destination confined to loopback. It demonstrated network egress; it did not separately demonstrate exfiltration of repository code.
 
 The maintainer explicitly accepted this risk on 2026-10-05 and chose to keep the current behavior. Lavagna adds no script opt-in, per-prototype consent prompt or WebRTC mitigation. This accepts the limit rather than claiming to eliminate it. The decision narrows the earlier blanket statement that content cannot make network requests in the [isolation decision](https://github.com/taekwondodev/dev/issues/95).
 
 ## Accepted residual risk: unsent choice visible to round scripts
 
-So that 02 follows the choice, the shell tells the active question's content frame which option the user selected in 03, or that a free-text answer exists, before Send. Round scripts can read it and, through the accepted WebRTC egress above, could transmit it before the user sends feedback. The frame never receives the free text, thread messages, screenshots, the shell capability or the round token. See [ADR 0001](docs/adr/0001-frame-receives-selected-option.md).
+The option state exposed through the [shell and content boundary](#shell-and-content-boundary) is visible before Send. A round script could transmit that unsent choice through the accepted WebRTC egress above. [ADR 0001](docs/adr/0001-frame-receives-selected-option.md) owns the decision to expose it and the rejected alternatives.
 
 ## Accepted residual risk: round scripts can expand on the user's tap
 
-Espandi lives in the content frame, so the shell accepts `expand` from any user gesture inside the active frame. A round script can therefore expand the page again whenever the user taps its content, even right after Riduci. It cannot expand the page without such a tap, and the shell's own Riduci and controls stay usable without touching the frame. Preventing it would move Espandi into the shell, an alternative rejected in [How does the content frame show 01 and 02 of the active question?](https://github.com/taekwondodev/lavagna/issues/16#issuecomment-6033567938). The maintainer accepted this risk on 2026-10-07.
+Espandi lives in the content frame, so the shell accepts `expand` from any user gesture inside the active frame. A round script can therefore expand the page again whenever the user taps its content, even right after Riduci. It cannot expand the page without such a tap, and the shell's own Riduci and controls stay usable without touching the frame. The [frame decision](https://github.com/taekwondodev/lavagna/issues/16#issuecomment-6033567938) records the rejected shell-button alternative. The maintainer accepted this risk on 2026-10-07.
 
 ## Accepted residual risk: local port squatting
 

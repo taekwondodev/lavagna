@@ -1,7 +1,7 @@
 # Ledger.Apply stays one ordered transition
 
-[`Ledger.Apply`](../../internal/conversation/ledger.go) applies a call's elements in one function, one block per element, in the order fixed by the [ledger resolution](https://github.com/taekwondodev/lavagna/issues/18#issuecomment-6034145631): phase, settled, replacements, reply, new questions with the round advance. Read top to bottom, the function is that order, and every block works on the same clone and error list, so an invalid element leaves the whole call unapplied without any helper having to preserve that.
+Keep [`Ledger.Apply`](../../internal/conversation/ledger.go) as one ordered transition, with one block per call element sharing the same clone and error list. Reading the function top to bottom exposes the application order and the all-or-nothing rule together. The [round guide](../rounds.md#continue-a-phase) owns the call semantics.
 
-Rejected: one private helper per element, suggested by the Standards review of [#27](https://github.com/taekwondodev/lavagna/issues/27) as a Divergent Change smell. It spreads the order across functions and threads the clone and the errors through each of them, so the order and the all-or-nothing rule would have to be checked in two places.
+Rejected: a private helper per element. That would distribute the order across functions and thread the clone and errors through them, making the same invariant harder to inspect.
 
-Read this before splitting `Apply`, adding a call element or changing the order of application. The maintainer chose to keep the single transition on 2026-10-07, during the delivery of #27.
+Read this before splitting `Apply`, adding a call element or changing application order. The maintainer chose the single transition on 2026-10-07 during delivery of [#27](https://github.com/taekwondodev/lavagna/issues/27); [PR #36](https://github.com/taekwondodev/lavagna/pull/36) records the review and acceptance. The [ledger resolution](https://github.com/taekwondodev/lavagna/issues/18#issuecomment-6034145631) supplies the original ordering constraint.

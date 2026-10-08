@@ -1,39 +1,15 @@
-# Project entry point
+# Working on lavagna
 
-## Purpose
+Use `dev-cycle` from the shared workflow library. Keep shared procedures there.
 
-Lavagna is a harness-neutral CLI for browser rounds in agent conversations. It presents content, awaits one explicit feedback batch and returns a machine-readable result to the invoking shell.
+## Read for the change
 
-This file guides changes to lavagna itself. Daily use starts in [README.md](README.md) and [the round guide](docs/rounds.md).
-
-## Dev cycle
-
-Use `dev-cycle` from the shared workflow library for development work. Keep shared procedures in that library rather than copying them into this repository.
-
-### Issue tracker
-
-GitHub Issues on `taekwondodev/lavagna`. See [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
-
-### Issue labels
-
-One category, one readiness and one activity label per issue. See [docs/agents/triage-labels.md](docs/agents/triage-labels.md).
-
-### Delivery
-
-Pull requests into `main` on `origin`. Before implementation or delivery, read [docs/agents/delivery.md](docs/agents/delivery.md) for route and target defaults.
-
-### Domain docs
-
-Single-context: `CONTEXT.md` and `docs/adr/` at the repository root. See [docs/agents/domain.md](docs/agents/domain.md).
-
-## Conditional references
-
-- Read [CONTEXT.md](CONTEXT.md) before changing domain behavior or terminology.
-- Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing component responsibilities, conversation ownership, persistence or lifecycle. Follow the relevant decision links before changing those boundaries.
-- Read [SECURITY.md](SECURITY.md) before changing resource loading, browser isolation, feedback authorization or access to host files and session transcripts.
-- Read [docs/rounds.md](docs/rounds.md) before changing commands, round input, feedback, delivery status or recovery. Update the owning guide in the same change as its behavior.
-- Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for setup, verification, documentation ownership and recording architectural decisions.
-
-## Evidence
-
-Distinguish intended requirements, proposed designs and verified behavior in plans and reports. Support verified claims with an observed result, test or retrieved source; keep change-specific verification with its issue or PR.
+- **Documentation:** follow [documentation ownership](docs/DEVELOPMENT.md#documentation-ownership).
+- **Domain behavior or terminology:** read [CONTEXT.md](CONTEXT.md) and follow [domain guidance](docs/agents/domain.md).
+- **Components, persistence or lifecycle:** read [Architecture](docs/ARCHITECTURE.md), including the decision records linked for the boundary being changed.
+- **Resource loading, browser isolation, feedback authorization or host data:** read [Security](SECURITY.md).
+- **Commands, feedback, delivery status or recovery:** read [Browser rounds](docs/rounds.md).
+- **Question syntax, excerpts, diagrams or prototypes:** read [Authoring questions](docs/authoring.md).
+- **Setup and verification:** read [Development](docs/DEVELOPMENT.md#verification).
+- **Implementation or delivery:** read [delivery policy](docs/agents/delivery.md) before preparing a branch or publishing.
+- **Issue work:** read [tracker conventions](docs/agents/issue-tracker.md); for creation or state changes, also read [label policy](docs/agents/triage-labels.md).
