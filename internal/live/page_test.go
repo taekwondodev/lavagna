@@ -147,9 +147,9 @@ func (r *phaseRun) outcome() map[string]any {
 	return result
 }
 
-// prose is n bytes of words. Chrome takes about a second to wrap one
-// 25,000-character word in the embedded font, enough to time out a CDP call
-// under load; words measure the same bytes in milliseconds.
+// prose is n bytes of words. A run of 25,000 "x" takes Chrome about a second
+// to insert in the embedded font, enough to time out a CDP call under load,
+// while other runs that long take milliseconds.
 func prose(n int) string {
 	return strings.Repeat("parola ", n/7+1)[:n]
 }
