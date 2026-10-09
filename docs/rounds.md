@@ -4,7 +4,7 @@ Use lavagna from the agent's invoking shell. [README](../README.md#install) cove
 
 ## Bind a conversation
 
-Identity is `PI_SESSION_ID` plus `PI_SESSION_FILE`, otherwise `LAVAGNA_SESSION`. Another harness opts in by exporting `LAVAGNA_SESSION`. The page opens through `$BROWSER` when set, otherwise `open`; the URL is appended to the command.
+Identity is `PI_SESSION_ID` plus `PI_SESSION_FILE`, otherwise `LAVAGNA_SESSION`. Another harness opts in by exporting `LAVAGNA_SESSION`. The page opens through `$BROWSER` when set, otherwise `open`; the URL is appended to the command. On macOS a [notification](#get-notified-on-macos) also announces each call with content.
 
 ## Present and close
 
@@ -53,6 +53,25 @@ This example continues a phase that already contains `storage`, `crash` and `ret
 | No element | Resumes waiting, for example after Esc. |
 
 Elements apply in the order phase, settled, replacements, reply, new questions, recap. A reply cannot address a question new in the same call. Replies, settles and replacements stay in the current round. Any invalid element rejects the whole call without changing the ledger or stored questions. One agent message is bounded to 32 KiB; [Authoring](authoring.md#input-limits-and-errors) lists content bounds.
+
+## Get notified on macOS
+
+On macOS, `make install` also installs `~/Applications/Lavagna.app`, which posts a native notification for each call that brings content:
+
+| Call | Notification |
+| --- | --- |
+| The first one with content in a phase, including after close, expiry or an older-format restart | Primo round pronto |
+| Any later one with new, replaced or planned questions, replies or settles | Round aggiornato |
+| An empty call that resumes waiting, or an invalid call | None |
+
+One call produces one notification, whatever it contains. Reloads, reconnects, accepted feedback and delivery stages produce none. The text is fixed; question content and the page URL never appear in it.
+
+Permissions:
+
+- **Notifications.** Installing asks for permission with a banner. Click it and turn on notifications for Lavagna in System Settings › Notifications. Until then each call reports on stderr that the notification was not sent; the round and its JSON outcome are unaffected.
+- **Chrome automation.** The first click asks to let Lavagna control Google Chrome. With that permission a click brings forward the Chrome tab already showing the conversation; without it, or when no such tab is open, the click opens the page in the default browser.
+
+Arrival does not take focus. Opening the page for a new origin still does, as before: Chrome activates for any URL it receives. macOS can still hold a notification back under Focus, Do Not Disturb or notification settings; lavagna reports only whether macOS accepted the request, never that it was shown. Missed notifications are not replayed.
 
 ## Answer on the page
 
