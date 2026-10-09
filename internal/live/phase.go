@@ -65,6 +65,7 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, out, errw
 	if errs != nil {
 		return invalid(out, errs...)
 	}
+	kind := noticeFor(st.Ledger, phase)
 	wd, err := os.Getwd()
 	if err != nil {
 		return failure(out, err)
@@ -149,6 +150,7 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, out, errw
 	defer h.stop()
 	fmt.Fprintf(errw, "lavagna · round %s · %s · Esc per interrompere\n", st.RoundID(), origin.URL())
 	go reveal(getenv, errw, origin.URL(), fresh, srv.seen)
+	go announce(getenv, errw, kind, origin.URL())
 	got := <-srv.accepted
 	st = st.Step(conversation.BatchAccepted{Batch: got.ledgerBatch()})
 	record(errw, lease, st)

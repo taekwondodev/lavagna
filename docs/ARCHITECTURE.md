@@ -12,6 +12,7 @@ Lavagna coordinates a browser page with one agent conversation. [CONTEXT.md](../
 | [`internal/conversation`](../internal/conversation) | Bind identity, serialize access, persist the ledger and artifacts, and remove expired state | [Conversation ownership](#conversation-ownership) |
 | [`internal/live`](../internal/live) | Coordinate calls, serve the page, admit feedback and hand the listener between a call and its relay | [Call and feedback flow](#call-and-feedback-flow) |
 | [`internal/page`](../internal/page) | Embed the trusted shell and frame helper; manage presentation, drafts and offline snapshots in the browser | [Browser continuity](#browser-continuity) |
+| [`macos/notifier`](../macos/notifier) | macOS helper app: post fixed-text notifications and bring the conversation's Chrome tab forward on click | [Notifications](rounds.md#get-notified-on-macos) |
 | [`internal/witness`](../internal/witness) | Observe supported Pi session entries for receipt and turn completion without writing the transcript | [Delivery status](rounds.md#interpret-delivery-status) |
 
 ## Conversation ownership
@@ -38,6 +39,8 @@ Two pure transition owners keep content and delivery separate:
 
 - [`ledger.go`](../internal/conversation/ledger.go) applies call elements and accepted batches. It owns question transitions, recorded answers and submission deduplication. Read [ADR 0002](adr/0002-ledger-apply-stays-one-transition.md) before splitting `Apply` or adding elements.
 - [`lifecycle.go`](../internal/conversation/lifecycle.go) records call start, acceptance and return. Delivery is keyed by call, not round: a reply-only call does not advance the round. Returned is recorded only after the result write succeeds.
+
+After serving the page and before waiting for feedback, [`notify.go`](../internal/live/notify.go) classifies the committed call against the prior ledger and asks the helper to post at most one notification. It passes only the notification kind and the page URL; a failure is reported on stderr and never changes the call's outcome. The relay and the witness do not notify.
 
 [`gate.go`](../internal/live/gate.go) owns the send admission decision table. The live call persists admitted feedback before returning a successful result; the CLI resolves screenshot IDs to host paths, while browser views expose only IDs. [Feedback results](rounds.md#read-the-result) describes inline and deferred reads.
 

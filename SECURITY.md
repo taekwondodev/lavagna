@@ -21,6 +21,12 @@ The sandbox and CSP restrict storage, popups, form submission, navigation and re
 
 The CLI reads round files under [bounded path rules](docs/authoring.md#input-limits-and-errors). Code excerpts are read once from regular files under the working directory's Git root and included in the rendered frame. A round script cannot request arbitrary host files through this mechanism, but it can read content already included in its own frame.
 
+## macOS notification helper
+
+`Lavagna.app` is part of the trusted installation. The CLI passes it only the notification kind and the page's capability URL, as process arguments; it receives no question content, answers, screenshots or transcript. Notification text is fixed, and the URL appears neither in it nor in diagnostics. The helper accepts only `http://127.0.0.1:PORT/s/…` URLs and passes the URL to its AppleScript as an Apple event parameter, never as script source.
+
+A click searches Chrome's open tabs for that URL. The Chrome automation permission this requires lets the helper read and control every Chrome window, not only lavagna's tab; macOS grants it to the helper, not to the CLI. Denying it leaves notifications working and makes a click open the page in the default browser instead.
+
 ## Retained data
 
 Conversation directories are private to the account (mode 0700), with retained files at mode 0600. Question artifacts, screenshots and exact feedback remain there for phase continuity and selective CLI reading. Feedback artifacts are not HTTP resources. [Architecture](docs/ARCHITECTURE.md#conversation-ownership) describes ownership and publication; [Browser rounds](docs/rounds.md#close-or-restart) describes retention, expiry and close.
