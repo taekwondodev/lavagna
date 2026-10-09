@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/taekwondodev/lavagna/internal/conversation"
+	"github.com/taekwondodev/lavagna/internal/harness"
 	"github.com/taekwondodev/lavagna/internal/witness"
 )
 
@@ -36,28 +38,42 @@ const (
 type relayed struct {
 	Round      roundSpec
 	Submission string
-	Session    witness.Session
-	Owner      relayOwner
+	// Session is the record the witness follows; nil when the harness has
+	// none lavagna can read.
+	Session *witness.Session
+	// Paused holds the page of a call that reached its deadline before any
+	// batch, with Send closed until the next call resumes the round.
+	Paused bool
+	Owner  relayOwner
 }
 
-func handOver(getenv func(string) string, errw io.Writer, sock string, ln net.Listener, spec roundSpec, submission string) bool {
-	path := getenv("PI_SESSION_FILE")
-	if path == "" {
-		return false
-	}
-	session, err := witness.Open(path)
-	if err != nil {
-		return false
-	}
+// handOver starts the relay that holds the page origin during the agent's
+// turn, whatever the harness. It reports whether a witness observes the turn.
+func handOver(errw io.Writer, sock string, ln net.Listener, r relayed) bool {
 	owner, err := findRelayOwner()
 	if err == nil {
-		err = spawnRelay(sock, ln, relayed{Round: spec, Submission: submission, Session: session, Owner: owner})
+		r.Owner = owner
+		err = spawnRelay(sock, ln, r)
 	}
 	if err != nil {
 		fmt.Fprintf(errw, "lavagna: cannot keep the page connected during the agent's turn (%v); live status is unavailable\n", err)
 		return false
 	}
-	return true
+	return r.Session != nil
+}
+
+// observe opens the record the harness appends while the agent works, or
+// returns nil when there is none to read.
+func observe(getenv func(string) string, h harness.Harness, c conversation.Conversation) *witness.Session {
+	path, format := h.Record(getenv, c.Events())
+	if path == "" {
+		return nil
+	}
+	s, err := witness.Open(path, format)
+	if err != nil {
+		return nil
+	}
+	return &s
 }
 
 func spawnRelay(sock string, ln net.Listener, r relayed) (err error) {
@@ -174,8 +190,13 @@ func Relay(errw io.Writer) int {
 	}
 
 	srv := newRound(r.Round)
-	srv.gate.admitted = r.Submission
-	srv.stage = returned
+	if r.Paused {
+		srv.pause()
+	} else {
+		srv.gate.admitted = r.Submission
+		srv.stage = returned
+		srv.unwitnessed = r.Session == nil
+	}
 	page := listen(srv, ln)
 
 	h := &handoff{origin: tcp, ln: ln, taken: make(chan struct{})}
@@ -183,9 +204,11 @@ func Relay(errw io.Writer) int {
 
 	stop := make(chan struct{})
 	end := make(chan witness.End, 1)
-	go func() {
-		end <- r.Session.Follow(r.Submission, stop, func() { srv.advance(received) })
-	}()
+	if r.Session != nil {
+		go func() {
+			end <- r.Session.Follow(r.Submission, stop, func() { srv.advance(received) })
+		}()
+	}
 
 	select {
 	case <-h.taken:

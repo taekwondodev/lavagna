@@ -11,11 +11,22 @@ import (
 
 const (
 	maxHeader = 64 << 10
-	poll      = 100 * time.Millisecond
-	idle      = 30 * time.Minute
+	// maxLine bounds one record line; a longer one ends the observation.
+	maxLine = 16 << 20
+	poll    = 100 * time.Millisecond
+	idle    = 30 * time.Minute
 )
 
 var errHeader = errors.New("unrecognized session header")
+
+// Format names the record a harness appends while the agent works.
+type Format string
+
+const (
+	PiSession        Format = "pi"
+	ClaudeTranscript Format = "claude"
+	HermesEvents     Format = "hermes"
+)
 
 type End int
 
@@ -30,18 +41,28 @@ const (
 
 type Session struct {
 	Path   string
+	Format Format
 	Offset int64
 }
 
-func Open(path string) (Session, error) {
-	f, err := os.Open(path)
+// Open starts observing a record after its last complete line. Only Pi
+// sessions declare a version to check. The Hermes events file is created
+// empty when no hook has written yet.
+func Open(path string, format Format) (Session, error) {
+	flag := os.O_RDONLY
+	if format == HermesEvents {
+		flag |= os.O_CREATE
+	}
+	f, err := os.OpenFile(path, flag, 0o600)
 	if err != nil {
 		return Session{}, err
 	}
 	defer f.Close()
-	first, err := bufio.NewReader(io.LimitReader(f, maxHeader)).ReadBytes('\n')
-	if err != nil || !header(first) {
-		return Session{}, errHeader
+	if format == PiSession {
+		first, err := bufio.NewReader(io.LimitReader(f, maxHeader)).ReadBytes('\n')
+		if err != nil || !header(first) {
+			return Session{}, errHeader
+		}
 	}
 	size, err := f.Seek(0, io.SeekEnd)
 	if err != nil {
@@ -55,14 +76,25 @@ func Open(path string) (Session, error) {
 	if i := bytes.LastIndexByte(tail, '\n'); i >= 0 {
 		offset = size - int64(len(tail)) + int64(i) + 1
 	}
-	return Session{Path: path, Offset: offset}, nil
+	return Session{Path: path, Format: format, Offset: offset}, nil
 }
 
 func (s Session) Follow(submission string, stop <-chan struct{}, read func()) End {
-	return s.follow(newWitness(submission), poll, idle, stop, read)
+	var r reader
+	switch s.Format {
+	case PiSession:
+		r = newPi(submission)
+	case ClaudeTranscript:
+		r = newClaude(submission)
+	case HermesEvents:
+		r = newHermes(submission)
+	default:
+		return Unwitnessed
+	}
+	return s.follow(r, poll, idle, stop, read)
 }
 
-func (s Session) follow(w *witness, poll, idle time.Duration, stop <-chan struct{}, read func()) End {
+func (s Session) follow(w reader, poll, idle time.Duration, stop <-chan struct{}, read func()) End {
 	f, err := os.Open(s.Path)
 	if err != nil {
 		return Unwitnessed
@@ -81,6 +113,9 @@ func (s Session) follow(w *witness, poll, idle time.Duration, stop <-chan struct
 			pos += int64(n)
 			quiet = time.Now()
 			partial = append(partial, buf[:n]...)
+			if len(partial) > maxLine && bytes.IndexByte(partial, '\n') < 0 {
+				return Unwitnessed
+			}
 			for {
 				i := bytes.IndexByte(partial, '\n')
 				if i < 0 {

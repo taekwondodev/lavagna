@@ -30,6 +30,7 @@ const (
 	maxImageBytes   = 10 << 20
 	retryMillis     = 250
 	inactive        = "Questo round non è più attivo."
+	resuming        = "L’agente sta riprendendo l’attesa: riprova tra poco."
 )
 
 const (
@@ -76,7 +77,10 @@ type view struct {
 	ImageLimit int                   `json:"imageLimit"`
 	ImageBytes int                   `json:"imageBytes"`
 	Previous   *conversation.Outcome `json:"previous"`
-	Phase      phaseView             `json:"phase"`
+	// Paused marks a call that reached its deadline before any batch: Send
+	// stays closed until the next call resumes the round.
+	Paused bool      `json:"paused,omitempty"`
+	Phase  phaseView `json:"phase"`
 }
 
 type phaseView struct {
@@ -370,6 +374,21 @@ func (s *server) returned(witnessed bool) {
 	s.broadcast(event{"receipt", s.receipt()})
 }
 
+// pause closes admission when the call's deadline comes before any batch, and
+// tells open pages. It reports false when a batch was already admitted: the
+// call must return that batch instead.
+func (s *server) pause() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gate.admitted != "" {
+		return false
+	}
+	s.gate.paused = true
+	s.view.Paused = true
+	s.broadcast(event{"paused", struct{}{}})
+	return true
+}
+
 func (s *server) advance(st stage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -649,6 +668,9 @@ func (s *server) send(w http.ResponseWriter, r *http.Request) {
 	case answered, stale, foreign:
 		refuse(w, http.StatusConflict, inactive)
 		return
+	case paused:
+		refuse(w, http.StatusServiceUnavailable, resuming)
+		return
 	}
 	b, status, problem := s.validate(in)
 	if problem != "" {
@@ -798,7 +820,12 @@ func (s *server) open(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *server) openLocked(w http.ResponseWriter, r *http.Request) bool {
-	if s.view == nil || !s.gate.open(r.Header.Get("Lavagna-Round"), r.Header.Get("Lavagna-Token")) {
+	round, token := r.Header.Get("Lavagna-Round"), r.Header.Get("Lavagna-Token")
+	if s.view != nil && s.gate.paused && s.gate.current(round, token) {
+		refuse(w, http.StatusServiceUnavailable, resuming)
+		return false
+	}
+	if s.view == nil || !s.gate.open(round, token) {
 		refuse(w, http.StatusConflict, inactive)
 		return false
 	}

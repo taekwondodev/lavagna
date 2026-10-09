@@ -8,7 +8,7 @@ A harness-neutral CLI that brings an agent conversation into the browser. Presen
 make install
 ```
 
-Building requires the Go version in [`go.mod`](go.mod). On macOS it also builds `~/Applications/Lavagna.app` for [notifications](docs/rounds.md#get-notified-on-macos), which requires `swiftc` from Xcode or its Command Line Tools (`xcode-select --install`). The binary embeds its browser UI and [Atkinson Hyperlegible Next fonts](internal/page/assets/fonts), licensed under SIL OFL 1.1. See [Development](docs/DEVELOPMENT.md#setup) for platform assumptions.
+Building requires the Go version in [`go.mod`](go.mod). On macOS it also builds `~/Applications/Lavagna.app` for [notifications](docs/rounds.md#get-notified-on-macos), which requires `swiftc` from Xcode or its Command Line Tools (`xcode-select --install`). When `~/.hermes` exists, it registers the [Hermes hooks](docs/rounds.md#bind-a-conversation) that report delivery status. `make uninstall` removes what `make install` added. The binary embeds its browser UI and [Atkinson Hyperlegible Next fonts](internal/page/assets/fonts), licensed under SIL OFL 1.1. See [Development](docs/DEVELOPMENT.md#setup) for platform assumptions.
 
 ## Start a round
 

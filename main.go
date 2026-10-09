@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/taekwondodev/lavagna/internal/live"
 )
 
-const usage = `usage: lavagna check | round [DIR] | round --help [grammar] | feedback SUBMISSION [--question ID | --overview | --all] | feedback --help | close`
+const usage = `usage: lavagna check | round [--within DURATION] [DIR] | round --help [grammar] | feedback SUBMISSION [--question ID | --overview | --all] | feedback --help | close`
+
+const withinUsage = `--within requires a positive duration such as 10m or 600s`
 
 const feedbackHelp = `lavagna feedback SUBMISSION [--question ID | --overview | --all]
 Read retained feedback before close. The reference is the round result's submission.
@@ -38,6 +41,14 @@ func runCommand(args []string) int {
 		if len(args) == 1 {
 			return live.Relay(os.Stderr)
 		}
+	case "hermes-hook":
+		if len(args) == 1 {
+			return live.HermesHook(os.Stdin)
+		}
+	case "hermes-hooks":
+		if len(args) == 2 && (args[1] == "install" || args[1] == "remove") {
+			return live.HermesHooks(os.Getenv, os.Stdout, args[1] == "install")
+		}
 	case "--help":
 		if len(args) == 1 {
 			fmt.Fprintln(os.Stdout, usage)
@@ -53,14 +64,26 @@ func runCommand(args []string) int {
 			}
 			break
 		}
-		dir := ""
-		for _, arg := range args[1:] {
-			if strings.HasPrefix(arg, "-") || dir != "" {
+		dir, within := "", time.Duration(0)
+		for i := 1; i < len(args); i++ {
+			switch {
+			case args[i] == "--within" && within == 0:
+				if i+1 >= len(args) {
+					return live.Usage(os.Stdout, withinUsage)
+				}
+				i++
+				d, err := time.ParseDuration(args[i])
+				if err != nil || d <= 0 {
+					return live.Usage(os.Stdout, withinUsage)
+				}
+				within = d
+			case strings.HasPrefix(args[i], "-") || dir != "":
 				return live.Usage(os.Stdout, usage)
+			default:
+				dir = args[i]
 			}
-			dir = arg
 		}
-		return live.PhaseRound(os.Getenv, os.Stdin, dir, os.Stdout, os.Stderr)
+		return live.PhaseRound(os.Getenv, os.Stdin, dir, within, os.Stdout, os.Stderr)
 	case "feedback":
 		if len(args) == 2 && args[1] == "--help" {
 			fmt.Print(feedbackHelp)

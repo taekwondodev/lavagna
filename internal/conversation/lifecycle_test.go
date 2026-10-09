@@ -66,3 +66,15 @@ func TestStepBatchReturned(t *testing.T) {
 			State{Origin: &recorded, Calls: 1, Live: "c1"}},
 	})
 }
+
+func TestStepCallPaused(t *testing.T) {
+	paused := &Outcome{Call: "c1", Round: "r1", End: endPaused}
+	check(t, []transition{
+		{"the deadline comes before any batch", State{Origin: &recorded, Calls: 1, Live: "c1", Ledger: Ledger{Round: 1}}, CallPaused{},
+			State{Origin: &recorded, Calls: 1, Previous: paused, Ledger: Ledger{Round: 1}}},
+		{"a batch was accepted first", State{Origin: &recorded, Calls: 1, Live: "c1", Accepted: "s-1", Ledger: Ledger{Round: 1}}, CallPaused{},
+			State{Origin: &recorded, Calls: 1, Live: "c1", Accepted: "s-1", Ledger: Ledger{Round: 1}}},
+		{"the resuming call keeps the round", State{Format: 1, Origin: &recorded, Calls: 1, Previous: paused, Ledger: Ledger{Round: 1}}, CallStarted{Origin: recorded, Ledger: Ledger{Round: 1}},
+			State{Format: 1, Origin: &recorded, Calls: 2, Live: "c2", Previous: paused, Ledger: Ledger{Round: 1}}},
+	})
+}

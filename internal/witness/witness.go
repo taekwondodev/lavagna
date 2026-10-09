@@ -19,14 +19,47 @@ const (
 
 const sessionVersion = 3
 
-type witness struct {
-	marker   []byte
-	received bool
+// reader turns one appended line of a harness record into a verdict about the
+// returned submission.
+type reader interface {
+	entry(line []byte) verdict
 }
 
-func newWitness(submission string) *witness {
-	return &witness{marker: []byte(`"submission":"` + submission + `"`)}
+// turn holds what every reader tracks: the submission to recognize and
+// whether the agent already received it.
+type turn struct {
+	submission []byte
+	received   bool
 }
+
+// receive marks the receipt the first time the submission appears in text the
+// harness delivered to the agent. Matching the id rather than its JSON-quoted
+// form survives harnesses that nest the output in another JSON string.
+func (t *turn) receive(text []byte) bool {
+	if t.received || !bytes.Contains(text, t.submission) {
+		return false
+	}
+	t.received = true
+	return true
+}
+
+// end is the verdict when the agent's turn ends, normally or interrupted.
+func (t *turn) end(interrupted bool) verdict {
+	switch {
+	case !t.received && interrupted:
+		return unreadAborted
+	case !t.received:
+		return unread
+	case interrupted:
+		return aborted
+	}
+	return answered
+}
+
+// pi reads a Pi session.
+type pi struct{ turn }
+
+func newPi(submission string) *pi { return &pi{turn{submission: []byte(submission)}} }
 
 func header(line []byte) bool {
 	var h struct {
@@ -50,7 +83,7 @@ type block struct {
 	Text *string `json:"text"`
 }
 
-func (w *witness) entry(line []byte) verdict {
+func (w *pi) entry(line []byte) verdict {
 	var e entry
 	if json.Unmarshal(line, &e) != nil || e.Type == "" {
 		return unrecognized
@@ -72,8 +105,7 @@ func (w *witness) entry(line []byte) verdict {
 			if b.Type == "" || b.Type == "text" && b.Text == nil {
 				return unrecognized
 			}
-			if !w.received && b.Text != nil && bytes.Contains([]byte(*b.Text), w.marker) {
-				w.received = true
+			if b.Text != nil && w.receive([]byte(*b.Text)) {
 				return received
 			}
 		}
@@ -84,16 +116,7 @@ func (w *witness) entry(line []byte) verdict {
 		switch *m.StopReason {
 		case "toolUse", "deferred":
 		case "stop", "aborted":
-			if !w.received {
-				if *m.StopReason == "aborted" {
-					return unreadAborted
-				}
-				return unread
-			}
-			if *m.StopReason == "aborted" {
-				return aborted
-			}
-			return answered
+			return w.end(*m.StopReason == "aborted")
 		default:
 			return unrecognized
 		}

@@ -4,7 +4,18 @@ Use lavagna from the agent's invoking shell. [README](../README.md#install) cove
 
 ## Bind a conversation
 
-Identity is `PI_SESSION_ID` plus `PI_SESSION_FILE`, otherwise `LAVAGNA_SESSION`. Another harness opts in by exporting `LAVAGNA_SESSION`. The page opens through `$BROWSER` when set, otherwise `open`; the URL is appended to the command. On macOS a [notification](#get-notified-on-macos) also announces each call with content.
+Lavagna recognizes three harnesses without configuration. `LAVAGNA_SESSION` overrides them all; another harness opts in by exporting it from its configuration, one stable value per conversation.
+
+| Harness | Identity | Call time limit | Witness |
+| --- | --- | --- | --- |
+| Pi | `PI_SESSION_ID` plus `PI_SESSION_FILE` | None | The session file |
+| Claude Code | `CLAUDE_CODE_SESSION_ID` | 2 minutes by default, at most 10 (`BASH_DEFAULT_TIMEOUT_MS`, `BASH_MAX_TIMEOUT_MS`) | The transcript under `CLAUDE_CONFIG_DIR`, else `~/.claude` |
+| Hermes | `HERMES_SESSION_ID` | 180 s by default, at most 600 s (`TERMINAL_MAX_FOREGROUND_TIMEOUT`) | Shell hooks that `make install` registers; Hermes asks for consent the first time each runs |
+| Another harness | `LAVAGNA_SESSION` | None | None |
+
+A harness started from another inherits its variables. With several identities present, the executable that owns the call decides: `claude` binds Claude Code, an executable under the Hermes home (`HERMES_HOME`, else `~/.hermes`) binds Hermes, and any other binds Pi, which runs as a generic `node`. A Claude Code installed as a `node` script is therefore taken for Pi when both identities are present; `LAVAGNA_SESSION` settles such cases.
+
+The page opens through `$BROWSER` when set, otherwise `open`; the URL is appended to the command. On macOS a [notification](#get-notified-on-macos) also announces each call with content.
 
 ## Present and close
 
@@ -15,8 +26,9 @@ lavagna round < round.md
 lavagna close
 ```
 
-- `check` returns `{"lavagna":"ready"}` when the conversation identity is bindable, otherwise an invalid result.
-- `round` applies one call to the phase and waits for a feedback batch. Pass no timeout; Esc interrupts. `round DIR` reads `DIR/round.md` and its question-scoped resources.
+- `check` returns `{"lavagna":"ready"}` when the conversation identity is bindable, otherwise an invalid result that names the recognized harnesses and `LAVAGNA_SESSION`.
+- `round` applies one call to the phase and waits for a feedback batch; Esc interrupts. `round DIR` reads `DIR/round.md` and its question-scoped resources.
+- Where the shell tool can wait without a timeout, pass none. Where it limits a call, pass its timeout to the tool and the same duration as `round --within DURATION`, for example `10m`. Without `--within`, the harness's default limit from the table above applies; a longer declared duration is reduced to the harness's maximum. Shortly before the limit, a tenth of it and at most 15 s early, `round` returns `{"lavagna":"waiting","round":"r1"}`. The phase is unchanged and the relay keeps the page with Send closed; a call with no element resumes the same round. A batch the user sent before the pause is returned instead.
 - `round --help` prints the minimal format; `round --help grammar` prints the syntax reference. `feedback --help` describes retained feedback reads.
 - `close` ends the phase and deletes its retained data. Read needed feedback and images first. Source directories are not deleted. See [recovery](#recover-an-interrupted-round) for browser cleanup and restarting.
 
@@ -145,7 +157,7 @@ Selectors are mutually exclusive. An unknown id or a question without feedback i
 
 ## Interpret delivery status
 
-Delivery observations belong to a call, not a round. A reply-only call has its own delivery lifecycle within the same round. Server and CLI events establish acceptance and return; a supported Pi session witness can establish receipt and turn completion. None proves understanding or phase completion. Without a witness the footer adds "stato in tempo reale non disponibile".
+Delivery observations belong to a call, not a round. A reply-only call has its own delivery lifecycle within the same round. Server and CLI events establish acceptance and return; the harness's witness, where the [table above](#bind-a-conversation) lists one, can establish receipt and turn completion. None proves understanding or phase completion. Without a witness the footer adds "stato in tempo reale non disponibile".
 
 The title bar shows a short stage and the footer a sentence, followed by "· N in bozza" when items are staged.
 
@@ -157,6 +169,7 @@ The title bar shows a short stage and the footer a sentence, followed by "· N i
 | Harness receipt observed | L’agente lavora | Letto dall’agente · l’agente lavora |
 | Turn ended or interrupted | Grilling ancora aperto, Turno interrotto | Whether receipt was observed first |
 | Uncertain | Consegna non riuscita | Sent messages returned to the draft |
+| Paused at the call's limit | In attesa dell’agente | L’agente sta riprendendo l’attesa: la bozza è conservata e potrai inviarla tra poco. |
 
 ## Recover an interrupted round
 

@@ -17,6 +17,7 @@ const (
 	answered
 	stale
 	foreign
+	paused
 )
 
 type gate struct {
@@ -24,6 +25,9 @@ type gate struct {
 	round    string
 	token    string
 	admitted string
+	// paused closes admission after the call's deadline; the next call
+	// opens a new gate for the same round.
+	paused bool
 }
 
 func (g gate) admit(s send) (gate, verdict) {
@@ -32,6 +36,8 @@ func (g gate) admit(s send) (gate, verdict) {
 		return g, foreign
 	case !g.current(s.round, s.token):
 		return g, stale
+	case g.paused:
+		return g, paused
 	case g.admitted == "":
 		g.admitted = s.submission
 		return g, accept
@@ -42,7 +48,9 @@ func (g gate) admit(s send) (gate, verdict) {
 	}
 }
 
-func (g gate) open(round, token string) bool { return g.current(round, token) && g.admitted == "" }
+func (g gate) open(round, token string) bool {
+	return g.current(round, token) && g.admitted == "" && !g.paused
+}
 
 func (g gate) current(round, token string) bool { return round == g.round && same(token, g.token) }
 

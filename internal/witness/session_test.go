@@ -67,7 +67,7 @@ func TestSessionFollowsWhatPiAppends(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "session.jsonl")
 			write(t, path, before...)
 			write(t, path, []byte(`{"type":"message","message":{"role":"user","content":"partial`))
-			s, err := Open(path)
+			s, err := Open(path, PiSession)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -75,7 +75,7 @@ func TestSessionFollowsWhatPiAppends(t *testing.T) {
 			read := false
 			done := make(chan End, 1)
 			go func() {
-				done <- s.follow(newWitness("s-aaaaaaaaaaaaaaaaaaaaaaaa"), quick, c.idle, nil, func() { read = true })
+				done <- s.follow(newPi("s-aaaaaaaaaaaaaaaaaaaaaaaa"), quick, c.idle, nil, func() { read = true })
 			}()
 			time.Sleep(4 * quick)
 			c.change(t, path, after)
@@ -95,13 +95,13 @@ func TestSessionStopsWhenTheOriginIsTaken(t *testing.T) {
 	before, _ := witnesstest.Sample(t, "answered")
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	write(t, path, before...)
-	s, err := Open(path)
+	s, err := Open(path, PiSession)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stop := make(chan struct{})
 	close(stop)
-	if got := s.follow(newWitness(witnesstest.Placeholder), time.Millisecond, time.Minute, stop, func() {}); got != Stopped {
+	if got := s.follow(newPi(witnesstest.Placeholder), time.Millisecond, time.Minute, stop, func() {}); got != Stopped {
 		t.Fatalf("end %v, want Stopped", got)
 	}
 }
@@ -109,7 +109,64 @@ func TestSessionStopsWhenTheOriginIsTaken(t *testing.T) {
 func TestOpenRefusesAnUnknownSession(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	write(t, path, []byte(`{"type":"session","version":2,"id":"x"}`+"\n"))
-	if _, err := Open(path); err == nil {
+	if _, err := Open(path, PiSession); err == nil {
 		t.Fatal("a version 2 session opened")
+	}
+}
+
+func TestSessionFollowsEveryFormatFromTheReturn(t *testing.T) {
+	const id = "s-aaaaaaaaaaaaaaaaaaaaaaaa"
+	cases := []struct {
+		format Format
+		before string
+		after  []string
+		want   End
+	}{
+		{ClaudeTranscript, `{"type":"queue-operation","operation":"enqueue"}`, []string{
+			`{"type":"user","message":{"content":[{"type":"tool_result","content":"{\"submission\":\"` + id + `\"}"}]}}`,
+			`{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}`,
+		}, Aborted},
+		{HermesEvents, ``, []string{
+			`{"event":"tool","submissions":["` + id + `"]}`,
+			`{"event":"end","outcome":"completed"}`,
+		}, Answered},
+	}
+	for _, c := range cases {
+		t.Run(string(c.format), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "record.jsonl")
+			if c.before != "" {
+				write(t, path, []byte(c.before+"\n"))
+			}
+			s, err := Open(path, c.format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, l := range c.after {
+				write(t, path, []byte(l+"\n"))
+			}
+			read := false
+			if got := s.follow(map[Format]reader{ClaudeTranscript: newClaude(id), HermesEvents: newHermes(id)}[c.format], time.Millisecond, time.Minute, nil, func() { read = true }); got != c.want || !read {
+				t.Fatalf("end %v, read %v; want %v, true", got, read, c.want)
+			}
+		})
+	}
+}
+
+func TestSessionEndsOnAnUnterminatedOversizedLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "record.jsonl")
+	write(t, path, []byte(`{"type":"queue-operation"}`+"\n"))
+	s, err := Open(path, ClaudeTranscript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, path, []byte(`{"type":"user","message":{"content":"`), bytes.Repeat([]byte("x"), maxLine))
+	if got := s.follow(newClaude("s-aaaaaaaaaaaaaaaaaaaaaaaa"), time.Millisecond, time.Minute, nil, func() {}); got != Unwitnessed {
+		t.Fatalf("end %v, want Unwitnessed", got)
+	}
+}
+
+func TestOpenRequiresAClaudeTranscript(t *testing.T) {
+	if _, err := Open(filepath.Join(t.TempDir(), "missing.jsonl"), ClaudeTranscript); err == nil {
+		t.Fatal("a missing transcript opened")
 	}
 }

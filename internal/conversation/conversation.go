@@ -22,6 +22,7 @@ const (
 	imagesDir    = "images"
 	artifactsDir = "artifacts"
 	relayName    = "relay.sock"
+	eventsName   = "events.jsonl"
 	idleAfter    = 24 * time.Hour
 	sweepGrace   = 2 * time.Second
 	sweepRetry   = 20 * time.Millisecond
@@ -30,8 +31,6 @@ const (
 var keyPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 var errSwept = errors.New("conversation directory swept while locking")
-
-var errNoIdentity = errors.New("no conversation identity: set PI_SESSION_ID and PI_SESSION_FILE, or LAVAGNA_SESSION")
 
 var ErrBusy = errors.New("another lavagna call is live in this conversation")
 
@@ -47,15 +46,9 @@ type Conversation struct {
 	dir  string
 }
 
-func FromEnv(getenv func(string) string) (Conversation, error) {
-	var identity string
-	if id, file := getenv("PI_SESSION_ID"), getenv("PI_SESSION_FILE"); id != "" && file != "" {
-		identity = "pi\x00" + id + "\x00" + file
-	} else if s := getenv("LAVAGNA_SESSION"); s != "" {
-		identity = "lavagna\x00" + s
-	} else {
-		return Conversation{}, errNoIdentity
-	}
+// For binds the conversation of a harness identity. Pages never receive the
+// identity, only the key derived from it.
+func For(identity string) (Conversation, error) {
 	sum := sha256.Sum256([]byte(identity))
 	key := hex.EncodeToString(sum[:8])
 	cache, err := os.UserCacheDir()
@@ -69,6 +62,10 @@ func FromEnv(getenv func(string) string) (Conversation, error) {
 func (c Conversation) Images() string { return filepath.Join(c.dir, imagesDir) }
 
 func (c Conversation) Relay() string { return filepath.Join(c.dir, relayName) }
+
+// Events is the file harness hooks append observations to, for harnesses
+// whose own record a witness cannot read.
+func (c Conversation) Events() string { return filepath.Join(c.dir, eventsName) }
 
 type Origin struct {
 	Port int    `json:"port"`

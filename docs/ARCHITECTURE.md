@@ -6,18 +6,19 @@ Lavagna coordinates a browser page with one agent conversation. [CONTEXT.md](../
 
 | Owner | Responsibility | Reference |
 | --- | --- | --- |
-| [`main.go`](../main.go) | Dispatch public commands and the internal relay entry point | [Commands](rounds.md#present-and-close) |
+| [`main.go`](../main.go) | Dispatch public commands and the internal relay, Hermes hook and hook-registration entry points | [Commands](rounds.md#present-and-close) |
+| [`internal/harness`](../internal/harness) | Recognize the invoking harness: its conversation identity, the owner that settles nested harnesses, the record its witness follows, and its call deadline | [Bind a conversation](rounds.md#bind-a-conversation) |
 | [`internal/round`](../internal/round) | Load bounded question inputs, parse authored content and render per-question documents | [Authoring](authoring.md) |
 | [`internal/diagram`](../internal/diagram) | Parse diagrams, measure labels with the embedded font and draw static SVG variants for `internal/round` | [Diagrams](authoring.md#draw-diagrams) |
-| [`internal/conversation`](../internal/conversation) | Bind identity, serialize access, persist the ledger and artifacts, and remove expired state | [Conversation ownership](#conversation-ownership) |
+| [`internal/conversation`](../internal/conversation) | Derive the key from a harness identity, serialize access, persist the ledger and artifacts, and remove expired state | [Conversation ownership](#conversation-ownership) |
 | [`internal/live`](../internal/live) | Coordinate calls, serve the page, admit feedback and hand the listener between a call and its relay | [Call and feedback flow](#call-and-feedback-flow) |
 | [`internal/page`](../internal/page) | Embed the trusted shell and frame helper; manage presentation, drafts and offline snapshots in the browser | [Browser continuity](#browser-continuity) |
 | [`macos/notifier`](../macos/notifier) | macOS helper app: post fixed-text notifications and bring the conversation's Chrome tab forward on click | [Notifications](rounds.md#get-notified-on-macos) |
-| [`internal/witness`](../internal/witness) | Observe supported Pi session entries for receipt and turn completion without writing the transcript | [Delivery status](rounds.md#interpret-delivery-status) |
+| [`internal/witness`](../internal/witness) | Observe Pi sessions, Claude Code transcripts and Hermes hook events for receipt and turn completion without writing any harness record | [Delivery status](rounds.md#interpret-delivery-status) |
 
 ## Conversation ownership
 
-The conversation key is a digest of the harness identity. Pages never receive raw session values. Each conversation has a private cache directory containing:
+The conversation key is a digest of the harness identity that [`internal/harness`](../internal/harness) resolves; Pi and `LAVAGNA_SESSION` identities keep the encoding they had before other harnesses were recognized. Pages never receive raw session values. Each conversation has a private cache directory containing:
 
 | Data | Role |
 | --- | --- |
@@ -25,6 +26,7 @@ The conversation key is a digest of the harness identity. Pages never receive ra
 | `artifacts/question/<id>-<version>.json` | Immutable rendered question versions with their complete resources; planned questions have no artifact |
 | `artifacts/feedback/` | Retained batches for selective CLI reading |
 | `images/` | Uploaded screenshots |
+| `events.jsonl` | Hermes hook observations: submission ids and turn outcomes, created only when a witness follows the conversation |
 | `lock` | Lease shared by calls, close and expiry cleanup |
 
 Exact state fields and format checks belong to [`conversation.go`](../internal/conversation/conversation.go); artifact publication belongs to [`artifacts.go`](../internal/conversation/artifacts.go). [Security](../SECURITY.md#retained-data) covers permissions and exposure, and [recovery](rounds.md#recover-an-interrupted-round) covers format changes and deletion visible to users.
@@ -46,7 +48,7 @@ After serving the page and before waiting for feedback, [`notify.go`](../interna
 
 ## Listener handoff and witness
 
-After returning feedback, the call starts an internal relay to hold the page origin during the agent's turn. The relay has no inherited stdio and remains in the call's process group. It watches the parent of the group leader rather than the temporary call shell.
+After returning feedback, or pausing at the deadline its harness imposes, the call starts an internal relay to hold the page origin during the agent's turn, whatever the harness. A paused call's relay serves the page with admission closed until the next call takes the origin. The relay has no inherited stdio and remains in the call's process group. It watches the parent of the group leader rather than the temporary call shell.
 
 The listener passes to the relay as an inherited descriptor and to a later call over `relay.sock` using `SCM_RIGHTS`. Preserve these constraints when changing [`relay.go`](../internal/live/relay.go) or [`owner.go`](../internal/live/owner.go):
 
@@ -54,7 +56,7 @@ The listener passes to the relay as an inherited descriptor and to a later call 
 - Close the sender's copies only after the receiver acknowledges possession; closing during transfer can lose the socket on macOS.
 - Each holder stops accepting and finishes requests it already accepted, one request per connection. `http.Server.Shutdown` can drop requests read after shutdown begins.
 
-The witness reads the Pi session from the return offset and matches the submission ID in a tool result. It reports only supported observations; unknown evidence ends observation without inventing a receipt. [`internal/witness`](../internal/witness) owns accepted session shapes. The [delivery guide](rounds.md#interpret-delivery-status) owns the meaning of those observations, including the limit of a deferred receipt.
+The witness reads the harness's record from the return offset and matches the submission ID in a tool result: Pi's session file, Claude Code's transcript, or for Hermes the `events.jsonl` that its shell hooks append through `lavagna hermes-hook`. Hermes's own store does not distinguish an interrupted turn, so its hooks report instead. The witness reports only supported observations; unknown evidence ends observation without inventing a receipt. [`internal/witness`](../internal/witness) owns accepted record shapes. The [delivery guide](rounds.md#interpret-delivery-status) owns the meaning of those observations, including the limit of a deferred receipt.
 
 ## Browser continuity
 

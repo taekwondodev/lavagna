@@ -20,7 +20,7 @@ func TestFeedbackSelectorsReadQuestionGroupedRecords(t *testing.T) {
 		}
 		return ""
 	}
-	c, err := conversation.FromEnv(getenv)
+	_, c, err := bound(getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestFeedbackReadsRecordsWrittenByOtherVersions(t *testing.T) {
 		}
 		return ""
 	}
-	c, err := conversation.FromEnv(getenv)
+	_, c, err := bound(getenv)
 	if err != nil {
 		t.Fatal(err)
 	}

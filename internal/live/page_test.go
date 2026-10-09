@@ -26,6 +26,8 @@ import (
 type phaseRun struct {
 	t      *testing.T
 	getenv func(string) string
+	// within is the deadline the next call declares, as --within does.
+	within time.Duration
 	url    string
 	out    *bytes.Buffer
 	done   chan int
@@ -42,10 +44,16 @@ func (w *firstLine) Write(p []byte) (int, error) {
 }
 
 func newPhaseRun(t *testing.T) *phaseRun {
-	home := t.TempDir()
+	// A short home keeps relay.sock within the Unix socket path limit, so
+	// the relay holds the page between calls as it does for users.
+	home, err := os.MkdirTemp("/tmp", "lavagna-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
 	t.Setenv("HOME", home)
 	session := "page-" + conversation.Secret(8)
-	return &phaseRun{t: t, getenv: func(key string) string {
+	r := &phaseRun{t: t, getenv: func(key string) string {
 		switch key {
 		case "HOME":
 			return home
@@ -56,6 +64,16 @@ func newPhaseRun(t *testing.T) *phaseRun {
 		}
 		return ""
 	}}
+	// The relay outlives the test binary, since it watches the shell that
+	// started the tests; end it with the test.
+	t.Cleanup(func() {
+		if _, c, err := bound(r.getenv); err == nil {
+			if ln := take(c.Relay()); ln != nil {
+				ln.Close()
+			}
+		}
+	})
+	return r
 }
 
 // call starts one call with source and the question resources in files, keyed
@@ -79,7 +97,7 @@ func (r *phaseRun) call(source string, files map[string]string) {
 	out := &bytes.Buffer{}
 	status := &firstLine{ch: make(chan string, 1)}
 	done := make(chan int, 1)
-	go func() { done <- PhaseRound(r.getenv, strings.NewReader(source), dir, out, status) }()
+	go func() { done <- PhaseRound(r.getenv, strings.NewReader(source), dir, r.within, out, status) }()
 	select {
 	case line := <-status.ch:
 		for _, field := range strings.Fields(line) {
@@ -94,6 +112,21 @@ func (r *phaseRun) call(source string, files map[string]string) {
 		r.t.Fatalf("call ended with %d: %s", code, out.String())
 	}
 	r.out, r.done = out, done
+}
+
+// silence takes the page origin from the relay and closes it, so nothing
+// listens until the next call, as when the relay could not start.
+func (r *phaseRun) silence() {
+	r.t.Helper()
+	_, c, err := bound(r.getenv)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	ln := take(c.Relay())
+	if ln == nil {
+		r.t.Fatal("no relay holds the page")
+	}
+	ln.Close()
 }
 
 // outcome waits for the running call to return and decodes its result.
@@ -112,6 +145,13 @@ func (r *phaseRun) outcome() map[string]any {
 		r.t.Fatalf("result %q: %v", r.out.String(), err)
 	}
 	return result
+}
+
+// prose is n bytes of words. Chrome takes about a second to wrap one
+// 25,000-character word in the embedded font, enough to time out a CDP call
+// under load; words measure the same bytes in milliseconds.
+func prose(n int) string {
+	return strings.Repeat("parola ", n/7+1)[:n]
 }
 
 func evalString(p *cdptest.Page, expr string) string {
@@ -283,7 +323,7 @@ func TestPageAnswersAPhaseOneQuestionAtATime(t *testing.T) {
 		t.Fatalf("batch %s", jsonOf(got))
 	}
 	p.WaitFor(`document.querySelector('#turn').textContent === 'Consegnato al terminale'`)
-	// No Pi session witnesses this conversation, so live status is unavailable.
+	// No witness observes this conversation, so live status is unavailable.
 	wantText(t, p, "#summary", "Consegnato al terminale · stato in tempo reale non disponibile")
 	if evalString(p, `String(document.querySelector('#send').disabled)`) != "true" {
 		t.Error("Send is enabled before the next call")
@@ -534,9 +574,9 @@ func TestSendFreezesTheDraftOnlyWhileAwaitingItsReply(t *testing.T) {
 	p.WaitFor(`document.querySelector('#content')`)
 
 	p.Click("#composer")
-	p.Insert(strings.Repeat("x", 25000))
+	p.Insert(prose(25000))
 	wantText(t, p, "#counter", "24,4 KB di 32,0 KB disponibili per il testo")
-	p.Insert(strings.Repeat("x", 8000))
+	p.Insert(prose(8000))
 	if evalString(p, `document.querySelector('#counter').className + ' ' + document.querySelector('#send').disabled`) != "counter over true" {
 		t.Error("text over 32 KiB must block Send")
 	}
@@ -574,6 +614,35 @@ func TestSendFreezesTheDraftOnlyWhileAwaitingItsReply(t *testing.T) {
 		t.Error("the next call did not enable Send for the staged choice")
 	}
 	wantText(t, p, "#summary", "1 in bozza · Q1 → A")
+}
+
+func TestPausedCallClosesSendAndKeepsTheDraftUntilTheNextCall(t *testing.T) {
+	run := newPhaseRun(t)
+	run.within = 5 * time.Second
+	run.call(crashRound, crashFiles())
+	p := cdptest.Start(t).Open(run.url, 1280, 860)
+	p.WaitFor(`document.querySelector('#content')`)
+	p.Click(`.option[data-option="journal"]`)
+	if got := run.outcome(); got["lavagna"] != "waiting" || got["round"] != "r1" {
+		t.Fatalf("outcome %v, want waiting in r1", got)
+	}
+	// Send stays closed while the draft stays editable. The handoff to the
+	// relay drops the stream briefly, as after a return.
+	paused := func() {
+		t.Helper()
+		p.WaitFor(`document.querySelector('#turn').textContent === 'In attesa dell’agente' && document.querySelector('#summary').textContent === 'L’agente sta riprendendo l’attesa: la bozza è conservata e potrai inviarla tra poco. · 1 in bozza' && document.querySelector('#send').disabled && document.querySelector('.option[data-option="atomic"]') && !document.querySelector('.option[data-option="atomic"]').disabled`)
+	}
+	paused()
+	p.Reload()
+	paused()
+
+	run.within = 0
+	run.call("", nil)
+	p.WaitFor(`document.querySelector('#turn').textContent === 'Tocca a te'`)
+	if evalString(p, `String(document.querySelector('#send').disabled)`) != "false" {
+		t.Error("the resuming call did not enable Send for the staged choice")
+	}
+	wantText(t, p, "#summary", "1 in bozza · Q1 → B")
 }
 
 func TestDeliveryStagesShowInTitleBarAndFooter(t *testing.T) {

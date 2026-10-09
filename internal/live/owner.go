@@ -17,16 +17,38 @@ type relayOwner struct {
 }
 
 func findRelayOwner() (relayOwner, error) {
-	out, err := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(syscall.Getpgrp())).Output()
+	pid, err := ownerPID()
 	if err != nil {
 		return relayOwner{}, err
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil || pid <= 1 {
-		return relayOwner{}, fmt.Errorf("cannot identify the call's owner")
-	}
 	started, err := processStart(pid)
 	return relayOwner{PID: pid, Started: started}, err
+}
+
+func ownerPID() (int, error) {
+	out, err := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(syscall.Getpgrp())).Output()
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid <= 1 {
+		return 0, fmt.Errorf("cannot identify the call's owner")
+	}
+	return pid, nil
+}
+
+// ownerExecutable names the executable of the call's owner, or is empty when
+// the owner cannot be identified.
+func ownerExecutable() string {
+	pid, err := ownerPID()
+	if err != nil {
+		return ""
+	}
+	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func processStart(pid int) (string, error) {

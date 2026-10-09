@@ -17,12 +17,7 @@ func inCache(t *testing.T) {
 
 func conversationFor(t *testing.T, session string) Conversation {
 	t.Helper()
-	c, err := FromEnv(func(k string) string {
-		if k == "LAVAGNA_SESSION" {
-			return session
-		}
-		return ""
-	})
+	c, err := For("lavagna\x00" + session)
 	if err != nil {
 		t.Fatal(err)
 	}
