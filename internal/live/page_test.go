@@ -147,6 +147,13 @@ func (r *phaseRun) outcome() map[string]any {
 	return result
 }
 
+// prose is n bytes of words. Chrome takes about a second to wrap one
+// 25,000-character word in the embedded font, enough to time out a CDP call
+// under load; words measure the same bytes in milliseconds.
+func prose(n int) string {
+	return strings.Repeat("parola ", n/7+1)[:n]
+}
+
 func evalString(p *cdptest.Page, expr string) string {
 	var s string
 	p.MustEval(expr, &s)
@@ -567,9 +574,9 @@ func TestSendFreezesTheDraftOnlyWhileAwaitingItsReply(t *testing.T) {
 	p.WaitFor(`document.querySelector('#content')`)
 
 	p.Click("#composer")
-	p.Insert(strings.Repeat("x", 25000))
+	p.Insert(prose(25000))
 	wantText(t, p, "#counter", "24,4 KB di 32,0 KB disponibili per il testo")
-	p.Insert(strings.Repeat("x", 8000))
+	p.Insert(prose(8000))
 	if evalString(p, `document.querySelector('#counter').className + ' ' + document.querySelector('#send').disabled`) != "counter over true" {
 		t.Error("text over 32 KiB must block Send")
 	}

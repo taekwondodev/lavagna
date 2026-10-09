@@ -447,7 +447,7 @@ func TestPhaseDraftSizeNearTheBatchBounds(t *testing.T) {
 	}
 	stageText := func() {
 		p.Click("#composer")
-		p.Insert(strings.Repeat("x", 32000))
+		p.Insert(prose(32000))
 		p.Click("#stage-message")
 	}
 	stageText()
