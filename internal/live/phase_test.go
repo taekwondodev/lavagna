@@ -33,10 +33,10 @@ func TestPhaseRoundRejectsStoredOverflowWithoutPublishingPartialArtifacts(t *tes
 	}
 	source := "# Large {id=\"large\"}\n## Capire\n" + strings.Repeat("x", 3<<20) + "\n## Decidere\n- [a] A\n- [b] B\n"
 	var out bytes.Buffer
-	if code := PhaseRound(getenv, strings.NewReader(source), "", &out, io.Discard); code != exitInvalid || !strings.Contains(out.String(), "6 MiB storage bound") {
+	if code := PhaseRound(getenv, strings.NewReader(source), "", 0, &out, io.Discard); code != exitInvalid || !strings.Contains(out.String(), "6 MiB storage bound") {
 		t.Fatalf("overflow result code %d: %s", code, out.String())
 	}
-	conv, err := conversation.FromEnv(getenv)
+	_, conv, err := bound(getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestPhaseRoundRejectsStoredOverflowWithoutPublishingPartialArtifacts(t *tes
 		t.Fatal(err)
 	}
 	out.Reset()
-	if code := PhaseRound(getenv, strings.NewReader(sourceWithResource), dir, &out, io.Discard); code != exitInvalid || !strings.Contains(out.String(), "6 MiB storage bound") {
+	if code := PhaseRound(getenv, strings.NewReader(sourceWithResource), dir, 0, &out, io.Discard); code != exitInvalid || !strings.Contains(out.String(), "6 MiB storage bound") {
 		t.Fatalf("resource serialization bound: %d %s", code, out.String())
 	}
 	lease, err = conversation.Acquire(conv)
@@ -108,7 +108,7 @@ A partial write can corrupt the state.
 	out := &bytes.Buffer{}
 	status := make(lineChannel, 1)
 	done := make(chan int, 1)
-	go func() { done <- PhaseRound(getenv, strings.NewReader(source), "", out, status) }()
+	go func() { done <- PhaseRound(getenv, strings.NewReader(source), "", 0, out, status) }()
 	first := <-status
 	fields := strings.Fields(first)
 	if len(fields) < 3 {
@@ -178,7 +178,7 @@ A partial write can corrupt the state.
 	if !ok || questions["crash"] == nil {
 		t.Fatalf("question-grouped result: %s", out.String())
 	}
-	conv, err := conversation.FromEnv(getenv)
+	_, conv, err := bound(getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestPhaseRoundRefusesCallsBeyondThePhaseBound(t *testing.T) {
 		}
 		return ""
 	}
-	conv, err := conversation.FromEnv(getenv)
+	_, conv, err := bound(getenv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestPhaseRoundRefusesCallsBeyondThePhaseBound(t *testing.T) {
 	lease.Release()
 	source := "# Next {id=\"next\"}\n## Capire\n" + strings.Repeat("x", 2048) + "\n## Decidere\n- [a] A\n- [b] B\n"
 	var out bytes.Buffer
-	if code := PhaseRound(getenv, strings.NewReader(source), "", &out, io.Discard); code != exitInvalid || !strings.Contains(out.String(), "16 MiB phase bound") {
+	if code := PhaseRound(getenv, strings.NewReader(source), "", 0, &out, io.Discard); code != exitInvalid || !strings.Contains(out.String(), "16 MiB phase bound") {
 		t.Fatalf("phase bound: %d %s", code, out.String())
 	}
 	lease, err = conversation.Acquire(conv)
@@ -271,7 +271,7 @@ func TestPhaseRoundRefusesCallsBeyondThePhaseBound(t *testing.T) {
 
 func TestRetainReplacesAResentSubmissionRecord(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	conv, err := conversation.FromEnv(func(key string) string {
+	_, conv, err := bound(func(key string) string {
 		if key == "LAVAGNA_SESSION" {
 			return "retain-test"
 		}

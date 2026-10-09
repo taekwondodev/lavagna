@@ -27,7 +27,7 @@ func Feedback(getenv func(string) string, out io.Writer, request FeedbackRequest
 	if !submissionPattern.MatchString(request.Submission) || selectors > 1 {
 		return invalid(out, "invalid feedback reference")
 	}
-	c, err := conversation.FromEnv(getenv)
+	_, c, err := bound(getenv)
 	if err != nil {
 		return invalid(out, err.Error())
 	}

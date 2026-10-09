@@ -14,6 +14,7 @@ const TEXT = {
   closed: 'Frontiera chiusa, torna al terminale',
   reconnecting: 'Riconnessione a lavagna…',
   uncertain: 'Consegna non riuscita: l’agente è stato interrotto. I messaggi inviati sono tornati in bozza: puoi reinviarli.',
+  paused: 'L’agente sta riprendendo l’attesa: la bozza è conservata e potrai inviarla tra poco.',
 };
 // Each stage: the short form in the title bar and the full sentence in the
 // footer. A null sentence shows the draft summary instead.
@@ -24,6 +25,7 @@ const STAGES = {
   uncertain: ['Consegna non riuscita', TEXT.uncertain],
   sending: ['Invio in corso…', 'Invio in corso…'],
   inactive: ['Round non più attivo', ''],
+  paused: ['In attesa dell’agente', TEXT.paused],
   accepted: ['Inviato', TEXT.accepted],
   returned: ['Consegnato al terminale', TEXT.returned],
   waiting: ['Consegnato al terminale', TEXT.returned],
@@ -374,6 +376,7 @@ function phase() {
     if (d.stage === 'accepted' && !live) return 'reconnecting';
     return d.stage;
   }
+  if (view.paused) return live ? 'paused' : 'reconnecting';
   if (d && d.uncertain) return 'uncertain';
   if (inactive) return 'inactive';
   return live ? 'user' : 'reconnecting';
@@ -1108,7 +1111,7 @@ function summary(items) {
 }
 
 function sendBlocker(items, over) {
-  if (!live || frozen() || inactive || sentThisCall()) return true;
+  if (!live || frozen() || inactive || view.paused || sentThisCall()) return true;
   return uploading > 0 || over || stagedCount(items) === 0;
 }
 
@@ -1423,6 +1426,11 @@ function connect() {
     live = true;
     apply(next);
     noteAccepted();
+  });
+  source.addEventListener('paused', () => {
+    if (!view) return;
+    view.paused = true;
+    updateFooter();
   });
   source.addEventListener('receipt', event => {
     const receipt = JSON.parse(event.data);

@@ -1,5 +1,7 @@
-lavagna round [DIR] < round.md
-Wait for the next feedback batch; no timeout. Esc interrupts.
+lavagna round [--within DURATION] [DIR] < round.md
+Wait for the next feedback batch with no shell timeout; Esc interrupts. If the tool
+forces one, use its longest, also as --within (e.g. 10m); on {"lavagna":"waiting"}
+resume at once with an empty call.
 DIR supplies round.md and files under DIR/<question-id>/. Each question owns its
 resources. A bare question title plans it without presenting an artifact.
 Stdout: one JSON result grouped by question. URL/status: stderr. Large outcomes

@@ -21,6 +21,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/taekwondodev/lavagna/internal/witnesstest"
 )
 
 var binary string
@@ -227,6 +229,9 @@ func TestCheck(t *testing.T) {
 	}{
 		{"pi session", []string{"PI_SESSION_ID=abc", "PI_SESSION_FILE=/tmp/s.jsonl"}, true},
 		{"lavagna session", []string{"LAVAGNA_SESSION=other-harness"}, true},
+		{"claude code session", []string{"CLAUDE_CODE_SESSION_ID=4dd7f598-f701-4696-b8c1-342b79380a92"}, true},
+		{"hermes session", []string{"HERMES_SESSION_ID=20261009_204921_feed48"}, true},
+		{"lavagna session among harness identities", []string{"LAVAGNA_SESSION=chosen", "PI_SESSION_ID=abc", "PI_SESSION_FILE=/tmp/s.jsonl", "CLAUDE_CODE_SESSION_ID=c", "HERMES_SESSION_ID=h"}, true},
 		{"pi id without file", []string{"PI_SESSION_ID=abc"}, false},
 		{"no identity", nil, false},
 	}
@@ -236,7 +241,7 @@ func TestCheck(t *testing.T) {
 			if c.ok && (code != 0 || len(lines) != 1 || lines[0] != `{"lavagna":"ready"}`) {
 				t.Fatalf("exit %d, %q", code, lines)
 			}
-			if !c.ok && (code == 0 || !strings.Contains(strings.Join(lines, "\n"), "LAVAGNA_SESSION")) {
+			if !c.ok && (code == 0 || !strings.Contains(strings.Join(lines, "\n"), "recognizes Pi, Claude Code and Hermes; another harness opts in by exporting LAVAGNA_SESSION")) {
 				t.Fatalf("want a non-zero exit with the reason, got %d: %q", code, lines)
 			}
 		})
@@ -254,7 +259,7 @@ func TestRoundRefusesInvalidInputBeforeServing(t *testing.T) {
 		t.Fatalf("exit %d, output %q", code, lines)
 	}
 	lines, code = run(t, env(t, "LAVAGNA_SESSION=a"), "", "round", "uno", "due")
-	if code != 2 || last(lines) != `{"lavagna":"invalid","errors":["usage: lavagna check | round [DIR] | round --help [grammar] | feedback SUBMISSION [--question ID | --overview | --all] | feedback --help | close"]}` {
+	if code != 2 || last(lines) != `{"lavagna":"invalid","errors":["usage: lavagna check | round [--within DURATION] [DIR] | round --help [grammar] | feedback SUBMISSION [--question ID | --overview | --all] | feedback --help | close"]}` {
 		t.Fatalf("exit %d, output %q", code, lines)
 	}
 }
@@ -552,5 +557,263 @@ func TestAnyStartSweepsIdleConversations(t *testing.T) {
 	}
 	if _, err := os.Stat(recent); err != nil {
 		t.Errorf("a conversation untouched for 23 hours was removed: %v", err)
+	}
+}
+
+// event reads the page's event stream until the named event and returns its
+// data.
+func event(t *testing.T, url, name string) string {
+	t.Helper()
+	return eventUntil(t, url, name, func(string) bool { return true })
+}
+
+// eventUntil reads the page's event stream until a named event whose data
+// satisfies done.
+func eventUntil(t *testing.T, url, name string, done func(data string) bool) string {
+	t.Helper()
+	client := http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url + "events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(nil, 1<<20)
+	current := ""
+	for sc.Scan() {
+		if n, ok := strings.CutPrefix(sc.Text(), "event: "); ok {
+			current = n
+		}
+		if data, ok := strings.CutPrefix(sc.Text(), "data: "); ok && current == name && done(data) {
+			return data
+		}
+	}
+	t.Fatalf("no %s event", name)
+	return ""
+}
+
+func TestRelayHoldsThePageWithoutAWitness(t *testing.T) {
+	c := startRound(t, env(t, "LAVAGNA_SESSION=unwitnessed"), decision)
+	round, token := c.view()
+	if code := c.post(c.url+"send", c.origin, "application/json", batch(round, token, "s-0123456789abcdef")); code != http.StatusAccepted {
+		t.Fatalf("send status %d", code)
+	}
+	if _, code := c.finish(); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if got := event(t, c.url, "receipt"); got != `{"submission":"s-0123456789abcdef","stage":"returned","unwitnessed":true}` {
+		t.Fatalf("receipt %s", got)
+	}
+}
+
+func TestRelayWitnessesClaudeCode(t *testing.T) {
+	const session = "4dd7f598-f701-4696-b8c1-342b79380a92"
+	environ := env(t, "CLAUDE_CODE_SESSION_ID="+session)
+	transcript := filepath.Join(strings.TrimPrefix(environ[0], "HOME="), ".claude", "projects", "-private-tmp-lavagna-sample", session+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before, after := witnesstest.Sample(t, "claude-answered")
+	if err := os.WriteFile(transcript, bytes.Join(before, nil), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := startRound(t, environ, decision)
+	round, token := c.view()
+	if code := c.post(c.url+"send", c.origin, "application/json", batch(round, token, witnesstest.Placeholder)); code != http.StatusAccepted {
+		t.Fatalf("send status %d", code)
+	}
+	if _, code := c.finish(); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	f, err := os.OpenFile(transcript, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write(bytes.Join(after, nil))
+	f.Close()
+	got := eventUntil(t, c.url, "receipt", func(data string) bool { return strings.Contains(data, `"stage":"ended"`) })
+	if got != `{"submission":"`+witnesstest.Placeholder+`","stage":"ended"}` {
+		t.Fatalf("receipt %s", got)
+	}
+}
+
+func hermesPayload(event, session, extra string) string {
+	return fmt.Sprintf(`{"hook_event_name":%q,"tool_name":null,"tool_input":null,"session_id":%q,"cwd":"/w","profile":"default","extra":%s}`, event, session, extra)
+}
+
+func TestHermesHooksReportTheTurn(t *testing.T) {
+	const session = "20261009_204921_feed48"
+	environ := env(t, "HERMES_SESSION_ID="+session)
+	hook := func(payload string) {
+		t.Helper()
+		lines, code := run(t, environ, payload, "hermes-hook")
+		if code != 0 || len(lines) != 1 || lines[0] != "" {
+			t.Fatalf("hook exit %d, output %q", code, lines)
+		}
+	}
+	cache := filepath.Join(strings.TrimPrefix(environ[0], "HOME="), "Library", "Caches", "lavagna")
+	hook(hermesPayload("on_session_end", "unobserved", `{"completed":true,"failed":false,"interrupted":false}`))
+	hook(`{"hook_event_name":`)
+	if _, err := os.Stat(cache); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a hook for an unobserved session left state: %v", err)
+	}
+
+	c := startRound(t, environ, decision)
+	round, token := c.view()
+	if code := c.post(c.url+"send", c.origin, "application/json", batch(round, token, witnesstest.Placeholder)); code != http.StatusAccepted {
+		t.Fatalf("send status %d", code)
+	}
+	if _, code := c.finish(); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	result, _ := json.Marshal(fmt.Sprintf(`{"output": %q, "exit_code": 0}`, `{"lavagna":"feedback","submission":"`+witnesstest.Placeholder+`"}`))
+	hook(hermesPayload("post_tool_call", session, `{"result":`+string(result)+`}`))
+	eventUntil(t, c.url, "receipt", func(data string) bool { return strings.Contains(data, `"stage":"received"`) })
+	hook(hermesPayload("on_session_end", session, `{"completed":false,"failed":false,"interrupted":true}`))
+	got := eventUntil(t, c.url, "receipt", func(data string) bool { return strings.Contains(data, `"stage":"aborted"`) })
+	if got != `{"submission":"`+witnesstest.Placeholder+`","stage":"aborted"}` {
+		t.Fatalf("receipt %s", got)
+	}
+}
+
+func TestWithinPausesTheCallAndAnEmptyCallResumes(t *testing.T) {
+	environ := env(t, "LAVAGNA_SESSION=within")
+	first := spawn(t, environ, decision, "--within", "2s")
+	if first.url == "" {
+		t.Fatalf("status line %q", first.first)
+	}
+	round, token := first.view()
+	started := time.Now()
+	lines, code := first.finish()
+	if code != 0 || last(lines) != `{"lavagna":"waiting","round":"r1"}` {
+		t.Fatalf("exit %d, output %q", code, lines)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("waiting after %v, past the declared 2s", elapsed)
+	}
+	if got := event(t, first.url, "round"); !strings.Contains(got, `"paused":true`) {
+		t.Fatalf("the relayed page is not paused: %.200s", got)
+	}
+	if code := first.post(first.url+"send", first.origin, "application/json", batch(round, token, "s-0123456789abcdef")); code != http.StatusServiceUnavailable {
+		t.Fatalf("send while paused: status %d", code)
+	}
+
+	resumed := startRound(t, environ, "")
+	if resumed.url != first.url {
+		t.Fatalf("resumed on %s, want %s", resumed.url, first.url)
+	}
+	round2, token2 := resumed.view()
+	if round2 != round || token2 == token {
+		t.Fatalf("resumed round %s token %s; want round %s and a new token", round2, token2, round)
+	}
+	if got := event(t, resumed.url, "round"); strings.Contains(got, `"paused":true`) {
+		t.Fatal("the resumed call is still paused")
+	}
+	if code := resumed.post(resumed.url+"send", resumed.origin, "application/json", batch(round2, token2, "s-0123456789abcdef")); code != http.StatusAccepted {
+		t.Fatalf("send after resuming: status %d", code)
+	}
+	lines, code = resumed.finish()
+	if code != 0 || !strings.HasPrefix(last(lines), `{"lavagna":"feedback","round":"r1","submission":"s-0123456789abcdef","questions":{"storage":{"choice":"db"`) {
+		t.Fatalf("exit %d, output %q", code, lines)
+	}
+}
+
+func TestWithinRefusesAMalformedDuration(t *testing.T) {
+	for _, args := range [][]string{{"round", "--within"}, {"round", "--within", "soon"}, {"round", "--within", "-1m"}, {"round", "--within", "1m", "--within", "2m"}} {
+		lines, code := run(t, env(t, "LAVAGNA_SESSION=a"), decision, args...)
+		if code != 2 || !strings.Contains(last(lines), "--within") {
+			t.Errorf("%q: exit %d, output %q", args, code, lines)
+		}
+	}
+}
+
+func TestHarnessDefaultDeadlineAppliesWithoutWithin(t *testing.T) {
+	c := startRound(t, env(t, "CLAUDE_CODE_SESSION_ID=default-deadline", "BASH_DEFAULT_TIMEOUT_MS=2000"), decision)
+	started := time.Now()
+	lines, code := c.finish()
+	if code != 0 || last(lines) != `{"lavagna":"waiting","round":"r1"}` || time.Since(started) > 2*time.Second {
+		t.Fatalf("exit %d after %v, output %q", code, time.Since(started), lines)
+	}
+}
+
+// fakeHermes installs a hermes stand-in that keeps each configuration key in
+// a file and logs its calls, and returns the store.
+func fakeHermes(t *testing.T, environ []string) (store string, withFake []string) {
+	t.Helper()
+	bin, store := t.TempDir(), t.TempDir()
+	script := `#!/bin/sh
+echo "$*" >> "$FAKE_HERMES/calls"
+case "$1 $2" in
+"config get") if [ -f "$FAKE_HERMES/$4" ]; then cat "$FAKE_HERMES/$4"; else echo "Config key not set: $4"; exit 1; fi ;;
+"config set") printf '%s' "$4" > "$FAKE_HERMES/$3" ;;
+"config unset") rm -f "$FAKE_HERMES/$3" ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "hermes"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range environ {
+		if p, ok := strings.CutPrefix(v, "PATH="); ok {
+			v = "PATH=" + bin + ":" + p
+		}
+		withFake = append(withFake, v)
+	}
+	return store, append(withFake, "FAKE_HERMES="+store)
+}
+
+func TestHermesHooksInstallIdempotentlyAndRemoveOnlyTheirOwn(t *testing.T) {
+	environ := env(t)
+	store, environ := fakeHermes(t, environ)
+	read := func(key string) string {
+		b, err := os.ReadFile(filepath.Join(store, key))
+		if errors.Is(err, fs.ErrNotExist) {
+			return "unset"
+		}
+		return string(b)
+	}
+	calls := func() string { b, _ := os.ReadFile(filepath.Join(store, "calls")); return string(b) }
+
+	if lines, code := run(t, environ, "", "hermes-hooks", "install"); code != 0 || calls() != "" {
+		t.Fatalf("without a Hermes home: exit %d, output %q, calls %q", code, lines, calls())
+	}
+	if err := os.Mkdir(filepath.Join(strings.TrimPrefix(environ[0], "HOME="), ".hermes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	other := `[{"matcher":"terminal","command":"~/.hermes/agent-hooks/x.sh","timeout":5}]`
+	os.WriteFile(filepath.Join(store, "hooks.post_tool_call"), []byte(other), 0o600)
+
+	command := binary + ` hermes-hook`
+	if lines, code := run(t, environ, "", "hermes-hooks", "install"); code != 0 || !strings.Contains(last(lines), "registered Hermes hooks for post_tool_call and on_session_end") {
+		t.Fatalf("install: exit %d, output %q", code, lines)
+	}
+	if got, want := read("hooks.post_tool_call"), `[{"matcher":"terminal","command":"~/.hermes/agent-hooks/x.sh","timeout":5},{"matcher":"terminal","command":"`+command+`","timeout":10}]`; got != want {
+		t.Fatalf("post_tool_call %s, want %s", got, want)
+	}
+	if got, want := read("hooks.on_session_end"), `[{"command":"`+command+`","timeout":10}]`; got != want {
+		t.Fatalf("on_session_end %s, want %s", got, want)
+	}
+
+	before := calls()
+	if lines, code := run(t, environ, "", "hermes-hooks", "install"); code != 0 || strings.Contains(strings.TrimPrefix(calls(), before), "config set") {
+		t.Fatalf("a second install changed the configuration: exit %d, output %q, calls %q", code, lines, calls())
+	}
+
+	if lines, code := run(t, environ, "", "hermes-hooks", "remove"); code != 0 || !strings.Contains(last(lines), "removed Hermes hooks") {
+		t.Fatalf("remove: exit %d, output %q", code, lines)
+	}
+	if got := read("hooks.post_tool_call"); got != other {
+		t.Fatalf("post_tool_call after remove %s, want %s", got, other)
+	}
+	if got := read("hooks.on_session_end"); got != "unset" {
+		t.Fatalf("on_session_end after remove %s", got)
+	}
+}
+
+func TestWithinIsClampedToTheHarnessMaximum(t *testing.T) {
+	c := spawn(t, env(t, "HERMES_SESSION_ID=clamped", "TERMINAL_MAX_FOREGROUND_TIMEOUT=2"), decision, "--within", "1h")
+	started := time.Now()
+	lines, code := c.finish()
+	if code != 0 || last(lines) != `{"lavagna":"waiting","round":"r1"}` || time.Since(started) > 2*time.Second {
+		t.Fatalf("exit %d after %v, output %q", code, time.Since(started), lines)
 	}
 }

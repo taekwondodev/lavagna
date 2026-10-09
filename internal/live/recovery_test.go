@@ -82,6 +82,7 @@ func TestReloadRebuildsThePageAndRereadsAnyQuestionWhileNothingListens(t *testin
 	p.Click("#send")
 	run.outcome()
 	p.WaitFor(`document.querySelector('#turn').textContent !== 'Tocca a te'`)
+	run.silence()
 	p.Type("#composer", "Scritto dopo l'invio")
 	p.Click(`.card[data-target=":overview"]`)
 	p.Type("#composer", "Commento generale in bozza")
@@ -147,6 +148,8 @@ func TestNextCallReconcilesTheDraftPerQuestion(t *testing.T) {
 	p.Click(`.option[data-option="week"]`)
 	p.Click("#send")
 	run.outcome()
+	// Wait for the relay to serve the page, which redraws it.
+	p.WaitFor(`live && document.querySelector('#turn').textContent === 'Consegnato al terminale'`)
 
 	p.Click(`.option[data-option="month"]`)
 	p.Type("#composer", "Ancora sulla durata")

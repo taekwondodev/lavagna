@@ -27,6 +27,12 @@ The CLI reads round files under [bounded path rules](docs/authoring.md#input-lim
 
 A click searches Chrome's open tabs for that URL. The Chrome automation permission this requires lets the helper read and control every Chrome window, not only lavagna's tab; macOS grants it to the helper, not to the CLI. Denying it leaves notifications working and makes a click open the page in the default browser instead.
 
+## Harness records
+
+To bind a conversation nested inside another harness, the CLI runs `ps` to name the executable that owns the call. The witness reads the bound Claude Code session's transcript read-only, from the call's return onward, and keeps nothing from it but the delivery stage it shows on the page; the transcript holds the whole conversation, and the same account can already read it.
+
+`make install` registers `lavagna hermes-hook` as a Hermes shell hook through the `hermes` CLI, and Hermes asks for consent the first time each hook runs; `make uninstall` removes only lavagna's entries. Hermes passes the hook every terminal tool result and every turn's end. The hook reads at most 4 MiB, writes nothing for a session lavagna does not follow, and otherwise appends only submission ids and turn outcomes to that conversation's `events.jsonl`, never tool output. It always exits successfully, so it cannot block Hermes.
+
 ## Retained data
 
 Conversation directories are private to the account (mode 0700), with retained files at mode 0600. Question artifacts, screenshots and exact feedback remain there for phase continuity and selective CLI reading. Feedback artifacts are not HTTP resources. [Architecture](docs/ARCHITECTURE.md#conversation-ownership) describes ownership and publication; [Browser rounds](docs/rounds.md#close-or-restart) describes retention, expiry and close.

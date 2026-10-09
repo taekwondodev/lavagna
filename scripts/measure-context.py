@@ -379,7 +379,9 @@ def measure(binary, home, baseline):
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix="lavagna-context-") as directory:
+    # A short home keeps relay.sock within the Unix socket path limit; a longer
+    # one adds a relay warning to every call that users never see.
+    with tempfile.TemporaryDirectory(prefix="lavagna-context-", dir="/tmp") as directory:
         temp = Path(directory)
         old = temp / "baseline"
         old.mkdir()

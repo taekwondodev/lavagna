@@ -8,6 +8,7 @@ const (
 	endReturned    end = "returned"
 	endUncertain   end = "uncertain"
 	endInterrupted end = "interrupted"
+	endPaused      end = "paused"
 )
 
 // Outcome is how a call ended. Calls, not rounds, key it: a reply-only call
@@ -31,9 +32,14 @@ type BatchAccepted struct{ Batch Batch }
 
 type BatchReturned struct{}
 
+// CallPaused ends a call whose deadline came before any batch. The round
+// stays open and the next call resumes waiting for it.
+type CallPaused struct{}
+
 func (CallStarted) event()   {}
 func (BatchAccepted) event() {}
 func (BatchReturned) event() {}
+func (CallPaused) event()    {}
 
 func (s State) Step(e Event) State {
 	switch e := e.(type) {
@@ -60,6 +66,11 @@ func (s State) Step(e Event) State {
 		if s.Live != "" && s.Accepted != "" {
 			s.Previous = &Outcome{Call: s.Live, Round: s.RoundID(), Submission: s.Accepted, End: endReturned}
 			s.Live, s.Accepted = "", ""
+		}
+	case CallPaused:
+		if s.Live != "" && s.Accepted == "" {
+			s.Previous = &Outcome{Call: s.Live, Round: s.RoundID(), End: endPaused}
+			s.Live = ""
 		}
 	}
 	return s

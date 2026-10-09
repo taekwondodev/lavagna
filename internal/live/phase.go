@@ -27,9 +27,11 @@ type questionArtifact struct {
 // PhaseRound applies one call to the question ledger and waits for the next
 // feedback batch. The call is validated whole before anything is written: it
 // writes the new question versions, commits state.json, then deletes the
-// versions the ledger no longer references.
-func PhaseRound(getenv func(string) string, src io.Reader, dir string, out, errw io.Writer) int {
-	c, err := conversation.FromEnv(getenv)
+// versions the ledger no longer references. within declares how long the
+// harness lets the call run; zero leaves the harness default.
+func PhaseRound(getenv func(string) string, src io.Reader, dir string, within time.Duration, out, errw io.Writer) int {
+	started := time.Now()
+	caller, c, err := bound(getenv)
 	if err != nil {
 		return invalid(out, err.Error())
 	}
@@ -151,7 +153,19 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, out, errw
 	fmt.Fprintf(errw, "lavagna · round %s · %s · Esc per interrompere\n", st.RoundID(), origin.URL())
 	go reveal(getenv, errw, origin.URL(), fresh, srv.seen)
 	go announce(getenv, errw, kind, origin.URL())
-	got := <-srv.accepted
+	got, ok := await(srv, caller.Deadline(getenv, within), started)
+	if !ok {
+		st = st.Step(conversation.CallPaused{})
+		record(errw, lease, st)
+		if result(out, exitOK, struct {
+			Lavagna string `json:"lavagna"`
+			Round   string `json:"round"`
+		}{"waiting", st.RoundID()}) != exitOK {
+			return exitError
+		}
+		handOver(errw, c.Relay(), ln, relayed{Round: spec, Paused: true})
+		return exitOK
+	}
 	st = st.Step(conversation.BatchAccepted{Batch: got.ledgerBatch()})
 	record(errw, lease, st)
 	line := got.phaseLine()
@@ -178,8 +192,34 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, out, errw
 	// The relay serves the ledger with this batch, so a page reloaded during
 	// the agent's turn shows the sent messages in their threads.
 	spec.Ledger = st.Ledger
-	srv.returned(handOver(getenv, errw, c.Relay(), ln, spec, got.submission))
+	srv.returned(handOver(errw, c.Relay(), ln, relayed{Round: spec, Submission: got.submission, Session: observe(getenv, caller, c)}))
 	return exitOK
+}
+
+// await waits for the call's batch. With a deadline it pauses the call
+// shortly before the harness would kill it, and ok is false; a batch admitted
+// in the meantime is returned instead.
+func await(srv *server, deadline time.Duration, started time.Time) (got batch, ok bool) {
+	if deadline <= 0 {
+		return <-srv.accepted, true
+	}
+	timer := time.NewTimer(time.Until(started.Add(early(deadline))))
+	defer timer.Stop()
+	select {
+	case got = <-srv.accepted:
+		return got, true
+	case <-timer.C:
+		if srv.pause() {
+			return batch{}, false
+		}
+		return <-srv.accepted, true
+	}
+}
+
+// early leaves the call a margin to return its outcome and hand the page over
+// before the harness's deadline.
+func early(deadline time.Duration) time.Duration {
+	return deadline - min(15*time.Second, deadline/10)
 }
 
 // retain stores the feedback record. A batch resent under the same submission,

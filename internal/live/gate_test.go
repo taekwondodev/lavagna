@@ -6,6 +6,8 @@ func TestGateAdmit(t *testing.T) {
 	open := gate{cap: "cap-a", round: "r2", token: "tok-2"}
 	taken := open
 	taken.admitted = "s-1"
+	held := open
+	held.paused = true
 
 	cases := []struct {
 		name     string
@@ -20,6 +22,8 @@ func TestGateAdmit(t *testing.T) {
 		{"stale round", open, send{"cap-a", "r1", "tok-2", "s-1"}, stale, ""},
 		{"stale token", open, send{"cap-a", "r2", "tok-1", "s-1"}, stale, ""},
 		{"foreign conversation", open, send{"cap-b", "r2", "tok-2", "s-1"}, foreign, ""},
+		{"paused after the deadline", held, send{"cap-a", "r2", "tok-2", "s-1"}, paused, ""},
+		{"a stale tab while paused", held, send{"cap-a", "r1", "tok-2", "s-1"}, stale, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

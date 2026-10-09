@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/taekwondodev/lavagna/internal/conversation"
+	"github.com/taekwondodev/lavagna/internal/harness"
 	"github.com/taekwondodev/lavagna/internal/round"
 )
 
@@ -101,8 +102,18 @@ func busy(w io.Writer, c conversation.Conversation) int {
 
 func Usage(out io.Writer, usage string) int { return invalid(out, usage) }
 
+// bound resolves the invoking harness and the conversation it identifies.
+func bound(getenv func(string) string) (harness.Harness, conversation.Conversation, error) {
+	h, err := harness.Resolve(getenv, ownerExecutable)
+	if err != nil {
+		return h, conversation.Conversation{}, err
+	}
+	c, err := conversation.For(h.Identity())
+	return h, c, err
+}
+
 func Check(getenv func(string) string, out io.Writer) int {
-	c, err := conversation.FromEnv(getenv)
+	_, c, err := bound(getenv)
 	if err != nil {
 		return invalid(out, err.Error())
 	}
@@ -146,7 +157,7 @@ func record(errw io.Writer, lease *conversation.Lease, st conversation.State) {
 }
 
 func Close(getenv func(string) string, out io.Writer) int {
-	c, err := conversation.FromEnv(getenv)
+	_, c, err := bound(getenv)
 	if err != nil {
 		return invalid(out, err.Error())
 	}
