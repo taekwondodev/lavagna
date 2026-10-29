@@ -17,6 +17,7 @@ import (
 
 	"github.com/taekwondodev/lavagna/internal/conversation"
 	"github.com/taekwondodev/lavagna/internal/harness"
+	"github.com/taekwondodev/lavagna/internal/rex"
 	"github.com/taekwondodev/lavagna/internal/round"
 )
 
@@ -231,7 +232,15 @@ func bind(c conversation.Conversation, recorded *conversation.Origin) (net.Liste
 	return ln, origin, true, nil
 }
 
-func reveal(getenv func(string) string, errw io.Writer, url string, fresh bool, seen <-chan struct{}) {
+func reveal(getenv func(string) string, errw io.Writer, url string, fresh bool, seen <-chan struct{}, target *rex.Target) {
+	if target != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		if err := target.Open(ctx, url, false); err != nil {
+			fmt.Fprintf(errw, "lavagna: cannot open the Rex panel (%v); fix Rex or terminal-browser, or set BROWSER\n", err)
+		}
+		return
+	}
 	if !fresh {
 		select {
 		case <-seen:

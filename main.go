@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/taekwondodev/lavagna/internal/live"
+	"github.com/taekwondodev/lavagna/internal/rex"
 )
 
 const usage = `usage: lavagna check | round [--within DURATION] [DIR] | round --help [grammar] | feedback SUBMISSION [--question ID | --overview | --all] | feedback --help | close`
@@ -36,6 +38,20 @@ func runCommand(args []string) int {
 	case "close":
 		if len(args) == 1 {
 			return live.Close(os.Getenv, os.Stdout)
+		}
+	case "rex-click":
+		if len(args) == 3 {
+			target, err := rex.Decode(args[2])
+			if err == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+				defer cancel()
+				err = target.Open(ctx, args[1], true)
+			}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "lavagna: cannot show the Rex panel (%v)\n", err)
+				return 1
+			}
+			return 0
 		}
 	case "relay":
 		if len(args) == 1 {

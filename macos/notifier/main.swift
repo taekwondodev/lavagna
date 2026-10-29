@@ -1,7 +1,7 @@
 // lavagna-notifier posts lavagna's fixed-text notifications and, when one is
 // clicked, brings the conversation's page forward.
 //
-//	lavagna-notifier first|update URL   post one notification
+//	lavagna-notifier first|update URL [--rex TARGET]   post one notification
 //	lavagna-notifier authorize          ask for notification permission
 //	lavagna-notifier                    launched by macOS for a click
 //
@@ -85,8 +85,37 @@ func focusChrome(_ url: URL) -> Bool {
     return done.booleanValue
 }
 
+// Rex routing stays in Go. The executable is fixed at install time, never
+// from notification data; TARGET remains an opaque argv value.
+func focusRex(_ url: URL, _ target: String) -> Bool {
+    guard !target.isEmpty, target.utf8.count <= 16 * 1024,
+          let resource = Bundle.main.url(forResource: "lavagna-path", withExtension: nil),
+          let raw = try? String(contentsOf: resource, encoding: .utf8) else { return false }
+    let binary = raw.trimmingCharacters(in: .newlines)
+    guard binary.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: binary) else { return false }
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: binary)
+    task.arguments = ["rex-click", url.absoluteString, target]
+    task.standardInput = FileHandle.nullDevice
+    task.standardOutput = FileHandle.nullDevice
+    task.standardError = FileHandle.nullDevice
+    do { try task.run() } catch { return false }
+    let timeout = DispatchWorkItem { if task.isRunning { task.terminate() } }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: timeout)
+    task.waitUntilExit()
+    timeout.cancel()
+    return task.terminationReason == .exit && task.terminationStatus == 0
+}
+
+func activateRex() -> Bool {
+    guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.superlogical.rex").first
+    else { return false }
+    return app.activate(options: [.activateAllWindows])
+}
+
 final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     let center = UNUserNotificationCenter.current()
+    var handlingClick = false
 
     func applicationWillFinishLaunching(_ note: Notification) {
         center.delegate = self
@@ -97,11 +126,15 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
         switch args.count {
         case 0:
             // A click launches the helper; its response arrives through the delegate.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { exit(0) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+                if !self.handlingClick { exit(0) }
+            }
         case 1 where args[0] == "authorize":
             authorize { _ in exit(Exit.submitted.rawValue) }
         case 2:
             post(args[0], args[1])
+        case 4 where args[2] == "--rex" && !args[3].isEmpty && args[3].utf8.count <= 16 * 1024:
+            post(args[0], args[1], rex: args[3])
         default:
             exit(Exit.usage.rawValue)
         }
@@ -114,7 +147,7 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
         }
     }
 
-    func post(_ kind: String, _ raw: String) {
+    func post(_ kind: String, _ raw: String, rex: String? = nil) {
         guard let text = texts[kind], let url = page(raw) else { exit(Exit.usage.rawValue) }
         authorize { granted in
             guard granted else { exit(Exit.denied.rawValue) }
@@ -123,6 +156,7 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
             content.body = text
             content.sound = .default
             content.userInfo = ["page": url.absoluteString]
+            if let rex { content.userInfo["rex"] = rex }
             let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
             self.center.add(request) { error in
                 exit(error == nil ? Exit.submitted.rawValue : Exit.failed.rawValue)
@@ -132,10 +166,28 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler done: @escaping () -> Void) {
+        handlingClick = true
         if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
-           let url = page(response.notification.request.content.userInfo["page"] as? String ?? ""),
-           !focusChrome(url) {
-            NSWorkspace.shared.open(url)
+           let url = page(response.notification.request.content.userInfo["page"] as? String ?? "") {
+            if let target = response.notification.request.content.userInfo["rex"] as? String {
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let focused = focusRex(url, target)
+                    DispatchQueue.main.async {
+                        if !focused || !activateRex() {
+                            NSLog("lavagna-notifier: cannot show the Rex panel")
+                            let alert = NSAlert()
+                            alert.messageText = "Impossibile aprire Lavagna in Rex"
+                            alert.informativeText = "Verifica che Rex e la sessione siano aperti e che terminal-browser sia installato. Abilita Remote Control in Rex Settings → Rex Server. Se la sessione è cambiata, riprendi il round per aggiornare la destinazione della notifica."
+                            alert.addButton(withTitle: "OK")
+                            alert.runModal()
+                        }
+                        done()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(0) }
+                    }
+                }
+                return
+            }
+            if !focusChrome(url) { NSWorkspace.shared.open(url) }
         }
         done()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(0) }

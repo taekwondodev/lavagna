@@ -27,7 +27,7 @@ lavagna close
 
 | Need | Start here |
 | --- | --- |
-| Run a phase, read feedback or recover a draft | [Browser rounds](docs/rounds.md) |
+| Run a phase, use Rex, read feedback or recover a draft | [Browser rounds](docs/rounds.md) |
 | Write questions, excerpts, diagrams or prototypes | [Authoring questions](docs/authoring.md) |
 | Understand domain terms | [Domain context](CONTEXT.md) |
 | Understand components and architectural decisions | [Architecture](docs/ARCHITECTURE.md) |
