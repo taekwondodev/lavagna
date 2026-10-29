@@ -21,15 +21,13 @@ lavagna round < round.md
 lavagna close
 ```
 
-Inside [Rex](docs/rounds.md#use-rex), lavagna can keep its graphical page beside the agent using terminal-browser, including return from native notifications.
-
 `round` waits for feedback. Read the result and any retained feedback or images before `close` deletes the phase's data. Follow [Browser rounds](docs/rounds.md) for conversation setup, continued calls and recovery, and [Authoring questions](docs/authoring.md) to write `round.md`. Read [Security](SECURITY.md) before presenting sensitive material or scripted prototypes.
 
 ## Documentation
 
 | Need | Start here |
 | --- | --- |
-| Run a phase, read feedback or recover a draft | [Browser rounds](docs/rounds.md) |
+| Run a phase, use Rex, read feedback or recover a draft | [Browser rounds](docs/rounds.md) |
 | Write questions, excerpts, diagrams or prototypes | [Authoring questions](docs/authoring.md) |
 | Understand domain terms | [Domain context](CONTEXT.md) |
 | Understand components and architectural decisions | [Architecture](docs/ARCHITECTURE.md) |
