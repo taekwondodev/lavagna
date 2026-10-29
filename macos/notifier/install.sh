@@ -1,9 +1,15 @@
 #!/bin/sh
 # Builds Lavagna.app from this directory and installs it to $1, replacing the
-# previous copy, then asks macOS for notification permission.
+# previous copy, then asks macOS for notification permission. $2 is the
+# installed lavagna binary used to route Rex notification clicks.
 set -eu
 
 app=$1
+lavagna=$2
+case "$lavagna" in
+	/*) ;;
+	*) echo "lavagna-notifier: expected an absolute lavagna binary path" >&2; exit 2 ;;
+esac
 src=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -18,6 +24,7 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$work/AppIcon.iconset" -o "$bundle/Contents/Resources/AppIcon.icns"
 cp "$src/Info.plist" "$bundle/Contents/Info.plist"
+printf '%s\n' "$lavagna" > "$bundle/Contents/Resources/lavagna-path"
 codesign --force --sign - "$bundle"
 
 mkdir -p "$(dirname "$app")"

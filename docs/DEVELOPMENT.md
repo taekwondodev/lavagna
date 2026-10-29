@@ -11,7 +11,7 @@ go test ./...
 go build -o /tmp/lavagna .
 ```
 
-The implementation uses Unix file locks and sockets. The default browser opener is macOS `open`; set `$BROWSER` for another opener. Standard-library-only does not imply Windows support.
+The implementation uses Unix file locks and sockets. An explicit `$BROWSER` overrides opening. Otherwise a complete local Rex context uses terminal-browser, and other calls use macOS `open`; see [Use Rex](rounds.md#use-rex). Standard-library-only does not imply Windows support.
 
 Read [delivery policy](agents/delivery.md) before preparing a branch or publishing.
 
@@ -27,10 +27,11 @@ Run `go test ./...` and build to a temporary path so verification does not repla
 | Admission, feedback and frame isolation | `internal/live/*_test.go` |
 | Browser presentation and recovery | `internal/live/page_test.go`, `layout_test.go`, `recovery_test.go`, `isolation_test.go` |
 | CLI calls and listener handoff | Root `*_test.go` |
+| Rex panel reconciliation, routing and browser environment | `internal/rex/*_test.go`, `rex_cli_test.go`; live Rex and terminal-browser check |
 | Harness recognition and call deadlines | `internal/harness/*_test.go`; root `*_test.go` for `check`, `--within`, the Hermes hook and its registration |
 | Harness observations | `internal/witness/*_test.go` and fixtures in `internal/witnesstest/testdata` |
 
-Browser tests use [`internal/cdptest`](../internal/cdptest) to drive headless Chrome and skip if Chrome or Chromium is unavailable. Check for skips before claiming browser coverage. Narrow and phone tests emulate viewports, not physical devices. CLI integration tests set `BROWSER=true` to avoid opening user tabs, and a temporary `HOME` so they never reach the installed notification helper; notification tests install a recording stand-in there. After changing the helper, check it by hand on macOS: notification text and icon, click return to the Chrome tab, denied permission and Focus. Witness fixtures run without a model session; [`cut.mjs`](../internal/witnesstest/testdata/cut.mjs), [`cut-claude.mjs`](../internal/witnesstest/testdata/cut-claude.mjs) and [`record.mjs`](../internal/witnesstest/testdata/record.mjs) distinguish captured and constructed inputs. Hermes hook payloads in tests follow the documented shell-hook wire format. Tests that let a call start its relay keep `HOME` under `/tmp`, because `relay.sock` must fit the 104-byte Unix socket path limit.
+Browser tests use [`internal/cdptest`](../internal/cdptest) to drive headless Chrome and skip if Chrome or Chromium is unavailable. Check for skips before claiming browser coverage. Narrow and phone tests emulate viewports, not physical devices. CLI integration tests set `BROWSER=true` to avoid opening user tabs, and a temporary `HOME` so they never reach the installed notification helper; notification tests install a recording stand-in there. After changing the helper, compile it and check it by hand on macOS: notification text and icon, click return to the Rex panel (including recreation after closing it), outside-Rex return to the Chrome tab, denied permission and Focus. The helper bundle records the installed Go binary path for Rex clicks; update both with `make install` after reviewing the change. A temporary build can verify Rex opening, reuse and focus without replacing the installed binary. Stand-in tests do not prove native notification delivery, real terminal key handling or screenshot paste. Witness fixtures run without a model session; [`cut.mjs`](../internal/witnesstest/testdata/cut.mjs), [`cut-claude.mjs`](../internal/witnesstest/testdata/cut-claude.mjs) and [`record.mjs`](../internal/witnesstest/testdata/record.mjs) distinguish captured and constructed inputs. Hermes hook payloads in tests follow the documented shell-hook wire format. Tests that let a call start its relay keep `HOME` under `/tmp`, because `relay.sock` must fit the 104-byte Unix socket path limit.
 
 For changes to agent-facing command input or output, run `uv run scripts/measure-context.py`. The script owns the pinned baseline, fixtures, tokenizer and regression thresholds. It counts arguments, authored stdin and both output streams, not reasoning, harness wrappers or image tokens. Tokenization is a development-only dependency.
 

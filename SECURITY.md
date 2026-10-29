@@ -5,7 +5,7 @@ Lavagna is a local CLI for browser rounds in an agent conversation. Its trust mo
 ## Trusted base
 
 - The account running lavagna, including the machine's trusted administrator accounts, is the security boundary. Processes inside it can already read lavagna's state, the agent transcript and the browser profile.
-- The installed lavagna binary, its embedded shell and frame helper, the browser, and the agent that prepares rounds are trusted parts of the workflow.
+- The installed lavagna binary, its embedded shell and frame helper, the browser, and the agent that prepares rounds are trusted parts of the workflow. When using Rex, this includes Rex and terminal-browser's Chromium runtime.
 - The CLI runs with the invoking account's permissions. The browser frame's isolation does not sandbox the CLI or the agent's other tools.
 - Round-supplied JavaScript runs without a separate opt-in or confirmation. It is isolated from the feedback shell, but it must not be treated as network-isolated code.
 
@@ -23,9 +23,11 @@ The CLI reads round files under [bounded path rules](docs/authoring.md#input-lim
 
 ## macOS notification helper
 
-`Lavagna.app` is part of the trusted installation. The CLI passes it only the notification kind and the page's capability URL, as process arguments; it receives no question content, answers, screenshots or transcript. Notification text is fixed, and the URL appears neither in it nor in diagnostics. The helper accepts only `http://127.0.0.1:PORT/s/…` URLs and passes the URL to its AppleScript as an Apple event parameter, never as script source.
+`Lavagna.app` is part of the trusted installation. The CLI passes it the notification kind and the page's capability URL, plus an opaque local Rex destination when applicable; it receives no question content, answers, screenshots or transcript. Notification text is fixed, and the URL appears neither in it nor in failure diagnostics. The helper accepts only `http://127.0.0.1:PORT/s/…` URLs.
 
-A click searches Chrome's open tabs for that URL. The Chrome automation permission this requires lets the helper read and control every Chrome window, not only lavagna's tab; macOS grants it to the helper, not to the CLI. Denying it leaves notifications working and makes a click open the page in the default browser instead.
+A Rex notification also retains the local server endpoint, session and invoking terminal identities, tool locations and home directory. On click the helper invokes the installed lavagna binary from a path fixed at install time in its app bundle, not chosen by notification data. Ad-hoc signing is not protection against changes by the same account. Rex and terminal-browser also receive the page capability URL in their launch arguments; their own process or session metadata may retain it. These components remain inside the trusted-account boundary. Go validates the bounded destination and local page URL and uses separate process arguments, never shell source, to open or focus the Rex panel. The operation has a bounded wait and does not fall back to Chrome on a Rex failure. Clicks require Rex's Remote Control setting, which permits control API actions on the Rex app; Lavagna uses it only to select the captured session and window. Lavagna does not enable that setting. The real home directory and macOS keychain remain in use; per-conversation browser profiles and runtimes prevent shared browser state but are not an OS sandbox. Terminal-browser rendering does not strengthen the frame's network restrictions or remove the accepted WebRTC risk below.
+
+Outside Rex, a click searches Chrome's open tabs for that URL, passing it to AppleScript as an Apple event parameter, never as script source. The Chrome automation permission this requires lets the helper read and control every Chrome window, not only lavagna's tab; macOS grants it to the helper, not to the CLI. Denying it leaves notifications working and makes a click open the page in the default browser instead.
 
 ## Harness records
 

@@ -15,7 +15,17 @@ Lavagna recognizes three harnesses without configuration. `LAVAGNA_SESSION` over
 
 A harness started from another inherits its variables. With several identities present, the executable that owns the call decides: `claude` binds Claude Code, an executable under the Hermes home (`HERMES_HOME`, else `~/.hermes`) binds Hermes, and any other binds Pi, which runs as a generic `node`. A Claude Code installed as a `node` script is therefore taken for Pi when both identities are present; `LAVAGNA_SESSION` settles such cases.
 
-The page opens through `$BROWSER` when set, otherwise `open`; the URL is appended to the command. On macOS a [notification](#get-notified-on-macos) also announces each call with content.
+An explicit `$BROWSER` command takes priority; lavagna appends the page URL. Otherwise a complete local Rex context opens the page [inside Rex](#use-rex), and other calls use macOS `open`. On macOS a [notification](#get-notified-on-macos) also announces each call with content.
+
+## Use Rex
+
+Install [Rex](https://www.superlogical.com/rex/docs/) with Kitty graphics support and [terminal-browser](https://terminal-browser.com/), then invoke lavagna from the agent's Rex terminal. Rex supplies `REX_SERVER`, `REX_SESSION` and `REX_BLOCK`; no global default-browser change is needed. Set `BROWSER` explicitly to opt out. For notification clicks to select the right app window, enable **Remote Control** in **Rex Settings → Rex Server**; opening a background panel does not need that permission.
+
+Lavagna opens a dedicated terminal-browser panel to the right without taking focus. Later calls find and reuse that conversation's panel, including when another browser already has the page open. Closing the panel lets the next call recreate it beside the invoking terminal. Different conversations get different panels. The UI remains the same web page, not a text-only alternative; a narrow panel uses the existing responsive layout.
+
+Each conversation uses its own browser profile, configuration, data, cache and short private runtime directory, with animation presentation and a 30 fps cap. Separate runtimes prevent Chromium's per-host zoom from crossing between conversation panels. Lavagna disables terminal-browser telemetry and leaves `HOME` unchanged so macOS can find the login keychain. It also preserves terminal-browser's existing setup state and skill preference. Browser profile files are not removed while Chromium is running; [close](#close-or-restart) still clears the connected page's draft and cache.
+
+Only local Unix-socket Rex servers are supported. Missing tools, an unavailable server or an expired destination produce diagnostics without failing the round or silently opening Chrome. Lavagna never installs these dependencies. Start Rex and retry, or set `BROWSER` to choose another opener. After installing a new lavagna, rerun `make install` to update the native notification helper too.
 
 ## Present and close
 
@@ -81,9 +91,10 @@ One call produces one notification, whatever it contains. Reloads, reconnects, a
 Permissions:
 
 - **Notifications.** Installing asks for permission with a banner. Click it and turn on notifications for Lavagna in System Settings › Notifications. Until then each call reports on stderr that the notification was not sent; the round and its JSON outcome are unaffected.
-- **Chrome automation.** The first click asks to let Lavagna control Google Chrome. With that permission a click brings forward the Chrome tab already showing the conversation; without it, or when no such tab is open, the click opens the page in the default browser.
+- **Rex routing.** A notification from a Rex round remembers its local session and invoking terminal. A click selects the conversation's panel and brings Rex forward. If that panel was closed, lavagna recreates it when the original session and terminal still exist. No Chrome automation permission is needed. If Rex cannot show the destination, the helper explains the failure instead of opening another browser; resume the round from a live Rex terminal to refresh the destination.
+- **Chrome automation outside Rex.** The first click asks to let Lavagna control Google Chrome. With that permission a click brings forward the Chrome tab already showing the conversation; without it, or when no such tab is open, the click opens the page in the default browser. An explicit `BROWSER` override retains this existing notification route.
 
-Arrival does not take focus. Opening the page for a new origin still does, as before: Chrome activates for any URL it receives. macOS can still hold a notification back under Focus, Do Not Disturb or notification settings; lavagna reports only whether macOS accepted the request, never that it was shown. Missed notifications are not replayed.
+Arrival does not take focus. A new Rex panel also preserves focus. Outside Rex, opening a page for a new origin can still activate the browser, as before. macOS can still hold a notification back under Focus, Do Not Disturb or notification settings; lavagna reports only whether macOS accepted the request, never that it was shown. Missed notifications are not replayed.
 
 ## Answer on the page
 

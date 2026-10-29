@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/taekwondodev/lavagna/internal/conversation"
+	"github.com/taekwondodev/lavagna/internal/rex"
 	"github.com/taekwondodev/lavagna/internal/round"
 )
 
@@ -151,8 +152,9 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, within ti
 	h := listen(srv, ln)
 	defer h.stop()
 	fmt.Fprintf(errw, "lavagna · round %s · %s · Esc per interrompere\n", st.RoundID(), origin.URL())
-	go reveal(getenv, errw, origin.URL(), fresh, srv.seen)
-	go announce(getenv, errw, kind, origin.URL())
+	target := rex.Capture(getenv)
+	go reveal(getenv, errw, origin.URL(), fresh, srv.seen, target)
+	go announce(getenv, errw, kind, origin.URL(), target)
 	got, ok := await(srv, caller.Deadline(getenv, within), started)
 	if !ok {
 		st = st.Step(conversation.CallPaused{})

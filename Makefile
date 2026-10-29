@@ -1,7 +1,7 @@
 install:
 	CGO_ENABLED=0 go build -trimpath -o $(HOME)/.local/bin/lavagna .
 ifeq ($(shell uname),Darwin)
-	sh macos/notifier/install.sh $(HOME)/Applications/Lavagna.app
+	sh macos/notifier/install.sh "$(HOME)/Applications/Lavagna.app" "$(HOME)/.local/bin/lavagna"
 endif
 	-$(HOME)/.local/bin/lavagna hermes-hooks install
 

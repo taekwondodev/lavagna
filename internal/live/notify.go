@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/taekwondodev/lavagna/internal/conversation"
+	"github.com/taekwondodev/lavagna/internal/rex"
 	"github.com/taekwondodev/lavagna/internal/round"
 )
 
@@ -47,7 +48,7 @@ func notifier(getenv func(string) string) string {
 // announce asks the helper to post n. Success means macOS accepted the
 // request, not that it showed it: Focus and notification settings can still
 // hold it back. Without the helper there is nothing to report.
-func announce(getenv func(string) string, errw io.Writer, n notice, page string) {
+func announce(getenv func(string) string, errw io.Writer, n notice, page string, target *rex.Target) {
 	if n == noNotice {
 		return
 	}
@@ -57,7 +58,11 @@ func announce(getenv func(string) string, errw io.Writer, n notice, page string)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), notifyGrace)
 	defer cancel()
-	err := exec.CommandContext(ctx, helper, string(n), page).Run()
+	args := []string{string(n), page}
+	if target != nil {
+		args = append(args, "--rex", target.Encode())
+	}
+	err := exec.CommandContext(ctx, helper, args...).Run()
 	var exit *exec.ExitError
 	switch {
 	case err == nil:
