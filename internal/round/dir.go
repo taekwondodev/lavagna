@@ -51,15 +51,6 @@ type File struct {
 type Dir struct {
 	Source []byte
 	Files  []File
-	Bytes  int
-}
-
-func (d Dir) Names() map[string]bool {
-	names := map[string]bool{}
-	for _, f := range d.Files {
-		names[f.Name] = true
-	}
-	return names
 }
 
 func Load(dir string) (Dir, []string) {
@@ -129,7 +120,7 @@ func Load(dir string) (Dir, []string) {
 		return Dir{}, []string{"round: " + err.Error()}
 	}
 	defer root.Close()
-	d := Dir{Bytes: int(total)}
+	d := Dir{}
 	found := false
 	for _, e := range entries {
 		body, err := readExactly(root, e.name, e.size)

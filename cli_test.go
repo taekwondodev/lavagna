@@ -117,7 +117,7 @@ func spawnCommand(t *testing.T, cmd *exec.Cmd) *call {
 	status := bufio.NewReader(stderr)
 	first, err := status.ReadString('\n')
 	if errors.Is(err, io.EOF) && first == "" {
-		// A refused round returns only a JSON outcome on stdout.
+
 		first, err = c.out.ReadString('\n')
 	}
 	if err != nil {
@@ -379,6 +379,9 @@ func TestConcurrentFirstCallsConvergeOnOneOwner(t *testing.T) {
 		wg.Go(func() { calls[i] = spawn(t, environ, decision) })
 	}
 	wg.Wait()
+	if t.Failed() {
+		t.FailNow()
+	}
 	var owners []*call
 	for _, c := range calls {
 		switch {
@@ -545,8 +548,8 @@ func TestAnyStartSweepsIdleConversations(t *testing.T) {
 		}
 		return dir
 	}
-	idle := conversationDir("idle", 8*24*time.Hour)
 	recent := conversationDir("recent", 23*time.Hour)
+	idle := conversationDir("idle", 8*24*time.Hour)
 	cmd := exec.Command(binary, "check")
 	cmd.Env = environ("other")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -560,15 +563,11 @@ func TestAnyStartSweepsIdleConversations(t *testing.T) {
 	}
 }
 
-// event reads the page's event stream until the named event and returns its
-// data.
 func event(t *testing.T, url, name string) string {
 	t.Helper()
 	return eventUntil(t, url, name, func(string) bool { return true })
 }
 
-// eventUntil reads the page's event stream until a named event whose data
-// satisfies done.
 func eventUntil(t *testing.T, url, name string, done func(data string) bool) string {
 	t.Helper()
 	client := http.Client{Timeout: 5 * time.Second}
@@ -736,8 +735,6 @@ func TestHarnessDefaultDeadlineAppliesWithoutWithin(t *testing.T) {
 	}
 }
 
-// fakeHermes installs a hermes stand-in that keeps each configuration key in
-// a file and logs its calls, and returns the store.
 func fakeHermes(t *testing.T, environ []string) (store string, withFake []string) {
 	t.Helper()
 	bin, store := t.TempDir(), t.TempDir()

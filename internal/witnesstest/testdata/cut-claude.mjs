@@ -1,10 +1,3 @@
-// Cuts a witness sample out of a real Claude Code transcript. It keeps the
-// entry that ran the round call and every entry after it verbatim, except
-// that attachments keep only their type, since they carry the system prompt
-// and account context, and the submission ID becomes the placeholder the
-// tests replace. With "interrupt", it appends a user interruption modelled on
-// the entries Claude Code 2.1.285 to 2.1.291 wrote when the user pressed Esc.
-// Usage: node internal/witnesstest/testdata/cut-claude.mjs <transcript.jsonl> <name> <round entry> <last entry> [interrupt]
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";

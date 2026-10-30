@@ -11,8 +11,6 @@ const (
 	endPaused      end = "paused"
 )
 
-// Outcome is how a call ended. Calls, not rounds, key it: a reply-only call
-// stays in its round.
 type Outcome struct {
 	Call       string `json:"call"`
 	Round      string `json:"round"`
@@ -22,7 +20,6 @@ type Outcome struct {
 
 type Event interface{ event() }
 
-// CallStarted commits a validated call and its ledger.
 type CallStarted struct {
 	Origin Origin
 	Ledger Ledger
@@ -32,8 +29,6 @@ type BatchAccepted struct{ Batch Batch }
 
 type BatchReturned struct{}
 
-// CallPaused ends a call whose deadline came before any batch. The round
-// stays open and the next call resumes waiting for it.
 type CallPaused struct{}
 
 func (CallStarted) event()   {}
@@ -76,5 +71,4 @@ func (s State) Step(e Event) State {
 	return s
 }
 
-// RoundID names the phase's current round, as results and the page show it.
 func (s State) RoundID() string { return fmt.Sprintf("r%d", s.Ledger.Round) }

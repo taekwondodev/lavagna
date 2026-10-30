@@ -13,9 +13,6 @@ import (
 	"time"
 )
 
-// fakeNotifier installs a helper where make install puts Lavagna.app. It
-// records the argument count and arguments of each submission, then exits
-// with code. It returns a reader of the recorded submissions.
 func fakeNotifier(t *testing.T, environ []string, code int) func() []string {
 	t.Helper()
 	home := ""
@@ -37,8 +34,6 @@ func fakeNotifier(t *testing.T, environ []string, code int) func() []string {
 	}
 }
 
-// notified waits until want submissions are recorded, then confirms that no
-// further one follows.
 func notified(t *testing.T, read func() []string, want []string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

@@ -1,6 +1,3 @@
-// Package harness recognizes the agent harness invoking lavagna: the
-// conversation identity it exports, the record a witness follows, and how
-// long it lets a shell call run.
 package harness
 
 import (
@@ -28,15 +25,12 @@ var errAmbiguous = errors.New("several harness identities and the call's owner m
 
 type Harness struct {
 	Kind Kind
-	// Session is the harness's session id, or LAVAGNA_SESSION for Explicit.
+
 	Session string
-	// File is Pi's session file.
+
 	File string
 }
 
-// Identity is the digest input of the conversation key. Pi and Explicit keep
-// the encoding used before other harnesses were recognized, so their open
-// phases survive an upgrade.
 func (h Harness) Identity() string {
 	if h.Kind == Pi {
 		return "pi\x00" + h.Session + "\x00" + h.File
@@ -44,10 +38,6 @@ func (h Harness) Identity() string {
 	return string(h.Kind) + "\x00" + h.Session
 }
 
-// Resolve binds the call to a harness. LAVAGNA_SESSION always wins. A harness
-// started from another inherits its parent's variables, so when several
-// identities are present the call's owner, the executable whose shell runs
-// the call, decides; owner is consulted only then.
 func Resolve(getenv func(string) string, owner func() string) (Harness, error) {
 	if s := getenv("LAVAGNA_SESSION"); s != "" {
 		return Harness{Kind: Explicit, Session: s}, nil
@@ -79,8 +69,6 @@ func Resolve(getenv func(string) string, owner func() string) (Harness, error) {
 	return Harness{}, errAmbiguous
 }
 
-// ownerKind recognizes Claude Code and Hermes by their executables. Pi runs
-// as a generic node process, so it is whatever else owns the call.
 func ownerKind(exe, hermes string) Kind {
 	switch {
 	case filepath.Base(exe) == "claude":
@@ -91,9 +79,6 @@ func ownerKind(exe, hermes string) Kind {
 	return Pi
 }
 
-// Record names the file the harness appends while the agent works and its
-// format, or returns "" when the harness has none a witness can read. events
-// is the conversation's file for harnesses whose hooks report to lavagna.
 func (h Harness) Record(getenv func(string) string, events string) (string, witness.Format) {
 	switch h.Kind {
 	case Pi:
@@ -106,9 +91,6 @@ func (h Harness) Record(getenv func(string) string, events string) (string, witn
 	return "", ""
 }
 
-// claudeTranscript finds the transcript Claude Code appends for a session
-// under its configuration directory, or returns "" when there is no single
-// match.
 func claudeTranscript(getenv func(string) string, session string) string {
 	if session == "" || strings.ContainsAny(session, `*?[]\/`) {
 		return ""
@@ -128,7 +110,6 @@ func claudeTranscript(getenv func(string) string, session string) string {
 	return matches[0]
 }
 
-// HermesHome is the directory Hermes keeps its configuration and tools in.
 func HermesHome(getenv func(string) string) string {
 	if home := getenv("HERMES_HOME"); home != "" {
 		return filepath.Clean(home)
@@ -139,14 +120,11 @@ func HermesHome(getenv func(string) string) string {
 	return ""
 }
 
-// Deadline is how long this call may wait before the harness kills it: the
-// declared within clamped to the harness's maximum, or the harness's default
-// when nothing is declared. Zero means no limit.
 func (h Harness) Deadline(getenv func(string) string, within time.Duration) time.Duration {
 	var standard, ceiling time.Duration
 	switch h.Kind {
 	case ClaudeCode:
-		// Claude Code's ceiling is the larger of its maximum and its default.
+
 		standard = setting(getenv, "BASH_DEFAULT_TIMEOUT_MS", time.Millisecond, 2*time.Minute)
 		ceiling = max(standard, setting(getenv, "BASH_MAX_TIMEOUT_MS", time.Millisecond, 10*time.Minute))
 	case Hermes:

@@ -15,7 +15,6 @@ import (
 	"github.com/taekwondodev/lavagna/internal/round"
 )
 
-// maxCallStored bounds the question artifacts one call writes.
 const maxCallStored = 6 << 20
 
 type questionArtifact struct {
@@ -25,11 +24,6 @@ type questionArtifact struct {
 	Resources []round.File        `json:"resources,omitempty"`
 }
 
-// PhaseRound applies one call to the question ledger and waits for the next
-// feedback batch. The call is validated whole before anything is written: it
-// writes the new question versions, commits state.json, then deletes the
-// versions the ledger no longer references. within declares how long the
-// harness lets the call run; zero leaves the harness default.
 func PhaseRound(getenv func(string) string, src io.Reader, dir string, within time.Duration, out, errw io.Writer) int {
 	started := time.Now()
 	caller, c, err := bound(getenv)
@@ -37,7 +31,7 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, within ti
 		return invalid(out, err.Error())
 	}
 	conversation.Sweep(c, time.Now())
-	in, files, errs := input(src, dir)
+	source, files, errs := input(src, dir)
 	if errs != nil {
 		return invalid(out, errs...)
 	}
@@ -57,7 +51,7 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, within ti
 	for id, q := range st.Ledger.Questions {
 		prior[id] = q.After
 	}
-	phase, errs := round.ParsePhaseKnown(in.Source, prior)
+	phase, errs := round.ParsePhaseKnown(source, prior)
 	if errs != nil {
 		return invalid(out, errs...)
 	}
@@ -86,8 +80,7 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, within ti
 		if err != nil {
 			return failure(out, err)
 		}
-		// Count the exact serialized bytes StoreArtifact will retain, including
-		// JSON overhead and base64-encoded resources.
+
 		stored += len(data)
 		if stored > maxCallStored {
 			return invalid(out, "question artifacts exceed the 6 MiB storage bound")
@@ -110,15 +103,14 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, within ti
 		return failure(out, err)
 	}
 	defer ln.Close()
-	// Clear orphans of a call that died before its commit, so their names are
-	// free. Stale data stays untouched until the fresh phase commits.
+
 	committed := st.Ledger.Artifacts()
 	if !stale {
 		if err := lease.Prune("question", committed); err != nil {
 			return failure(out, err)
 		}
 	}
-	// rollback removes exactly the versions this call published.
+
 	var published []string
 	rollback := func() {
 		for _, name := range published {
@@ -191,16 +183,12 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, within ti
 	}
 	st = st.Step(conversation.BatchReturned{})
 	record(errw, lease, st)
-	// The relay serves the ledger with this batch, so a page reloaded during
-	// the agent's turn shows the sent messages in their threads.
+
 	spec.Ledger = st.Ledger
 	srv.returned(handOver(errw, c.Relay(), ln, relayed{Round: spec, Submission: got.submission, Session: observe(getenv, caller, c)}))
 	return exitOK
 }
 
-// await waits for the call's batch. With a deadline it pauses the call
-// shortly before the harness would kill it, and ok is false; a batch admitted
-// in the meantime is returned instead.
 func await(srv *server, deadline time.Duration, started time.Time) (got batch, ok bool) {
 	if deadline <= 0 {
 		return <-srv.accepted, true
@@ -218,15 +206,10 @@ func await(srv *server, deadline time.Duration, started time.Time) (got batch, o
 	}
 }
 
-// early leaves the call a margin to return its outcome and hand the page over
-// before the harness's deadline.
 func early(deadline time.Duration) time.Duration {
 	return deadline - min(15*time.Second, deadline/10)
 }
 
-// retain stores the feedback record. A batch resent under the same submission,
-// as after a call that ended Uncertain, replaces the earlier record so later
-// reads match the outcome just returned.
 func retain(lease *conversation.Lease, submission string, encoded []byte) error {
 	err := lease.StoreArtifact("feedback", submission, encoded)
 	if errors.Is(err, fs.ErrExist) {
@@ -261,8 +244,6 @@ func recap(l conversation.Ledger) []round.RecapRow {
 	return rows
 }
 
-// present lists every question of the phase in ledger order: this call's
-// versions as rendered, earlier ones from their retained artifacts.
 func present(lease *conversation.Lease, l conversation.Ledger, phase round.Phase) ([]round.PhaseQuestion, error) {
 	sent := map[string]round.PhaseQuestion{}
 	for _, q := range phase.Questions {

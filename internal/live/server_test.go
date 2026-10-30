@@ -18,7 +18,6 @@ import (
 	"github.com/taekwondodev/lavagna/internal/round"
 )
 
-// storageRound is one open question, storage, whose 01 shows its own resource.
 const storageRound = "# Dove? {id=\"storage\"}\n## Capire\n<img src=\"storage/punto.png\" alt=\"\">\n## Decidere\n- [file] File\n- [db] Database\n"
 
 func serve(t *testing.T) (*server, func(body string) int) {

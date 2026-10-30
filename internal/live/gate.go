@@ -25,8 +25,7 @@ type gate struct {
 	round    string
 	token    string
 	admitted string
-	// paused closes admission after the call's deadline; the next call
-	// opens a new gate for the same round.
+
 	paused bool
 }
 

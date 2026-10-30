@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/taekwondodev/lavagna/internal/diagram"
 	"github.com/taekwondodev/lavagna/internal/page"
@@ -17,43 +15,7 @@ import (
 
 const MaxBytes = 4 << 20
 
-type Round struct {
-	Content   string     `json:"-"`
-	Decide    string     `json:"decide"`
-	Chapters  []Chapter  `json:"chapters"`
-	Questions []Question `json:"questions"`
-	Anchors   []string   `json:"anchors"`
-}
-
-type Chapter struct {
-	ID    string `json:"id"`
-	Index string `json:"index"`
-	Name  string `json:"name"`
-	Role  string `json:"role"`
-}
-
-type Question struct {
-	ID      string   `json:"id"`
-	Options []string `json:"options"`
-}
-
 type Excerpter func(path string, from, to int) (string, error)
-
-type Input struct {
-	Source  []byte
-	Files   map[string]bool
-	Budget  int
-	Excerpt Excerpter
-}
-
-var chapters = []struct {
-	Chapter
-	purpose string
-}{
-	{Chapter{"capire", "01", "Capire", "role-information"}, "Spiegazione · il problema, prima delle alternative"},
-	{Chapter{"confrontare", "02", "Confrontare", "role-analysis"}, "Analisi · differenze, proposte e limiti"},
-	{Chapter{"decidere", "03", "Decidere", "role-action"}, "La tua scelta · facoltativa, mai implicita"},
-}
 
 type component struct {
 	class, role, label string
@@ -74,9 +36,6 @@ var evidenceKinds = map[string]component{
 }
 
 var (
-	idPattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,39}$`)
-	questionSuffix = regexp.MustCompile(`\s*\{id="([^"]*)"\}$`)
-	refSuffix      = regexp.MustCompile(`\s*\{ref="([^"]*)"\}$`)
 	optionLine     = regexp.MustCompile(`^- \[([^\]]*)\]\s*(.*)$`)
 	orderedItem    = regexp.MustCompile(`^\d+\. `)
 	rawHTML        = regexp.MustCompile(`^</?[A-Za-z!]`)
@@ -98,22 +57,15 @@ type line struct {
 	text string
 }
 
-type scope struct {
-	nested, frame bool
-}
-
 type parser struct {
-	errs      []string
-	out       *strings.Builder
-	round     Round
-	questions map[string]bool
-	anchors   map[string]bool
-	in        Input
-	used      int
-	recap     []RecapRow
-	phase     bool
-	// options are the question's variants for diagrams; current is the chapter
-	// being rendered; repeat holds the diagrams of 01 that 02 draws again.
+	errs       []string
+	out        *strings.Builder
+	files      map[string]bool
+	budget     int
+	repository Excerpter
+	used       int
+	recap      []RecapRow
+
 	options []diagram.Option
 	current string
 	repeat  []string
@@ -123,91 +75,7 @@ func (p *parser) fail(n int, format string, args ...any) {
 	p.errs = append(p.errs, fmt.Sprintf("round.md:%d: %s", n, fmt.Sprintf(format, args...)))
 }
 
-func Parse(in Input) (Round, []string) {
-	if len(in.Source) > MaxBytes {
-		return Round{}, []string{fmt.Sprintf("round.md: %d bytes exceeds the %d byte bound", len(in.Source), MaxBytes)}
-	}
-	var lines []line
-	for i, t := range strings.Split(strings.ReplaceAll(string(in.Source), "\r\n", "\n"), "\n") {
-		lines = append(lines, line{i + 1, strings.TrimRight(t, " \t")})
-	}
-
-	p := &parser{
-		questions: map[string]bool{},
-		anchors:   map[string]bool{},
-		in:        in,
-		round:     Round{Chapters: []Chapter{}, Questions: []Question{}, Anchors: []string{}},
-	}
-	var content, decide strings.Builder
-	next := 0
-	current := -1
-	var body []line
-	flush := func() {
-		if current >= 0 {
-			p.out = &content
-			if chapters[current].ID == "decidere" {
-				p.out = &decide
-			}
-			p.chapter(current, body)
-		}
-		body = nil
-	}
-	for _, l := range lines {
-		if name, ok := strings.CutPrefix(l.text, "# "); ok {
-			name = strings.TrimSpace(name)
-			found := -1
-			for i, c := range chapters {
-				if c.Name == name {
-					found = i
-				}
-			}
-			switch {
-			case found == -1:
-				p.fail(l.n, "unknown chapter %q (use # Capire, # Confrontare or # Decidere)", name)
-			case found < next:
-				p.fail(l.n, "chapter # %s is out of order or repeated", chapters[found].Name)
-			default:
-				flush()
-				current = found
-				next = found + 1
-			}
-			continue
-		}
-		if current == -1 {
-			if l.text != "" {
-				p.fail(l.n, "content before the first chapter")
-			}
-			continue
-		}
-		body = append(body, l)
-	}
-	flush()
-	if current == -1 && len(p.errs) == 0 {
-		p.fail(1, "no chapter: a round needs # Capire, # Confrontare or # Decidere")
-	}
-	if len(p.errs) > 0 {
-		return Round{}, p.errs
-	}
-	p.round.Content = content.String()
-	p.round.Decide = decide.String()
-	return p.round, nil
-}
-
-func (p *parser) chapter(i int, body []line) {
-	c := chapters[i]
-	p.round.Chapters = append(p.round.Chapters, c.Chapter)
-	fmt.Fprintf(p.out, `<section class="chapter %s" id="%s" aria-labelledby="%s-name">`, c.Role, c.ID, c.ID)
-	fmt.Fprintf(p.out, `<header class="chapter-header"><span class="chapter-index" aria-hidden="true">%s</span><div><p class="chapter-name" id="%s-name">%s</p><p class="chapter-purpose">%s</p></div></header>`, c.Index, c.ID, c.Name, c.purpose)
-	p.out.WriteString(`<div class="chapter-body">`)
-	if c.ID == "decidere" {
-		p.decide(body)
-	} else {
-		p.blocks(body, scope{frame: true})
-	}
-	p.out.WriteString(`</div></section>`)
-}
-
-func (p *parser) blocks(ls []line, sc scope) {
+func (p *parser) blocks(ls []line, nested bool) {
 	for i := 0; i < len(ls); {
 		l := ls[i]
 		t := l.text
@@ -215,80 +83,40 @@ func (p *parser) blocks(ls []line, sc scope) {
 		case t == "":
 			i++
 		case strings.HasPrefix(t, ":::"):
-			i = p.component(ls, i, sc)
+			i = p.component(ls, i, nested)
 		case strings.HasPrefix(t, "### "):
-			p.heading(l, "h3", t[4:], sc)
-			i++
-		case strings.HasPrefix(t, "## "):
-			if sc.nested {
-				p.fail(l.n, "## heading inside a ::: block (use ###)")
-			}
-			p.heading(l, "h2", t[3:], sc)
+			p.heading(l, t[4:])
 			i++
 		case strings.HasPrefix(t, "|"):
-			i = p.table(ls, i, sc)
+			i = p.table(ls, i)
 		case rawHTML.MatchString(t):
-			i = p.raw(ls, i, sc)
+			i = p.raw(ls, i)
 		case p.construct(l):
 			i++
 		case strings.HasPrefix(t, "- ") || orderedItem.MatchString(t):
-			i = p.list(ls, i, sc)
+			i = p.list(ls, i)
 		default:
-			i = p.paragraph(ls, i, sc)
+			i = p.paragraph(ls, i)
 		}
 	}
 }
 
-func (p *parser) heading(l line, tag, text string, sc scope) {
-	text, attr := p.anchor(l.n, strings.TrimSpace(text), sc)
+func (p *parser) heading(l line, text string) {
+	text = strings.TrimSpace(text)
 	p.plain(line{l.n, text})
-	fmt.Fprintf(p.out, "<%s%s>%s</%s>", tag, attr, inline(text), tag)
+	fmt.Fprintf(p.out, "<h3>%s</h3>", inline(text))
 }
 
-func (p *parser) anchor(n int, text string, sc scope) (string, string) {
-	m := refSuffix.FindStringSubmatch(text)
-	if m == nil {
-		return text, ""
-	}
-	rest := text[:len(text)-len(m[0])]
-	if !sc.frame {
-		p.fail(n, `{ref="..."} anchors belong in # Capire or # Confrontare`)
-		return rest, ""
-	}
-	if !p.ref(n, m[1]) {
-		return rest, ""
-	}
-	return rest, ` data-ref="` + html.EscapeString(m[1]) + `"`
-}
-
-func (p *parser) ref(n int, ref string) bool {
-	switch {
-	case strings.TrimSpace(ref) == "":
-		p.fail(n, "empty anchor")
-	case utf8.RuneCountInString(ref) > 80:
-		p.fail(n, "anchor %q is longer than 80 characters", ref)
-	case strings.IndexFunc(ref, unicode.IsControl) >= 0:
-		p.fail(n, "anchor %q contains a control character", ref)
-	case p.anchors[ref]:
-		p.fail(n, "anchor %q is repeated", ref)
-	default:
-		p.anchors[ref] = true
-		p.round.Anchors = append(p.round.Anchors, ref)
-		return true
-	}
-	return false
-}
-
-func (p *parser) component(ls []line, i int, sc scope) int {
+func (p *parser) component(ls []line, i int, nested bool) int {
 	l := ls[i]
-	head, attr := p.anchor(l.n, strings.TrimSpace(strings.TrimPrefix(l.text, ":::")), sc)
+	head := strings.TrimSpace(strings.TrimPrefix(l.text, ":::"))
 	kind, label, _ := strings.Cut(head, " ")
 	label = strings.TrimSpace(label)
 	switch {
 	case kind == "":
 		p.fail(l.n, "::: closes no open block")
 		return i + 1
-	case sc.nested:
+	case nested:
 		p.fail(l.n, "nested ::: block")
 		return i + 1
 	}
@@ -301,7 +129,6 @@ func (p *parser) component(ls []line, i int, sc scope) int {
 		return end
 	}
 	body := ls[i+1 : end]
-	inner := scope{nested: true, frame: sc.frame}
 	if diagram.Kind(kind) {
 		p.diagram(l.n, kind, label, body)
 		return end + 1
@@ -311,8 +138,8 @@ func (p *parser) component(ls []line, i int, sc scope) int {
 			label = c.label
 		}
 		p.plain(line{l.n, label})
-		fmt.Fprintf(p.out, `<div class="%s"%s><span class="content-label %s">%s</span>`, c.class, attr, c.role, inline(label))
-		p.blocks(body, inner)
+		fmt.Fprintf(p.out, `<div class="%s"><span class="content-label %s">%s</span>`, c.class, c.role, inline(label))
+		p.blocks(body, true)
 		p.out.WriteString(`</div>`)
 		return end + 1
 	}
@@ -321,31 +148,26 @@ func (p *parser) component(ls []line, i int, sc scope) int {
 		if label != "" {
 			p.fail(l.n, "::: evidence takes no label (label each item)")
 		}
-		p.evidence(body, attr, inner)
+		p.evidence(body)
 	case "steps":
 		if label == "" {
 			label = "Passaggi"
 		}
 		p.plain(line{l.n, label})
-		p.steps(body, label, attr, inner)
+		p.steps(body, label)
 	case "excerpt":
-		p.excerpt(l.n, label, body, attr, inner)
+		p.excerpt(l.n, label, body)
 	case "recap":
-		if !p.phase {
-			p.fail(l.n, "unknown block ::: %s", kind)
-			break
-		}
 		if label != "" || strings.TrimSpace(joined(body)) != "" {
 			p.fail(l.n, "::: recap takes no label or body; lavagna renders the decisions table")
 		}
-		p.recapTable(attr)
+		p.recapTable()
 	default:
 		p.fail(l.n, "unknown block ::: %s", kind)
 	}
 	return end + 1
 }
 
-// diagramFont measures diagram labels with the font the page embeds.
 var diagramFont = sync.OnceValues(func() (*diagram.Font, error) {
 	b, err := fs.ReadFile(page.Assets, page.Font)
 	if err != nil {
@@ -356,9 +178,6 @@ var diagramFont = sync.OnceValues(func() (*diagram.Font, error) {
 
 var diagramNames = map[string]string{"sequence": "Sequenza", "flow": "Flusso", "bars": "Barre"}
 
-// diagram draws a sequence, flow or bars block as static SVG. 01 shows the present
-// state and leaves a diagram that declares variants to 02, which draws one SVG
-// per variant for the frame helper to show.
 func (p *parser) diagram(n int, kind, title string, body []line) {
 	lines := make([]diagram.Line, len(body))
 	for i, l := range body {
@@ -403,7 +222,7 @@ func (p *parser) diagram(n int, kind, title string, body []line) {
 	case d.Varies():
 		out = figure(d.Variants())
 	}
-	if p.used+len(out)+len(repeat) > p.in.Budget {
+	if p.used+len(out)+len(repeat) > p.budget {
 		p.fail(n, "::: %s: the round exceeds the %d byte bound", kind, MaxBytes)
 		return
 	}
@@ -414,12 +233,12 @@ func (p *parser) diagram(n int, kind, title string, body []line) {
 	}
 }
 
-func (p *parser) recapTable(attr string) {
+func (p *parser) recapTable() {
 	if len(p.recap) == 0 {
-		fmt.Fprintf(p.out, `<p class="recap"%s>Nessuna decisione ancora.</p>`, attr)
+		p.out.WriteString(`<p class="recap">Nessuna decisione ancora.</p>`)
 		return
 	}
-	fmt.Fprintf(p.out, `<div class="table recap"%s><table><thead><tr><th scope="col">Domanda</th><th scope="col">Decisione</th><th scope="col">Round</th><th scope="col">Perché</th><th scope="col">Scartate</th></tr></thead><tbody>`, attr)
+	p.out.WriteString(`<div class="table recap"><table><thead><tr><th scope="col">Domanda</th><th scope="col">Decisione</th><th scope="col">Round</th><th scope="col">Perché</th><th scope="col">Scartate</th></tr></thead><tbody>`)
 	for _, row := range p.recap {
 		cell := func(s string) string {
 			if row.Struck && s != "" {
@@ -437,7 +256,7 @@ func (p *parser) recapTable(attr string) {
 	p.out.WriteString(`</tbody></table></div>`)
 }
 
-func (p *parser) items(ls []line, sc scope, each func(first line, rest []line, attr string)) {
+func (p *parser) items(ls []line, each func(first line, rest []line)) {
 	for i := 0; i < len(ls); {
 		l := ls[i]
 		if l.text == "" {
@@ -453,14 +272,10 @@ func (p *parser) items(ls []line, sc scope, each func(first line, rest []line, a
 		for end < len(ls) && strings.HasPrefix(ls[end].text, "  ") {
 			end++
 		}
-		item := append([]line(nil), ls[i:end]...)
-		last := &item[len(item)-1]
-		var attr string
-		last.text, attr = p.anchor(last.n, last.text, sc)
-		for _, c := range item[1:] {
+		for _, c := range ls[i+1 : end] {
 			p.continuation(c)
 		}
-		each(item[0], item[1:], attr)
+		each(ls[i], ls[i+1:end])
 		i = end
 	}
 }
@@ -473,9 +288,9 @@ func joined(ls []line) string {
 	return strings.Join(parts, " ")
 }
 
-func (p *parser) evidence(ls []line, attr string, sc scope) {
-	fmt.Fprintf(p.out, `<div class="evidence"%s>`, attr)
-	p.items(ls, sc, func(first line, rest []line, itemAttr string) {
+func (p *parser) evidence(ls []line) {
+	p.out.WriteString(`<div class="evidence">`)
+	p.items(ls, func(first line, rest []line) {
 		m := optionLine.FindStringSubmatch(first.text)
 		if m == nil {
 			p.fail(first.n, "an evidence item needs a kind: - [observed|unverified|outside] text")
@@ -493,17 +308,17 @@ func (p *parser) evidence(ls []line, attr string, sc scope) {
 		p.plain(line{first.n, label})
 		p.plain(line{first.n, m[2]})
 		text := joined(append([]line{{first.n, m[2]}}, rest...))
-		fmt.Fprintf(p.out, `<div class="evidence-item"%s><span class="content-label %s">%s</span><p>%s</p></div>`, itemAttr, k.role, inline(label), inline(text))
+		fmt.Fprintf(p.out, `<div class="evidence-item"><span class="content-label %s">%s</span><p>%s</p></div>`, k.role, inline(label), inline(text))
 	})
 	p.out.WriteString(`</div>`)
 }
 
-func (p *parser) steps(ls []line, label, attr string, sc scope) {
-	fmt.Fprintf(p.out, `<ol class="simple-flow" aria-label="%s"%s>`, html.EscapeString(label), attr)
-	p.items(ls, sc, func(first line, rest []line, itemAttr string) {
+func (p *parser) steps(ls []line, label string) {
+	fmt.Fprintf(p.out, `<ol class="simple-flow" aria-label="%s">`, html.EscapeString(label))
+	p.items(ls, func(first line, rest []line) {
 		title := strings.TrimSpace(listMarker.ReplaceAllString(first.text, ""))
 		p.plain(line{first.n, title})
-		fmt.Fprintf(p.out, `<li%s><strong>%s</strong>`, itemAttr, inline(title))
+		fmt.Fprintf(p.out, `<li><strong>%s</strong>`, inline(title))
 		if len(rest) > 0 {
 			fmt.Fprintf(p.out, `<p>%s</p>`, inline(joined(rest)))
 		}
@@ -512,7 +327,7 @@ func (p *parser) steps(ls []line, label, attr string, sc scope) {
 	p.out.WriteString(`</ol>`)
 }
 
-func (p *parser) excerpt(n int, input string, body []line, attr string, sc scope) {
+func (p *parser) excerpt(n int, input string, body []line) {
 	parts := strings.Fields(input)
 	if len(parts) == 0 {
 		p.fail(n, "::: excerpt needs path:start-end")
@@ -535,11 +350,11 @@ func (p *parser) excerpt(n int, input string, body []line, attr string, sc scope
 		p.fail(n, "excerpt %s: the range starts at line 1 or later and ends at or after its start", spec)
 		return
 	}
-	if p.in.Excerpt == nil {
+	if p.repository == nil {
 		p.fail(n, "excerpt rendering is unavailable")
 		return
 	}
-	text, err := p.in.Excerpt(path, from, to)
+	text, err := p.repository(path, from, to)
 	if err != nil {
 		p.fail(n, "excerpt %s: %v", spec, err)
 		return
@@ -576,18 +391,18 @@ func (p *parser) excerpt(n int, input string, body []line, attr string, sc scope
 		}
 		rendered.WriteString(l)
 		rendered.WriteString(`</span>`)
-		if p.used+rendered.Len() > p.in.Budget {
+		if p.used+rendered.Len() > p.budget {
 			p.fail(n, "excerpt %s: the round exceeds the %d byte bound", spec, MaxBytes)
 			return
 		}
 	}
 	p.used += rendered.Len()
-	fmt.Fprintf(p.out, `<figure class="excerpt"%s><figcaption><code>%s</code></figcaption><pre><code>%s</code></pre>`, attr, html.EscapeString(spec), rendered.String())
-	p.blocks(body, sc)
+	fmt.Fprintf(p.out, `<figure class="excerpt"><figcaption><code>%s</code></figcaption><pre><code>%s</code></pre>`, html.EscapeString(spec), rendered.String())
+	p.blocks(body, true)
 	p.out.WriteString(`</figure>`)
 }
 
-func (p *parser) table(ls []line, i int, sc scope) int {
+func (p *parser) table(ls []line, i int) int {
 	end := i
 	for end < len(ls) && strings.HasPrefix(ls[end].text, "|") {
 		end++
@@ -622,9 +437,9 @@ func (p *parser) table(ls []line, i int, sc scope) int {
 	labels := make([]string, len(header))
 	p.out.WriteString(`<div class="table"><table><thead><tr>`)
 	for c, cell := range header {
-		text, attr := p.cell(rows[0].n, cell, sc)
+		text := p.cell(rows[0].n, cell)
 		labels[c] = html.EscapeString(text)
-		fmt.Fprintf(p.out, `<th scope="col"%s%s>%s</th>`, align[c], attr, inline(text))
+		fmt.Fprintf(p.out, `<th scope="col"%s>%s</th>`, align[c], inline(text))
 	}
 	p.out.WriteString(`</tr></thead><tbody>`)
 	for _, row := range rows[2:] {
@@ -638,12 +453,12 @@ func (p *parser) table(ls []line, i int, sc scope) int {
 		}
 		p.out.WriteString(`<tr>`)
 		for c, cell := range cells {
-			text, attr := p.cell(row.n, cell, sc)
+			text := p.cell(row.n, cell)
 			if c == 0 {
-				fmt.Fprintf(p.out, `<th scope="row"%s%s>%s</th>`, align[c], attr, inline(text))
+				fmt.Fprintf(p.out, `<th scope="row"%s>%s</th>`, align[c], inline(text))
 				continue
 			}
-			fmt.Fprintf(p.out, `<td data-label="%s"%s%s>%s</td>`, labels[c], align[c], attr, inline(text))
+			fmt.Fprintf(p.out, `<td data-label="%s"%s>%s</td>`, labels[c], align[c], inline(text))
 		}
 		p.out.WriteString(`</tr>`)
 	}
@@ -674,27 +489,19 @@ func (p *parser) cells(l line) []string {
 	return append(cells, cell.String())
 }
 
-func (p *parser) cell(n int, cell string, sc scope) (string, string) {
-	text, attr := p.anchor(n, strings.TrimSpace(cell), sc)
+func (p *parser) cell(n int, cell string) string {
+	text := strings.TrimSpace(cell)
 	p.plain(line{n, text})
-	return text, attr
+	return text
 }
 
-func (p *parser) raw(ls []line, i int, sc scope) int {
+func (p *parser) raw(ls []line, i int) int {
 	end := i
 	for end < len(ls) && ls[end].text != "" {
 		end++
 	}
-	if !sc.frame {
-		p.fail(ls[i].n, "raw HTML belongs in # Capire or # Confrontare")
-		return end
-	}
-	// The frame helper fits a raw block wider than the column inside its stage.
 	p.out.WriteString(`<div class="raw"><div class="raw-stage">` + "\n")
 	for _, l := range ls[i:end] {
-		for _, m := range dataRef.FindAllStringSubmatch(l.text, -1) {
-			p.ref(l.n, html.UnescapeString(m[1]+m[2]+m[3]))
-		}
 		for _, m := range resourceAttr.FindAllStringSubmatch(l.text, -1) {
 			p.resource(l.n, strings.ToLower(m[1]), html.UnescapeString(m[2]+m[3]+m[4]))
 		}
@@ -710,25 +517,22 @@ func (p *parser) resource(n int, attr, ref string) {
 	switch {
 	case attr == "src" && strings.HasPrefix(ref, "data:"):
 	case attr != "src" && strings.HasPrefix(ref, "#"):
-	case p.in.Files[file]:
+	case p.files[file]:
 	default:
 		p.fail(n, "%s=%q is not a file of the round directory or a data: image", attr, ref)
 	}
 }
 
-func (p *parser) paragraph(ls []line, i int, sc scope) int {
+func (p *parser) paragraph(ls []line, i int) int {
 	end := i
 	for end < len(ls) && ls[end].text != "" && (end == i || !startsBlock(ls[end].text) && unknown(ls[end].text) == "") {
 		end++
 	}
-	para := append([]line(nil), ls[i:end]...)
-	last := &para[len(para)-1]
-	var attr string
-	last.text, attr = p.anchor(last.n, last.text, sc)
+	para := ls[i:end]
 	for _, l := range para {
 		p.plain(l)
 	}
-	fmt.Fprintf(p.out, "<p%s>%s</p>", attr, inline(joined(para)))
+	fmt.Fprintf(p.out, "<p>%s</p>", inline(joined(para)))
 	return end
 }
 
@@ -779,12 +583,12 @@ func unknown(raw string) string {
 }
 
 func (p *parser) plain(l line) {
-	if strings.Contains(l.text, `{ref="`) || strings.Contains(l.text, `{id="`) {
+	if strings.Contains(l.text, `{id="`) {
 		p.fail(l.n, "unknown construct: attribute")
 	}
 }
 
-func (p *parser) list(ls []line, i int, sc scope) int {
+func (p *parser) list(ls []line, i int) int {
 	ordered := !strings.HasPrefix(ls[i].text, "- ")
 	tag := "ul"
 	if ordered {
@@ -802,13 +606,10 @@ func (p *parser) list(ls []line, i int, sc scope) int {
 		}
 	}
 	p.out.WriteString("<" + tag + ">")
-	p.items(ls[i:end], sc, func(first line, rest []line, attr string) {
-		if !sc.frame && !sc.nested && optionLine.MatchString(first.text) {
-			p.fail(first.n, `an option needs a question: ## Title {id="..."}`)
-		}
+	p.items(ls[i:end], func(first line, rest []line) {
 		item := line{first.n, listMarker.ReplaceAllString(first.text, "")}
 		p.plain(item)
-		fmt.Fprintf(p.out, "<li%s>%s</li>", attr, inline(joined(append([]line{item}, rest...))))
+		fmt.Fprintf(p.out, "<li>%s</li>", inline(joined(append([]line{item}, rest...))))
 	})
 	p.out.WriteString("</" + tag + ">")
 	return end
@@ -821,113 +622,6 @@ func (p *parser) continuation(l line) {
 		return
 	}
 	p.plain(l)
-}
-
-func (p *parser) decide(ls []line) {
-	start := 0
-	for start < len(ls) && !strings.HasPrefix(ls[start].text, "## ") {
-		start++
-	}
-	p.blocks(ls[:start], scope{})
-	for i := start; i < len(ls); {
-		end := i + 1
-		for end < len(ls) && !strings.HasPrefix(ls[end].text, "## ") {
-			end++
-		}
-		p.question(ls[i], ls[i+1:end])
-		i = end
-	}
-	if start < len(ls) {
-		p.out.WriteString(`<p class="decision-help">La scelta entra direttamente nel prossimo invio. Non devi aggiungerla a una seconda lista.</p>`)
-	}
-}
-
-func (p *parser) question(head line, ls []line) {
-	title := strings.TrimSpace(strings.TrimPrefix(head.text, "## "))
-	m := questionSuffix.FindStringSubmatch(title)
-	if m == nil {
-		p.fail(head.n, `a question under # Decidere needs {id="..."}`)
-		return
-	}
-	id := m[1]
-	title = strings.TrimSpace(title[:len(title)-len(m[0])])
-	switch {
-	case !idPattern.MatchString(id):
-		p.fail(head.n, "question id %q must match %s", id, idPattern)
-	case p.questions[id]:
-		p.fail(head.n, "question id %q is repeated", id)
-	}
-	p.questions[id] = true
-	p.plain(line{head.n, title})
-
-	q := Question{ID: id, Options: []string{}}
-	var intro []string
-	var options strings.Builder
-	seen := map[string]bool{}
-	for i := 0; i < len(ls); {
-		l := ls[i]
-		switch {
-		case l.text == "":
-			i++
-		case strings.HasPrefix(l.text, "- "):
-			i = p.option(ls, i, &q, seen, &options)
-		case len(q.Options) > 0:
-			p.fail(l.n, "text after the options of question %q", id)
-			i++
-		case orderedItem.MatchString(l.text):
-			p.fail(l.n, "a list inside question %q (put it before the first question)", id)
-			i++
-		default:
-			if !p.construct(l) {
-				p.plain(l)
-				intro = append(intro, strings.TrimSpace(l.text))
-			}
-			i++
-		}
-	}
-	if len(q.Options) < 2 {
-		p.fail(head.n, "question %q needs at least two options", id)
-	}
-	p.round.Questions = append(p.round.Questions, q)
-	fmt.Fprintf(p.out, `<fieldset class="question"><legend id="q-%s">%s</legend>`, id, inline(title))
-	if len(intro) > 0 {
-		fmt.Fprintf(p.out, `<p class="small muted">%s</p>`, inline(strings.Join(intro, " ")))
-	}
-	fmt.Fprintf(p.out, `<div class="options" role="radiogroup" aria-labelledby="q-%s">%s</div></fieldset>`, id, options.String())
-}
-
-func (p *parser) option(ls []line, i int, q *Question, seen map[string]bool, out *strings.Builder) int {
-	l := ls[i]
-	m := optionLine.FindStringSubmatch(l.text)
-	if m == nil {
-		p.fail(l.n, `an option needs an id: "- [id] label"`)
-		return i + 1
-	}
-	id, label := m[1], strings.TrimSpace(m[2])
-	switch {
-	case !idPattern.MatchString(id):
-		p.fail(l.n, "option id %q must match %s", id, idPattern)
-	case seen[id]:
-		p.fail(l.n, "option id %q is repeated in question %q", id, q.ID)
-	case label == "":
-		p.fail(l.n, "option %q has no label", id)
-	}
-	seen[id] = true
-	p.plain(line{l.n, label})
-	q.Options = append(q.Options, id)
-	var detail []string
-	i++
-	for i < len(ls) && strings.HasPrefix(ls[i].text, "  ") {
-		p.continuation(ls[i])
-		detail = append(detail, strings.TrimSpace(ls[i].text))
-		i++
-	}
-	fmt.Fprintf(out, `<label class="option"><input type="radio" name="q-%s" value="%s" data-question="%s"><span><strong>%s</strong>`, q.ID, id, q.ID, inline(label))
-	if len(detail) > 0 {
-		fmt.Fprintf(out, `<small>%s</small>`, inline(strings.Join(detail, " ")))
-	}
-	out.WriteString(`</span></label>`)
-	return i
 }
 
 func inline(s string) string {

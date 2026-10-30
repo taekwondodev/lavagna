@@ -11,7 +11,7 @@ import (
 
 const (
 	maxHeader = 64 << 10
-	// maxLine bounds one record line; a longer one ends the observation.
+
 	maxLine = 16 << 20
 	poll    = 100 * time.Millisecond
 	idle    = 30 * time.Minute
@@ -19,7 +19,6 @@ const (
 
 var errHeader = errors.New("unrecognized session header")
 
-// Format names the record a harness appends while the agent works.
 type Format string
 
 const (
@@ -45,9 +44,6 @@ type Session struct {
 	Offset int64
 }
 
-// Open starts observing a record after its last complete line. Only Pi
-// sessions declare a version to check. The Hermes events file is created
-// empty when no hook has written yet.
 func Open(path string, format Format) (Session, error) {
 	flag := os.O_RDONLY
 	if format == HermesEvents {

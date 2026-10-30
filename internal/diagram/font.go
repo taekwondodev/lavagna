@@ -8,31 +8,22 @@ import (
 	"slices"
 )
 
-// missingEm is the width of a rune the font lacks. The browser draws it in a
-// host fallback font whose width is not portable, so it gets 0.1 em of margin
-// over the 1 em measured on one host.
 const missingEm = 1.1
 
 var be = binary.BigEndian
 
-// Font measures labels set in a variable TrueType font with one wght axis: the
-// hmtx advance, its HVAR delta at the avar-normalized weight, and the GPOS
-// kern XAdvance with its GDEF variation delta. This matches what Chrome
-// renders for SVG text with default kerning, to its 1/64 px quantization. GSUB
-// substitutions and mark positioning are not applied.
 type Font struct {
 	unitsPerEm float64
 	cmap       map[rune]uint16
 	advances   []uint16
-	axis       [3]float64   // wght minimum, default and maximum
-	avar       [][2]float64 // normalized segment map of wght
+	axis       [3]float64
+	avar       [][2]float64
 	hvar       *varStore
-	hvarMap    []uint32 // glyph to outer<<16|inner; nil maps the glyph id directly
+	hvarMap    []uint32
 	gdef       *varStore
-	kern       [][]pairSubtable // per lookup, in LookupList order
+	kern       [][]pairSubtable
 }
 
-// ParseFont reads the tables that label widths need from the font file bytes.
 func ParseFont(b []byte) (*Font, error) {
 	tables, err := directory(b)
 	if err != nil {
@@ -63,7 +54,7 @@ func ParseFont(b []byte) (*Font, error) {
 		}
 	}
 	if av := tables["avar"]; av != nil {
-		// A single-axis font: the first segment map belongs to wght.
+
 		for i := range int(be.Uint16(av[8:])) {
 			p := av[10+4*i:]
 			f.avar = append(f.avar, [2]float64{f2dot14(p), f2dot14(p[2:])})
@@ -90,8 +81,6 @@ func ParseFont(b []byte) (*Font, error) {
 	return f, nil
 }
 
-// Width is the advance width in px of label set at size px and weight. Kerning
-// stops at a rune missing from the font.
 func (f *Font) Width(label string, size, weight float64) float64 {
 	n := f.normalize(weight)
 	units, prev, kerned := 0.0, uint16(0), false
@@ -134,8 +123,6 @@ func directory(b []byte) (map[string][]byte, error) {
 func fixed(b []byte) float64   { return float64(int32(be.Uint32(b))) / 65536 }
 func f2dot14(b []byte) float64 { return float64(int16(be.Uint16(b))) / 16384 }
 
-// parseCmap reads a format 12 subtable, else format 4, from the Unicode or
-// Windows Unicode encodings.
 func (f *Font) parseCmap(c []byte) error {
 	var best []byte
 	format := 0
@@ -184,8 +171,6 @@ func (f *Font) parseCmap(c []byte) error {
 	return nil
 }
 
-// normalize maps a wght value to the normalized coordinate through avar,
-// quantized to F2DOT14.
 func (f *Font) normalize(wght float64) float64 {
 	lo, def, hi := f.axis[0], f.axis[1], f.axis[2]
 	v := 0.0
@@ -217,8 +202,6 @@ func (f *Font) advance(g uint16, n float64) float64 {
 	return adv + f.hvar.delta(idx, n)
 }
 
-// kerning sums the pair's XAdvance over every kern lookup; within a lookup the
-// first matching subtable wins.
 func (f *Font) kerning(left, right uint16, n float64) float64 {
 	sum := 0.0
 	for _, lookup := range f.kern {
@@ -232,9 +215,8 @@ func (f *Font) kerning(left, right uint16, n float64) float64 {
 	return sum
 }
 
-// varStore is an item variation store over the single wght axis.
 type varStore struct {
-	regions [][3]float64 // start, peak, end
+	regions [][3]float64
 	data    []varData
 }
 
@@ -336,7 +318,6 @@ func parseDeltaSetIndexMap(m []byte) []uint32 {
 	return out
 }
 
-// pairSubtable is a GPOS PairPos subtable of format 1 or 2.
 type pairSubtable struct {
 	t        []byte
 	format   int
@@ -360,7 +341,7 @@ func parseKern(gp []byte) [][]pairSubtable {
 			}
 		}
 	}
-	// Lookups apply in LookupList order, not feature order.
+
 	slices.Sort(lookups)
 	var out [][]pairSubtable
 	for _, li := range lookups {
@@ -369,7 +350,7 @@ func parseKern(gp []byte) [][]pairSubtable {
 		var subs []pairSubtable
 		for k := range int(be.Uint16(l[4:])) {
 			st := l[be.Uint16(l[6+2*k:]):]
-			if typ == 9 { // Extension
+			if typ == 9 {
 				if be.Uint16(st[2:]) != 2 {
 					continue
 				}
@@ -420,7 +401,6 @@ func classOf(c []byte, g uint16) int {
 	return 0
 }
 
-// valueSize is the byte size of a ValueRecord with format vf.
 func valueSize(vf uint16) int {
 	n := 0
 	for b := vf; b != 0; b >>= 1 {
@@ -429,8 +409,6 @@ func valueSize(vf uint16) int {
 	return 2 * n
 }
 
-// xAdvance reads XAdvance and its variation delta from the ValueRecord v, whose
-// device offsets are relative to base.
 func xAdvance(base, v []byte, vf uint16, store *varStore, n float64) float64 {
 	if vf&0x0004 == 0 {
 		return 0
@@ -440,10 +418,10 @@ func xAdvance(base, v []byte, vf uint16, store *varStore, n float64) float64 {
 	if vf&0x0040 == 0 || store == nil {
 		return x
 	}
-	// Skip XAdvance, YAdvance, XPlacement device and YPlacement device.
+
 	q := p + 2 + 2*int(vf>>3&0x1) + 2*int(vf>>4&0x1) + 2*int(vf>>5&0x1)
 	if off := be.Uint16(v[q:]); off != 0 {
-		if d := base[off:]; be.Uint16(d[4:]) == 0x8000 { // VariationIndex table
+		if d := base[off:]; be.Uint16(d[4:]) == 0x8000 {
 			x += store.delta(uint32(be.Uint16(d))<<16|uint32(be.Uint16(d[2:])), n)
 		}
 	}
@@ -470,6 +448,6 @@ func (ps pairSubtable) lookup(l, r uint16, store *varStore, n float64) (float64,
 	c1 := classOf(st[be.Uint16(st[8:]):], l)
 	c2 := classOf(st[be.Uint16(st[10:]):], r)
 	classes2 := int(be.Uint16(st[14:]))
-	// Format 2 matches every pair whose first glyph is covered.
+
 	return xAdvance(st, st[16+(c1*classes2+c2)*(s1+s2):], ps.vf1, store, n), true
 }

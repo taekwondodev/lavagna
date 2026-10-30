@@ -38,17 +38,13 @@ const (
 type relayed struct {
 	Round      roundSpec
 	Submission string
-	// Session is the record the witness follows; nil when the harness has
-	// none lavagna can read.
+
 	Session *witness.Session
-	// Paused holds the page of a call that reached its deadline before any
-	// batch, with Send closed until the next call resumes the round.
+
 	Paused bool
 	Owner  relayOwner
 }
 
-// handOver starts the relay that holds the page origin during the agent's
-// turn, whatever the harness. It reports whether a witness observes the turn.
 func handOver(errw io.Writer, sock string, ln net.Listener, r relayed) bool {
 	owner, err := findRelayOwner()
 	if err == nil {
@@ -62,8 +58,6 @@ func handOver(errw io.Writer, sock string, ln net.Listener, r relayed) bool {
 	return r.Session != nil
 }
 
-// observe opens the record the harness appends while the agent works, or
-// returns nil when there is none to read.
 func observe(getenv func(string) string, h harness.Harness, c conversation.Conversation) *witness.Session {
 	path, format := h.Record(getenv, c.Events())
 	if path == "" {

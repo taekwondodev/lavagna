@@ -8,13 +8,11 @@ import (
 	"unicode/utf8"
 )
 
-// lexicon describes the lexical shape of a language closely enough to colour
-// comments, strings, numbers, keywords and calls in one pass over an excerpt.
 type lexicon struct {
-	comments []string    // line comment prefixes
-	blocks   [][2]string // block comments, open and close
-	quotes   string      // quotes of single-line strings with backslash escapes
-	raw      [][2]string // strings that may span lines, without escapes
+	comments []string
+	blocks   [][2]string
+	quotes   string
+	raw      [][2]string
 	keywords map[string]bool
 	literals map[string]bool
 }
@@ -38,8 +36,6 @@ var (
 	shLex    = &lexicon{[]string{"#"}, nil, `"'`, nil, words("if then else elif fi case esac for while until do done in function return local export readonly set unset shift exit break continue source alias and or not end begin switch"), words("true false")}
 )
 
-// lexicons maps a lowercase file extension, or a base name without one, to its
-// language. Excerpts of other files are shown uncoloured.
 var lexicons = map[string]*lexicon{
 	".go": {[]string{"//"}, cBlock, `"'`, [][2]string{{"`", "`"}}, words("break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var any bool byte complex64 complex128 error float32 float64 int int8 int16 int32 int64 rune string uint uint8 uint16 uint32 uint64 uintptr"), words("true false nil iota")},
 	".js": jsLex, ".mjs": jsLex, ".cjs": jsLex, ".jsx": jsLex,
@@ -70,9 +66,6 @@ func lexiconFor(file string) *lexicon {
 	return lexicons[base]
 }
 
-// highlight returns the escaped HTML of each line of text. Token spans close at
-// every line end and reopen on the next line, so each line stays a complete
-// element. Without a lexicon the lines are only escaped.
 func highlight(file, text string) []string {
 	lx := lexiconFor(file)
 	if lx == nil {
@@ -152,8 +145,6 @@ func highlight(file, text string) []string {
 	return append(out, b.String())
 }
 
-// token recognises a comment, string or number starting at i and returns its
-// class and end, or end == i when none starts there.
 func (lx *lexicon) token(text string, i int) (string, int) {
 	rest := text[i:]
 	for _, p := range lx.comments {
@@ -213,8 +204,6 @@ func lineEnd(s string) int {
 	return len(s)
 }
 
-// closing returns the end of a delimited token, or the end of s when it does
-// not close inside the excerpt.
 func closing(s string, d [2]string) int {
 	if n := strings.Index(s[len(d[0]):], d[1]); n >= 0 {
 		return len(d[0]) + n + len(d[1])

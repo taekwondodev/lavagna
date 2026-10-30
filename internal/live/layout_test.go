@@ -1,13 +1,15 @@
 package live
 
 import (
+	"encoding/base64"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/taekwondodev/lavagna/internal/cdptest"
 )
 
-// Widths were tried only in headless Chrome, never on a real phone.
 const (
 	desktopWidth = 1280
 	narrowWidth  = 760
@@ -42,7 +44,6 @@ func wideFiles() map[string]string {
 	return map[string]string{"spesa/screens.css": `.desk { width: 1200px; height: 1400px; } .mobile { width: 360px; height: 300px; }`}
 }
 
-// box returns a shell element's rectangle, or nil when it is not rendered.
 func box(t *testing.T, p *cdptest.Page, selector string) *rect {
 	t.Helper()
 	var r *rect
@@ -54,8 +55,6 @@ func box(t *testing.T, p *cdptest.Page, selector string) *rect {
 
 type rect struct{ Left, Top, Right, Bottom float64 }
 
-// wantHeads waits until the frame's raw blocks, listed as their header label
-// and control, settle on want: fitting follows the column's final width.
 func wantHeads(t *testing.T, f *cdptest.Frame, want, why string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -71,8 +70,6 @@ func wantHeads(t *testing.T, f *cdptest.Frame, want, why string) {
 	}
 }
 
-// settled waits until the frame's height stops changing: fitting a wide block
-// shrinks it and moves 03 under a click.
 func settled(p *cdptest.Page) {
 	p.MustEval(`new Promise(done => {
 		let last = '';
@@ -198,6 +195,66 @@ func TestNarrowWindowKeepsTheDiscussionAndPhoneOpensItAsASheet(t *testing.T) {
 	wantText(t, p, "#summary", "2 in bozza · Q1 → ✎ · Q1 +1 msg")
 }
 
+func TestWideWindowCollapsesTheDiscussionToAStrip(t *testing.T) {
+	run := newPhaseRun(t)
+	run.call(wideRound, wideFiles())
+	p := cdptest.Start(t).Open(run.url, desktopWidth, pageHeight)
+	p.WaitFor(`document.querySelector('#content')`)
+	p.Click(`.option[data-option="inline"]`)
+	p.Click("#send")
+	run.outcome()
+
+	open := box(t, p, "#center")
+	p.Click("#discussion-toggle")
+	strip, center := box(t, p, "#discussion"), box(t, p, "#center")
+	if strip == nil || strip.Right-strip.Left > 44 || strip.Right != desktopWidth || center.Right <= open.Right {
+		t.Errorf("collapsed discussion %v, center %v: want a strip at the right edge and a wider center", strip, center)
+	}
+	if box(t, p, "#composer") != nil {
+		t.Error("the collapsed strip still shows the composer")
+	}
+	wantText(t, p, "#discussion-toggle-label", "Discussione")
+
+	p.Resize(narrowWidth, pageHeight, false)
+	if discussion := box(t, p, "#discussion"); discussion == nil || discussion.Right-discussion.Left < 200 || box(t, p, "#discussion-toggle") != nil {
+		t.Errorf("at %d px: discussion %v; want the full discussion and no toggle", narrowWidth, discussion)
+	}
+
+	p.Resize(desktopWidth, pageHeight, false)
+	run.call("::: reply spesa\nBasta una riga.\n:::\n", nil)
+	p.WaitFor(`document.querySelector('#turn').textContent === 'Tocca a te'`)
+	if box(t, p, `.card[data-target="spesa"] .card-new`) == nil || box(t, p, "#discussion-new") == nil {
+		t.Error("a reply to the active question behind the strip shows no new-reply dot")
+	}
+	if got := evalString(p, `document.querySelector('#discussion-toggle').getAttribute('aria-label')`); got != "Discussione · 1 · nuova risposta" {
+		t.Errorf("collapsed toggle label %q, want the count and the new reply", got)
+	}
+
+	p.Click("#discussion-toggle")
+	if discussion := box(t, p, "#discussion"); discussion == nil || discussion.Right-discussion.Left != 320 || box(t, p, "#composer") == nil {
+		t.Errorf("reopened discussion %v: want the 320 px column with its composer", discussion)
+	}
+	if box(t, p, `.card[data-target="spesa"] .card-new`) != nil {
+		t.Error("reopening the discussion did not clear the new-reply dot")
+	}
+
+	p.Click("#discussion-toggle")
+	png, err := base64.StdEncoding.DecodeString(pixel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropped := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(dropped, png, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.Drop("#discussion-toggle", []string{dropped})
+	if box(t, p, "#composer") == nil {
+		t.Error("a screenshot dragged onto the strip did not open the discussion")
+	}
+	p.Drop("#thread", []string{dropped})
+	p.WaitFor(`document.querySelector('#thread .message-staged img')`)
+}
+
 func TestWideBlocksFitAndExpand(t *testing.T) {
 	run := newPhaseRun(t)
 	run.call(wideRound, wideFiles())
@@ -290,8 +347,6 @@ func TestWideBlocksFitAndExpand(t *testing.T) {
 	}
 }
 
-// forgeScript asks for expansion on any click in the frame, with fields the
-// shell must ignore.
 const forgeScript = `document.addEventListener('click', () => parent.postMessage({lavagna: 'expand', active: true, option: 'inline', send: true}, '*'));`
 
 func TestForgedExpandChangesOnlyPresentation(t *testing.T) {
@@ -319,7 +374,7 @@ func TestForgedExpandChangesOnlyPresentation(t *testing.T) {
 	if got := evalString(p, `document.querySelector('#page').dataset.expanded || 'none'`); got != "none" {
 		t.Errorf("an expand without a gesture in the frame changed the page: %s", got)
 	}
-	// Frame.Click scrolls the window, not the center column Type scrolled.
+
 	p.MustEval(`document.querySelector('#center').scrollTop = 0`, nil)
 	f.Click(".chapter-body > p")
 	p.WaitFor(`document.querySelector('#page').dataset.expanded === 'fit'`)
@@ -354,8 +409,6 @@ func TestRoundScriptCannotTrapThePhoneExpansion(t *testing.T) {
 	f.Click(".raw-expand")
 	p.WaitFor(`document.querySelector('#page').dataset.expanded === 'native'`)
 
-	// The round script removes the frame's Riduci, swallows Escape and keeps
-	// asking for expansion.
 	f.MustEval(`(() => {
 		for (const head of document.querySelectorAll('.raw-head')) head.remove();
 		addEventListener('keydown', event => { if (event.key === 'Escape') event.stopImmediatePropagation(); }, true);

@@ -1,7 +1,4 @@
 #!/bin/sh
-# Builds Lavagna.app from this directory and installs it to $1, replacing the
-# previous copy, then asks macOS for notification permission. $2 is the
-# installed lavagna binary used to route Rex notification clicks.
 set -eu
 
 app=$1

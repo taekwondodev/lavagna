@@ -1,14 +1,6 @@
 # /// script
 # dependencies = ["tiktoken==0.14.0"]
 # ///
-"""Run with uv run scripts/measure-context.py. No product dependency is added.
-
-Replays one grilling phase, the five-call walk of the call model (#15), against
-the pinned baseline and the current checkout, and fails when the savings settled
-in #21 are not met. Counts the agent's command line and stdin plus stdout AND
-stderr of every call, feedback reads and `round --help` once per phase, with
-o200k_base. HTTP traffic and browser rendering are not agent context.
-"""
 
 import io
 import json
@@ -25,12 +17,9 @@ import urllib.request
 import tiktoken
 
 ROOT = Path(__file__).resolve().parents[1]
-# main before per-question rounds: one complete round per turn, --reuse when
-# the content is unchanged.
 BASE = "5f7f83943a537cb31e6e0b9705cdbcc00bd8f421"
 ENC = tiktoken.get_encoding("o200k_base")
 
-# Thresholds settled in #21.
 PHASE_SHARE = 0.50
 REPLY_SHARE = 0.10
 FIRST_SHARE = 1.10
@@ -186,8 +175,6 @@ WHY = {
     "cleanup": "Nessun comando da ricordare.",
 }
 
-# The simulated user feedback, identical in both formats: choices and, per
-# question, messages that the baseline receives as unanchored comments.
 BATCHES = [
     ({"storage": "file"}, {"retention": ["1 giorno non è poco?"]}),
     ({"storage": "file"}, {"retention": ["Il weekend però sì: preferisco più margine."]}),
@@ -211,7 +198,6 @@ def new_element(kind, body=""):
     return f"::: {kind}\n{body}\n:::\n" if body else f"::: {kind}\n:::\n"
 
 
-# The same phase in the per-question call model.
 NEW_CALLS = [
     new_element("phase Archivio delle sessioni")
     + "".join(new_question(q) for q in (STORAGE, RETENTION, CRASH))
@@ -227,7 +213,6 @@ NEW_CALLS = [
 
 
 def old_round(questions, notes=None, capire_extra=""):
-    """One complete baseline round: every open question's content, then its decisions."""
     notes = notes or {}
     parts = ["# Capire"]
     if capire_extra:
@@ -258,9 +243,6 @@ RECAP = "\n".join([
     CONFIRM_EVIDENCE,
 ])
 
-# The same phase on the baseline: answers to comments and changed proposals are
-# content, so every turn is a complete round; no turn of this walk keeps its
-# content unchanged, so none qualifies for --reuse.
 OLD_CALLS = [
     old_round([STORAGE, RETENTION, CRASH]),
     old_round([STORAGE, RETENTION, CRASH], {"retention": REPLY_1}),
@@ -298,7 +280,6 @@ def batch(baseline, view, submission, choices, messages):
 
 
 def present(binary, env, source, body):
-    """Run one call, send one batch, and return the agent context of the call."""
     proc = subprocess.Popen([str(binary), "round"], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, start_new_session=True)
     try:
@@ -344,7 +325,6 @@ def measure(binary, home, baseline):
         assert result.get("lavagna") == "feedback", result
         calls.append(count(context))
         rounds.append(result["round"])
-    # The baseline opens a round per turn; the call model stays in r1 until a new question arrives.
     assert rounds == (["r1", "r2", "r3", "r4", "r5"] if baseline else ["r1", "r1", "r1", "r2", "r3"]), rounds
 
     q, choices, messages = SMALL
@@ -379,8 +359,6 @@ def measure(binary, home, baseline):
 
 
 def main():
-    # A short home keeps relay.sock within the Unix socket path limit; a longer
-    # one adds a relay warning to every call that users never see.
     with tempfile.TemporaryDirectory(prefix="lavagna-context-", dir="/tmp") as directory:
         temp = Path(directory)
         old = temp / "baseline"

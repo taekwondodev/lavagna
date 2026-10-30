@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// The examples of #17, for a question with options atomic, journal and none.
 const (
 	sequenceExample = `Sessione A | a.json.tmp [atomic] | a.log [journal] | a.json [-journal] | Avvio successivo
 Sessione A -> a.json: apre con O_TRUNC [now none]
@@ -35,7 +34,6 @@ Compattazione del log: 2 ms ?2 [journal]`
 
 var options = []Option{{"atomic", "A"}, {"journal", "B"}, {"none", "C"}}
 
-// body numbers the lines of src from line 2, as below an opening line 1.
 func body(src string) []Line {
 	var lines []Line
 	for i, text := range strings.Split(src, "\n") {
@@ -53,8 +51,6 @@ func parse(t *testing.T, kind, src string) *Diagram {
 	return d
 }
 
-// toneOf returns the tone class of the group that draws text, or "" when the
-// drawing lacks it.
 func toneOf(svg, text string) string {
 	i := strings.Index(svg, ">"+text+"<")
 	if i < 0 {
@@ -76,7 +72,7 @@ func TestSequenceExampleDrawsEachVariant(t *testing.T) {
 	}
 	cases := []struct {
 		variant string
-		tones   map[string]string // label: tone class, "" when absent
+		tones   map[string]string
 	}{
 		{"now", map[string]string{
 			"apre con O_TRUNC": "dg-neutral", "crash": "dg-problem", "JSON troncato, errore": "dg-problem",
@@ -124,7 +120,7 @@ func TestBarsExampleSharesOneScale(t *testing.T) {
 			t.Errorf("%s: %s", v, svg)
 		}
 	}
-	// 5 ms is the longest bar of every variant: 280 px.
+
 	want := map[string]string{"now": "224 ", "atomic": "224 280 5.6 ", "journal": "280 56 112 ", "none": "224 "}
 	for v, w := range want {
 		if widths[v] != w {

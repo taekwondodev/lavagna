@@ -17,8 +17,6 @@ import (
 	"github.com/taekwondodev/lavagna/internal/round"
 )
 
-// The calls of the five-call walk in "What does the agent send on each call
-// after the first?" (#15), with demonstrative content.
 const (
 	walkFirst = `::: phase Archivio delle sessioni
 :::
@@ -140,7 +138,6 @@ func (c *call) get(path string) string {
 	return string(b)
 }
 
-// answer sends one batch to the live call and returns its stdout outcome.
 func (c *call) answer(submission, questions string) string {
 	c.t.Helper()
 	v := c.page()
@@ -358,7 +355,6 @@ func TestInvalidCallLeavesStateAndArtifactsAndPrunesOrphans(t *testing.T) {
 		}
 	}
 
-	// A call that died before its commit leaves versions the ledger never named.
 	for _, name := range []string{"storage-2.json", "ghost-1.json", ".artifact-123.tmp"} {
 		if err := os.WriteFile(filepath.Join(dir, "artifacts", "question", name), []byte("{}"), 0o600); err != nil {
 			t.Fatal(err)

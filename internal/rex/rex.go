@@ -1,9 +1,3 @@
-// Package rex opens Lavagna's page in a terminal-browser panel next to the
-// agent inside a local Rex session, and focuses that panel again later.
-//
-// A Target is captured once from the agent's environment and travels as one
-// opaque argument to a later process, which can only open pages in the Rex
-// session it was captured from.
 package rex
 
 import (
@@ -27,16 +21,12 @@ import (
 	"time"
 )
 
-// maxPayload bounds an encoded Target read from a notification.
 const maxPayload = 16 * 1024
 
-// terminalCreator is the creator of terminal blocks in Rex's registry.
 const terminalCreator = "com.superlogical.terminal"
 
 var idPattern = regexp.MustCompile(`^(session|block|window|client):[0-9a-zA-Z-]{8,64}$`)
 
-// Target is where a page opens: a local Rex server, its session and the block
-// of the agent the panel splits beside.
 type Target struct {
 	rex     string
 	browser string
@@ -46,7 +36,6 @@ type Target struct {
 	home    string
 }
 
-// wire is the encoded Target. It carries no page and no capability.
 type wire struct {
 	V       int    `json:"v"`
 	Rex     string `json:"rex"`
@@ -57,9 +46,6 @@ type wire struct {
 	Home    string `json:"home"`
 }
 
-// Capture returns the Target for a complete local Rex context, or nil when
-// BROWSER is set or the context is remote, incomplete or malformed. A missing
-// tool is kept as an empty path so Open can report it.
 func Capture(getenv func(string) string) *Target {
 	if len(strings.Fields(getenv("BROWSER"))) > 0 {
 		return nil
@@ -93,7 +79,6 @@ func executable(path string) string {
 	return path
 }
 
-// lookPath finds name in the PATH list as an absolute path, or "".
 func lookPath(path, name string) string {
 	for _, dir := range filepath.SplitList(path) {
 		if p, err := filepath.Abs(filepath.Join(dir, name)); err == nil && filepath.IsAbs(dir) {
@@ -127,13 +112,11 @@ func (t *Target) validate() error {
 	return nil
 }
 
-// Encode returns the Target as one plain JSON argument.
 func (t *Target) Encode() string {
 	b, _ := json.Marshal(wire{1, t.rex, t.browser, t.server, t.session, t.anchor, t.home})
 	return string(b)
 }
 
-// Decode validates a string produced by Encode.
 func Decode(raw string) (*Target, error) {
 	if len(raw) > maxPayload {
 		return nil, errors.New("rex target is too large")
@@ -160,9 +143,6 @@ type block struct {
 	Owner     string `json:"owner"`
 }
 
-// Open shows page in its panel, creating it beside the agent when no placed
-// terminal carries the page's label. With focus it also selects that panel.
-// Diagnostics never repeat the page or the output of the tools.
 func (t *Target) Open(ctx context.Context, page string, focus bool) error {
 	if err := loopback(page); err != nil {
 		return err
@@ -217,8 +197,6 @@ func loopback(page string) error {
 	return errors.New("page is not a local Lavagna address")
 }
 
-// runtimeDir is private to a page and short enough for terminal-browser's
-// longest socket names, since macOS TMPDIR makes Unix socket paths too long.
 func runtimeDir(home, label string) (string, error) {
 	sum := sha256.Sum256([]byte(home + "\x00" + label))
 	uid := os.Getuid()
@@ -236,8 +214,6 @@ func runtimeDir(home, label string) (string, error) {
 	return dir, nil
 }
 
-// lock serialises every process working on one page. Lock files intentionally
-// persist until OS cleanup: unlinking can split waiters across different inodes.
 func lock(ctx context.Context, path string) (func(), error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -261,8 +237,6 @@ func lock(ctx context.Context, path string) (func(), error) {
 	}
 }
 
-// rexCall runs the Rex CLI against the target server and returns its stdout.
-// Stderr is dropped: it may repeat the capability URL.
 func (t *Target) rexCall(ctx context.Context, args ...string) ([]byte, error) {
 	argv := append([]string{"--server", t.server, "--autostart=false", "--timeout", "3s"}, args...)
 	cmd := exec.CommandContext(ctx, t.rex, argv...)
@@ -294,8 +268,6 @@ func (t *Target) blocks(ctx context.Context) ([]block, error) {
 	return res.Blocks, err
 }
 
-// find adopts the placed terminal with label. If existing labels are
-// duplicated, adopt the lowest id without closing any panels.
 func (t *Target) find(ctx context.Context, label string) (block, bool, error) {
 	all, err := t.blocks(ctx)
 	if err != nil {
@@ -339,7 +311,7 @@ func (t *Target) create(ctx context.Context, runtime, label, page string) (block
 	argv = append(argv, env...)
 	argv = append(argv, t.browser, "open", page, "--no-merge")
 	_, runErr := t.rexCall(ctx, argv...)
-	// A failure after the block was created still leaves it to adopt.
+
 	panel, found, err := t.find(ctx, label)
 	switch {
 	case found:
@@ -352,8 +324,6 @@ func (t *Target) create(ctx context.Context, runtime, label, page string) (block
 	return block{}, errors.New("Rex did not place the Lavagna panel")
 }
 
-// prepareBrowser gives each page its own daemon and profile so Chromium's
-// per-host zoom cannot cross conversations. HOME and XDG_STATE_HOME stay intact.
 func (t *Target) prepareBrowser(runtime, label string) ([]string, error) {
 	base := filepath.Join(t.home, ".local", "share", "lavagna", "rex-browser", label)
 	env := []string{"TERMINAL_BROWSER_NO_TELEMETRY=1", "TERMINAL_BROWSER_PRESENT=animation"}
@@ -381,8 +351,6 @@ type client struct {
 	Sessions []string `json:"session_ids"`
 }
 
-// focus focuses panel in the server and selects its session and window in the
-// connected app, preferring the app that owns the block.
 func (t *Target) focus(ctx context.Context, panel block) error {
 	if err := t.api(ctx, "session.focus_block", map[string]string{"session_id": t.session, "block_id": panel.ID}, nil); err != nil {
 		return err

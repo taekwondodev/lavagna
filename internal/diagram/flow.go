@@ -30,24 +30,16 @@ var (
 	aliasRE = regexp.MustCompile(`^([^\s=]+)\s*=\s*(.+)$`)
 )
 
-// flowLine is a flow line split from its variant tag and marker. A line that
-// is neither an edge nor a group declares the node label, through alias when
-// it has one.
 type flowLine struct {
 	element
 	edge, group []string
 	alias       string
 }
 
-// flow reads a flow block. A line names a node by its label or its alias. An
-// edge adds the nodes it names, in order of first mention; a node declared on
-// its own line takes that line's tag and marker wherever it is first named. A
-// group names only nodes that other lines define. An alias may not repeat the
-// label of another node, which it would hide.
 func (p *parser) flow(n int, lines []Line) {
 	var ls []flowLine
-	declared := map[string]flowLine{} // by label
-	aliases := map[string]flowLine{}  // by alias
+	declared := map[string]flowLine{}
+	aliases := map[string]flowLine{}
 	for _, l := range lines {
 		e, rest := p.element(l.N, l.Text)
 		fl := flowLine{element: e}
@@ -130,7 +122,7 @@ func (p *parser) flow(n int, lines []Line) {
 			node(fl.line, fl.label)
 		}
 	}
-	inGroup := map[int]int{} // node to the line of its group
+	inGroup := map[int]int{}
 	for _, fl := range ls {
 		if fl.group == nil {
 			continue
@@ -169,21 +161,19 @@ func (p *parser) flow(n int, lines []Line) {
 const (
 	nodeMinWidth  = 80.0
 	nodeMinHeight = 36.0
-	nodeWidth     = 150.0 // a node label wraps beyond this
-	edgeWidth     = 130.0 // an edge label wraps beyond this
+	nodeWidth     = 150.0
+	edgeWidth     = 130.0
 	flowRowGap    = 26.0
 	groupTitlePad = 6.0
 )
 
 var groupStyle = style{11, 650, 14}
 
-// flowView is the flow one variant draws: the elements present in it, their
-// measured labels and the graph the layout reads.
 type flowView struct {
 	g                    graph
-	nodes, edges, groups []int // indices into the diagram's
+	nodes, edges, groups []int
 	names, texts         []wrapped
-	titles               []wrapped // set by geometry, at the width of each group
+	titles               []wrapped
 }
 
 func (d *Diagram) flowView(f *Font, variant string) *flowView {
@@ -234,8 +224,6 @@ func (d *Diagram) flowView(f *Font, variant string) *flowView {
 	return v
 }
 
-// geometry lays the view out. The coordinates may be negative; the drawing
-// translates them.
 func (v *flowView) geometry(f *Font, d *Diagram) geometry {
 	if len(v.nodes) == 0 {
 		return geometry{}
@@ -245,9 +233,7 @@ func (v *flowView) geometry(f *Font, d *Diagram) geometry {
 	if len(v.groups) == 0 {
 		return geo
 	}
-	// Titles wrap to the width of their box, which the row gap does not
-	// change; the row gap then makes room for the tallest title between a
-	// group and the one below it.
+
 	v.titles = make([]wrapped, len(v.groups))
 	titles := make([]float64, len(v.groups))
 	for i, gi := range v.groups {
@@ -261,7 +247,6 @@ func (d *Diagram) drawFlow(f *Font, variant string) string {
 	v := d.flowView(f, variant)
 	geo := v.geometry(f, d)
 
-	// Translate the drawing to the margin.
 	lo, hi := point{math.Inf(1), math.Inf(1)}, point{math.Inf(-1), math.Inf(-1)}
 	grow := func(r rect) {
 		lo = point{min(lo.x, r.x0), min(lo.y, r.y0)}
@@ -336,11 +321,8 @@ func (d *Diagram) drawFlow(f *Font, variant string) string {
 	return cv.svg(d.title, width, height)
 }
 
-// arrow draws the polyline p with an arrowhead at its last point, along its
-// last segment.
 func (c *canvas) arrow(p []point, dashed bool) {
-	// A stub shorter than the head would turn the head away from the line
-	// that reaches it.
+
 	if n := len(p); n > 2 && math.Hypot(p[n-1].x-p[n-2].x, p[n-1].y-p[n-2].y) < arrowHead+2 {
 		p = append(p[:n-2], p[n-1])
 	}

@@ -54,8 +54,6 @@ func TestPhaseRoundRejectsStoredOverflowWithoutPublishingPartialArtifacts(t *tes
 		t.Fatalf("failed input mutated state/artifacts: state=%+v artifact=%v", state, artifactErr)
 	}
 
-	// JSON stores []byte resources as base64. Their serialized size must count
-	// toward the same 6 MiB artifact bound, alongside source and rendered HTML.
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "large"), 0o700); err != nil {
 		t.Fatal(err)

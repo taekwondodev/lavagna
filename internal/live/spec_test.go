@@ -7,8 +7,6 @@ import (
 	"github.com/taekwondodev/lavagna/internal/round"
 )
 
-// phaseSpec serves source as the first call of a phase, as PhaseRound would:
-// parsed, applied to an empty ledger and rendered with its question resources.
 func phaseSpec(t *testing.T, o conversation.Origin, source string, files []round.File) roundSpec {
 	t.Helper()
 	phase, errs := round.ParsePhase([]byte(source))

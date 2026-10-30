@@ -27,7 +27,7 @@ func TestResolveBindsTheHarnessThatOwnsTheCall(t *testing.T) {
 	cases := []struct {
 		name  string
 		vars  map[string]string
-		owner string // empty: the owner must not be consulted
+		owner string
 		want  Harness
 		err   error
 	}{

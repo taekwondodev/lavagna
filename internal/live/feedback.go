@@ -48,7 +48,7 @@ func Feedback(getenv func(string) string, out io.Writer, request FeedbackRequest
 		return invalid(out, "feedback not found in this conversation")
 	}
 	if request.All {
-		// A record is returned as written, by whichever lavagna wrote it.
+
 		if !json.Valid(b) {
 			return failure(out, errors.New("stored feedback is invalid"))
 		}

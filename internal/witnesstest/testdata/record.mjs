@@ -1,10 +1,3 @@
-// Writes the modelled witness samples through Pi's own SessionManager: the
-// entry envelopes come from Pi's serializer, while the message bodies are
-// modelled on Pi 1.0.3's documented shapes for turns a live run did not
-// produce. answered, next-round and close are cut from a real Pi session with
-// cut.mjs instead.
-// Regenerate with: node internal/witnesstest/testdata/record.mjs <pi-coding-agent dir>
-// e.g. ~/.pi/agent/install/releases/1.0.3/node_modules/@earendil-works/pi-coding-agent
 import { mkdtempSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -15,7 +8,6 @@ if (!pi) throw new Error("usage: node record.mjs <pi-coding-agent dir>");
 const { SessionManager } = await import(pathToFileURL(join(pi, "dist/index.js")).href);
 const out = dirname(fileURLToPath(import.meta.url));
 
-// The witness tests replace this placeholder with the submission they send.
 const submission = "s-0123456789abcdef01234567";
 const feedback = `lavagna · round r1 · http://127.0.0.1:50000/s/${"0".repeat(64)}/ · Esc per interrompere\n` +
   `{"lavagna":"feedback","round":"r1","submission":"${submission}","choices":{"storage":"db"},"comments":[{"anchor":null,"text":"ok, ma..."}],"images":[]}\n`;
@@ -28,12 +20,10 @@ const result = (id, text, isError = false) => ({ role: "toolResult", toolCallId:
 const said = text => assistant("stop", [{ type: "text", text }]);
 
 const samples = {
-  // The turn ends before any tool result carries the batch.
   "unread": [
     result("call_round", "Command aborted", true),
     assistant("aborted", []),
   ],
-  // A retryable provider error: Pi keeps the failed attempt and the turn goes on.
   "retry": [
     result("call_round", feedback),
     { ...assistant("error", []), errorMessage: "overloaded_error" },
@@ -41,7 +31,6 @@ const samples = {
     result("call_ls", "README.md\n"),
     said("Ho registrato la scelta: database locale."),
   ],
-  // A stop reason this witness does not know: receipts must degrade.
   "unrecognized": [
     result("call_round", feedback),
     assistant("suspended", [{ type: "text", text: "..." }]),

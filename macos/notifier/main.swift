@@ -1,12 +1,3 @@
-// lavagna-notifier posts lavagna's fixed-text notifications and, when one is
-// clicked, brings the conversation's page forward.
-//
-//	lavagna-notifier first|update URL [--rex TARGET]   post one notification
-//	lavagna-notifier authorize          ask for notification permission
-//	lavagna-notifier                    launched by macOS for a click
-//
-// It never receives question content: the text is fixed and URL must be a
-// lavagna loopback page. The URL travels as data, never as script source.
 import AppKit
 import UserNotifications
 
@@ -18,7 +9,6 @@ enum Exit: Int32 {
     case failed = 5
 }
 
-// Bounds the wait for a consent banner the user has not answered.
 let patience: TimeInterval = 5
 
 let chrome = "com.google.Chrome"
@@ -34,8 +24,6 @@ func page(_ raw: String) -> URL? {
 
 func code(_ s: String) -> FourCharCode { s.utf8.reduce(0) { $0 << 8 | FourCharCode($1) } }
 
-// Brings forward the Chrome tab already showing page. It runs only while
-// Chrome is running, so a click never launches it.
 let focusTab = """
 on findtab(page)
 	tell application id "com.google.Chrome"
@@ -64,7 +52,6 @@ on focustab(page)
 end focustab
 """
 
-// focusChrome passes the page to focusTab as an Apple event parameter.
 func focusChrome(_ url: URL) -> Bool {
     guard !NSRunningApplication.runningApplications(withBundleIdentifier: chrome).isEmpty,
           let script = NSAppleScript(source: focusTab) else { return false }
@@ -78,15 +65,12 @@ func focusChrome(_ url: URL) -> Bool {
     var failure: NSDictionary?
     let done = script.executeAppleEvent(call, error: &failure)
     if let failure {
-        // The number alone: -1743 means Automation for Chrome is not allowed.
         NSLog("lavagna-notifier: focustab failed: %@", String(describing: failure[NSAppleScript.errorNumber] ?? "?"))
         return false
     }
     return done.booleanValue
 }
 
-// Rex routing stays in Go. The executable is fixed at install time, never
-// from notification data; TARGET remains an opaque argv value.
 func focusRex(_ url: URL, _ target: String) -> Bool {
     guard !target.isEmpty, target.utf8.count <= 16 * 1024,
           let resource = Bundle.main.url(forResource: "lavagna-path", withExtension: nil),
@@ -125,7 +109,6 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
         let args = Array(CommandLine.arguments.dropFirst())
         switch args.count {
         case 0:
-            // A click launches the helper; its response arrives through the delegate.
             DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
                 if !self.handlingClick { exit(0) }
             }
