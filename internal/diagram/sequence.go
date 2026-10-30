@@ -12,10 +12,10 @@ const (
 
 	boxPadX, boxPadY = 12.0, 8.0
 	boxMinWidth      = 80.0
-	nameWidth        = 140.0 // a participant name wraps beyond this
+	nameWidth        = 140.0
 	columnGap        = 32.0
 	messageWidth     = 200.0
-	labelPad         = 16.0 // between a message label and the lifelines it spans
+	labelPad         = 16.0
 	notePadX         = 10.0
 	notePadY         = 5.0
 	noteWidth        = 180.0
@@ -25,7 +25,6 @@ const (
 	stepGap          = 14.0
 )
 
-// step is a message or, with note set, a note on participant from.
 type step struct {
 	element
 	note     bool
@@ -100,10 +99,9 @@ func (p *parser) sequence(n int, lines []Line) {
 	}
 }
 
-// label of a step, wrapped and measured.
 type wrapped struct {
 	lines []string
-	width float64 // widest line, with the badge after the last one
+	width float64
 }
 
 func (f *Font) measure(e element, width float64, s style) wrapped {
@@ -114,14 +112,14 @@ func (f *Font) measure(e element, width float64, s style) wrapped {
 	w := f.widest(lines, s)
 	if e.badge > 0 {
 		last := f.Width(lines[len(lines)-1], s.size, s.weight)
-		// A centred label keeps room for the badge on both sides of its last line.
+
 		w = max(w, last+2*badgeSpace)
 	}
 	return wrapped{lines, w}
 }
 
 func (d *Diagram) drawSequence(f *Font, variant string) string {
-	var cols []int // participants drawn, in order
+	var cols []int
 	for i, e := range d.participants {
 		if e.in(variant) {
 			cols = append(cols, i)
@@ -155,8 +153,6 @@ func (d *Diagram) drawSequence(f *Font, variant string) string {
 		}
 	}
 
-	// Place each lifeline as far left as the boxes, notes and the labels of
-	// messages ending on it allow.
 	x := make([]float64, len(cols))
 	right := 0.0
 	for c := range cols {
@@ -263,7 +259,6 @@ func (d *Diagram) drawSequence(f *Font, variant string) string {
 	return cv.svg(d.title, width, height)
 }
 
-// label writes a centred label with its badge after the last line.
 func (c *canvas) label(f *Font, e element, l wrapped, x, y float64, s style) {
 	c.text(x, y, l.lines, s, "middle", "dg-text")
 	if e.badge > 0 {
@@ -272,7 +267,6 @@ func (c *canvas) label(f *Font, e element, l wrapped, x, y float64, s style) {
 	}
 }
 
-// head draws an arrowhead whose tip is at x, y, pointing in direction dir.
 func (c *canvas) head(x, y, dir float64) {
 	c.printf(`<path class="dg-head" d="M%s %sL%s %sL%s %sZ"/>`, num(x), num(y), num(x-dir*arrowHead), num(y-4), num(x-dir*arrowHead), num(y+4))
 }

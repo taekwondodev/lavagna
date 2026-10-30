@@ -112,8 +112,7 @@ type parser struct {
 	used      int
 	recap     []RecapRow
 	phase     bool
-	// options are the question's variants for diagrams; current is the chapter
-	// being rendered; repeat holds the diagrams of 01 that 02 draws again.
+
 	options []diagram.Option
 	current string
 	repeat  []string
@@ -345,7 +344,6 @@ func (p *parser) component(ls []line, i int, sc scope) int {
 	return end + 1
 }
 
-// diagramFont measures diagram labels with the font the page embeds.
 var diagramFont = sync.OnceValues(func() (*diagram.Font, error) {
 	b, err := fs.ReadFile(page.Assets, page.Font)
 	if err != nil {
@@ -356,9 +354,6 @@ var diagramFont = sync.OnceValues(func() (*diagram.Font, error) {
 
 var diagramNames = map[string]string{"sequence": "Sequenza", "flow": "Flusso", "bars": "Barre"}
 
-// diagram draws a sequence, flow or bars block as static SVG. 01 shows the present
-// state and leaves a diagram that declares variants to 02, which draws one SVG
-// per variant for the frame helper to show.
 func (p *parser) diagram(n int, kind, title string, body []line) {
 	lines := make([]diagram.Line, len(body))
 	for i, l := range body {
@@ -689,7 +684,7 @@ func (p *parser) raw(ls []line, i int, sc scope) int {
 		p.fail(ls[i].n, "raw HTML belongs in # Capire or # Confrontare")
 		return end
 	}
-	// The frame helper fits a raw block wider than the column inside its stage.
+
 	p.out.WriteString(`<div class="raw"><div class="raw-stage">` + "\n")
 	for _, l := range ls[i:end] {
 		for _, m := range dataRef.FindAllStringSubmatch(l.text, -1) {

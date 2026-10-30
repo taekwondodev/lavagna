@@ -1,7 +1,3 @@
-// Package diagram parses the sequence, flow and bars blocks of a question and
-// draws each as one static SVG per variant: now, the present state, and every option
-// of the question. Labels are measured with the embedded font, so the author
-// writes no coordinates, sizes, line breaks or colours.
 package diagram
 
 import (
@@ -14,32 +10,24 @@ import (
 	"unicode/utf8"
 )
 
-// Now is the variant that draws the present state.
 const Now = "now"
 
 const maxLabel = 80
 
-// Option is an option of the question, a variant a diagram can draw. Key is
-// the letter the page shows for it.
 type Option struct{ ID, Key string }
 
-// Line is one source line of a block body.
 type Line struct {
 	N    int
 	Text string
 }
 
-// Error is a grammar error on a source line.
 type Error struct {
 	Line int
 	Msg  string
 }
 
-// Kind reports whether name opens a diagram block.
 func Kind(name string) bool { return name == "sequence" || name == "flow" || name == "bars" }
 
-// tone is how an element is drawn. A marker sets it; otherwise an element
-// drawn in an option variant and absent from now is a change.
 type tone uint8
 
 const (
@@ -51,15 +39,12 @@ const (
 
 var toneClass = [...]string{"dg-neutral", "dg-change", "dg-risk", "dg-problem"}
 
-// element is what every diagram line shares: a label, a marker and the
-// variants that draw it.
 type element struct {
 	line  int
 	label string
 	tone  tone
 	badge int
-	// only lists the variants of a [now a] tag, or with except those of [-a];
-	// nil draws the element in every variant.
+
 	only   []string
 	except bool
 }
@@ -75,7 +60,6 @@ func (e element) toneIn(variant string) tone {
 	return e.tone
 }
 
-// Diagram is a parsed block.
 type Diagram struct {
 	kind, title string
 	options     []Option
@@ -92,11 +76,8 @@ type Diagram struct {
 	unit string
 }
 
-// Varies reports whether the diagram declares variants, so 02 draws it for the
-// variant shown.
 func (d *Diagram) Varies() bool { return d.varies }
 
-// Variants lists now and the option ids, in the order the page shows them.
 func (d *Diagram) Variants() []string {
 	ids := []string{Now}
 	for _, o := range d.options {
@@ -105,7 +86,6 @@ func (d *Diagram) Variants() []string {
 	return ids
 }
 
-// SVG draws the diagram for variant.
 func (d *Diagram) SVG(f *Font, variant string) string {
 	switch d.kind {
 	case "bars":
@@ -130,8 +110,6 @@ func (p *parser) fail(n int, format string, args ...any) {
 	p.errs = append(p.errs, Error{n, fmt.Sprintf(format, args...)})
 }
 
-// Parse reads a block opened on line n with title and the given body, for a
-// question with options.
 func Parse(kind, title string, n int, body []Line, options []Option) (*Diagram, []Error) {
 	p := &parser{d: &Diagram{kind: kind, title: title, options: options}}
 	if title != "" {
@@ -159,8 +137,6 @@ func Parse(kind, title string, n int, body []Line, options []Option) (*Diagram, 
 	return p.d, nil
 }
 
-// element splits the variant tag and the marker off the end of text and
-// returns the rest.
 func (p *parser) element(n int, text string) (element, string) {
 	e := element{line: n}
 	if m := tagRE.FindStringSubmatchIndex(text); m != nil {
@@ -194,7 +170,6 @@ func (p *parser) element(n int, text string) (element, string) {
 	return e, strings.TrimSpace(text)
 }
 
-// label checks that text is a plain label of at most 80 characters.
 func (p *parser) label(n int, what, text string) {
 	switch {
 	case text == "":
@@ -206,8 +181,6 @@ func (p *parser) label(n int, what, text string) {
 	}
 }
 
-// presentIn reports, for the line n drawing e, an element of of it names that
-// is absent from a variant drawing e.
 func (p *parser) presentIn(n int, e element, what string, of []element, names ...int) {
 	for _, v := range p.d.Variants() {
 		if !e.in(v) {

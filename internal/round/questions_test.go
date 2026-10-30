@@ -421,7 +421,6 @@ func TestDiagramErrorsCarryTheirRoundLine(t *testing.T) {
 	}
 }
 
-// TestGrammarDiagramExampleRenders keeps the example of --help grammar valid.
 func TestGrammarDiagramExampleRenders(t *testing.T) {
 	_, rest, _ := strings.Cut(Grammar, "## Diagrams")
 	_, example, _ := strings.Cut(rest, "```text\n")
@@ -438,8 +437,6 @@ func TestGrammarDiagramExampleRenders(t *testing.T) {
 	}
 }
 
-// TestFlowExampleOf17Renders draws the flow example of #17 in a question with
-// options send and inside.
 func TestFlowExampleOf17Renders(t *testing.T) {
 	phase, errs := ParsePhase([]byte(`# Chi conosce la scelta prima del Send? {id="send"}
 ## Capire

@@ -5,7 +5,6 @@ import (
 	"slices"
 )
 
-// PhaseBytes bounds the stored current versions of every question in a phase.
 const PhaseBytes = 16 << 20
 
 type Status string
@@ -23,8 +22,6 @@ const (
 	Reopened Mark = "reopened"
 )
 
-// Ledger is the phase's question ledger. Apply and Accept are its only
-// transitions; both return a new ledger and never share slices with the old one.
 type Ledger struct {
 	Title     string              `json:"title,omitempty"`
 	Round     int                 `json:"round"`
@@ -47,7 +44,6 @@ type Question struct {
 	Thread  []Message `json:"thread,omitempty"`
 }
 
-// Marked records what happened to a question in a round it has left.
 type Marked struct {
 	Round int  `json:"round"`
 	Mark  Mark `json:"mark"`
@@ -58,7 +54,6 @@ type Option struct {
 	Label string `json:"label"`
 }
 
-// Answer is the user's last sent choice or free-text answer.
 type Answer struct {
 	Choice string `json:"choice,omitempty"`
 	Text   string `json:"text,omitempty"`
@@ -72,8 +67,6 @@ type Message struct {
 	Images     []string `json:"images,omitempty"`
 }
 
-// Decision is one row of the decisions table, copied when the question settles
-// so it stays readable after a replacement.
 type Decision struct {
 	Question string   `json:"question"`
 	Title    string   `json:"title"`
@@ -84,7 +77,6 @@ type Decision struct {
 	Struck   bool     `json:"struck,omitempty"`
 }
 
-// Call holds one call's elements. Line numbers locate errors in round.md.
 type Call struct {
 	Phase     string
 	PhaseLine int
@@ -99,7 +91,6 @@ type Settle struct {
 	Why        string
 }
 
-// Version is one question as sent: a whole question, or a bare title when Planned.
 type Version struct {
 	Line    int
 	ID      string
@@ -109,14 +100,12 @@ type Version struct {
 	Options []Option
 }
 
-// Reply is an agent message; an empty ID addresses the Overview.
 type Reply struct {
 	Line int
 	ID   string
 	Text string
 }
 
-// Batch is one accepted feedback batch.
 type Batch struct {
 	Submission string
 	Questions  map[string]Feedback
@@ -135,10 +124,6 @@ const (
 	user  = "user"
 )
 
-// Apply validates c against the ledger and returns the ledger after it, in the
-// order phase, settled, replacements, reply, new questions with the round
-// advance. On any error the receiver is returned unchanged with every error.
-// It stays one function by design: see docs/adr/0002-ledger-apply-stays-one-transition.md.
 func (l Ledger) Apply(c Call) (Ledger, []string) {
 	n := l.clone()
 	if n.Questions == nil {
@@ -274,9 +259,6 @@ func (l Ledger) Apply(c Call) (Ledger, []string) {
 	return n, nil
 }
 
-// Accept records one accepted batch: it replaces the recorded answers of the
-// current round's open questions and appends the user's messages. A batch
-// already recorded under the same submission changes nothing.
 func (l Ledger) Accept(b Batch) Ledger {
 	if l.received(b.Submission) {
 		return l
@@ -333,7 +315,6 @@ func (l Ledger) received(submission string) bool {
 	return false
 }
 
-// Stored is the total size of every question's current version.
 func (l Ledger) Stored() int {
 	total := 0
 	for _, q := range l.Questions {
@@ -342,7 +323,6 @@ func (l Ledger) Stored() int {
 	return total
 }
 
-// Artifacts names the question artifacts the ledger references.
 func (l Ledger) Artifacts() map[string]bool {
 	names := map[string]bool{}
 	for id, q := range l.Questions {

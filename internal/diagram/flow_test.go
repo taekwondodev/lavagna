@@ -11,7 +11,6 @@ import (
 	"testing"
 )
 
-// The flow example of #17, for a question with options send and inside.
 const flowExample = `cli = lavagna CLI
 frame = Frame sandbox
 Agente -> cli: domande
@@ -25,7 +24,6 @@ group Browser: Shell, frame`
 
 var flowOptions = []Option{{"send", "A"}, {"inside", "B"}}
 
-// flowExamples reads the eight examples of #13, each with its hand layout.
 func flowExamples(t testing.TB) []handExample {
 	b, err := os.ReadFile("testdata/flow-examples.json")
 	if err != nil {
@@ -51,8 +49,6 @@ type handExample struct {
 	}
 }
 
-// source writes the example in the flow grammar: an alias per node, its
-// line breaks left to the measured wrapping, then edges and groups.
 func (ex handExample) source() string {
 	var b strings.Builder
 	for _, n := range ex.Nodes {
@@ -71,8 +67,6 @@ func (ex handExample) source() string {
 	return b.String()
 }
 
-// hand redraws the hand cells of ex on the boxes of the automatic layout, as
-// #13 did: straight edges between box centres, opposite pairs 8 px apart.
 func (ex handExample) hand(auto geometry) geometry {
 	cols, rows := 0, 0
 	for _, n := range ex.Nodes {
@@ -129,10 +123,6 @@ func (ex handExample) hand(auto geometry) geometry {
 	return geo
 }
 
-// metrics counts, on drawn geometry, the edges passing through a node other
-// than their ends, the group boxes holding a non-member, the edge crossings,
-// and the edge labels overlapping a node or another label or crossed by
-// another edge.
 type metrics struct{ through, nonMembers, crossings, labelOverlaps, labelsCrossed int }
 
 func measureFlow(edges [][2]int, members [][]int, geo geometry) (metrics, []string) {
@@ -203,13 +193,10 @@ func cross(a, b, c point) float64 {
 	return v
 }
 
-// properCross is true when two segments cross at one interior point.
 func properCross(a, b, c, d point) bool {
 	return cross(a, b, c)*cross(a, b, d) < 0 && cross(c, d, a)*cross(c, d, b) < 0
 }
 
-// laidOut parses src and lays out variant, with the edges and group members
-// in the view's indices.
 func laidOut(t testing.TB, f *Font, src, variant string) (*flowView, geometry, [][]int) {
 	t.Helper()
 	d, errs := Parse("flow", "", 1, body(src), flowOptions)
@@ -237,16 +224,14 @@ func TestFlowExamplesMeetTheLayoutMetrics(t *testing.T) {
 			got, details := measureFlow(v.g.edges, members, auto)
 			hand, _ := measureFlow(v.g.edges, members, ex.hand(auto))
 			t.Logf("automatic %+v, hand %+v", got, hand)
-			// #13 measured one hand crossing, in wayfinder-map, and none
-			// elsewhere; the redrawn hand layouts must agree.
+
 			if want := map[string]int{"wayfinder-map": 1}[ex.Name]; hand.crossings != want {
 				t.Errorf("hand layout has %d crossings, #13 measured %d", hand.crossings, want)
 			}
 			if got.through != 0 || got.nonMembers != 0 || got.crossings > hand.crossings {
 				t.Errorf("automatic %+v against hand %+v: %v", got, hand, details)
 			}
-			// Not required by #33, but kept: labels clear of nodes, other
-			// labels and other edges.
+
 			if got.labelOverlaps != 0 || got.labelsCrossed != 0 {
 				t.Errorf("labels: %+v: %v", got, details)
 			}
@@ -254,8 +239,6 @@ func TestFlowExamplesMeetTheLayoutMetrics(t *testing.T) {
 	}
 }
 
-// randomFlow is a deterministic flow of nodes nodes and edges labelled edges,
-// with four groups of up to size nodes each.
 func randomFlow(seed uint32, nodes, edges, size int) string {
 	next := func(n int) int {
 		seed = seed*1664525 + 1013904223
@@ -290,8 +273,6 @@ func randomFlow(seed uint32, nodes, edges, size int) string {
 	return b.String()
 }
 
-// TestFlowLayoutKeepsEdgesOutOfNodesAndGroups checks the guarantees beyond the
-// examples of #13, up to the limits of #17.
 func TestFlowLayoutKeepsEdgesOutOfNodesAndGroups(t *testing.T) {
 	f := testFont(t)
 	for seed := range uint32(300) {
@@ -339,7 +320,7 @@ func TestFlowExampleDrawsEachVariant(t *testing.T) {
 	}
 	cases := []struct {
 		variant string
-		tones   map[string]string // label: tone class, "" when absent
+		tones   map[string]string
 	}{
 		{"now", map[string]string{
 			"lavagna CLI": "dg-neutral", "Frame sandbox": "dg-neutral", "Agente": "dg-neutral", "Browser": "dg-neutral",
@@ -350,8 +331,7 @@ func TestFlowExampleDrawsEachVariant(t *testing.T) {
 	}
 	for _, variant := range d.Variants() {
 		v, geo, members := laidOut(t, f, flowExample, variant)
-		// In inside, lavagna CLI and Utente both feed Shell and Frame
-		// sandbox: one crossing is unavoidable.
+
 		if m, details := measureFlow(v.g.edges, members, geo); m.through+m.nonMembers+m.labelOverlaps+m.labelsCrossed != 0 || m.crossings > 1 {
 			t.Errorf("%s: %+v: %v", variant, m, details)
 		}

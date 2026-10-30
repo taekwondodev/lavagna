@@ -10,7 +10,6 @@ import (
 	"github.com/taekwondodev/lavagna/internal/cdptest"
 )
 
-// Widths were tried only in headless Chrome, never on a real phone.
 const (
 	desktopWidth = 1280
 	narrowWidth  = 760
@@ -45,7 +44,6 @@ func wideFiles() map[string]string {
 	return map[string]string{"spesa/screens.css": `.desk { width: 1200px; height: 1400px; } .mobile { width: 360px; height: 300px; }`}
 }
 
-// box returns a shell element's rectangle, or nil when it is not rendered.
 func box(t *testing.T, p *cdptest.Page, selector string) *rect {
 	t.Helper()
 	var r *rect
@@ -57,8 +55,6 @@ func box(t *testing.T, p *cdptest.Page, selector string) *rect {
 
 type rect struct{ Left, Top, Right, Bottom float64 }
 
-// wantHeads waits until the frame's raw blocks, listed as their header label
-// and control, settle on want: fitting follows the column's final width.
 func wantHeads(t *testing.T, f *cdptest.Frame, want, why string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -74,8 +70,6 @@ func wantHeads(t *testing.T, f *cdptest.Frame, want, why string) {
 	}
 }
 
-// settled waits until the frame's height stops changing: fitting a wide block
-// shrinks it and moves 03 under a click.
 func settled(p *cdptest.Page) {
 	p.MustEval(`new Promise(done => {
 		let last = '';
@@ -353,8 +347,6 @@ func TestWideBlocksFitAndExpand(t *testing.T) {
 	}
 }
 
-// forgeScript asks for expansion on any click in the frame, with fields the
-// shell must ignore.
 const forgeScript = `document.addEventListener('click', () => parent.postMessage({lavagna: 'expand', active: true, option: 'inline', send: true}, '*'));`
 
 func TestForgedExpandChangesOnlyPresentation(t *testing.T) {
@@ -382,7 +374,7 @@ func TestForgedExpandChangesOnlyPresentation(t *testing.T) {
 	if got := evalString(p, `document.querySelector('#page').dataset.expanded || 'none'`); got != "none" {
 		t.Errorf("an expand without a gesture in the frame changed the page: %s", got)
 	}
-	// Frame.Click scrolls the window, not the center column Type scrolled.
+
 	p.MustEval(`document.querySelector('#center').scrollTop = 0`, nil)
 	f.Click(".chapter-body > p")
 	p.WaitFor(`document.querySelector('#page').dataset.expanded === 'fit'`)
@@ -417,8 +409,6 @@ func TestRoundScriptCannotTrapThePhoneExpansion(t *testing.T) {
 	f.Click(".raw-expand")
 	p.WaitFor(`document.querySelector('#page').dataset.expanded === 'native'`)
 
-	// The round script removes the frame's Riduci, swallows Escape and keeps
-	// asking for expansion.
 	f.MustEval(`(() => {
 		for (const head of document.querySelectorAll('.raw-head')) head.remove();
 		addEventListener('keydown', event => { if (event.key === 'Escape') event.stopImmediatePropagation(); }, true);

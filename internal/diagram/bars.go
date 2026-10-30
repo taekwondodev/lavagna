@@ -7,17 +7,17 @@ import (
 
 const (
 	maxBars    = 12
-	barLabel   = 200.0 // a bar label wraps beyond this
-	barArea    = 280.0 // the longest bar
+	barLabel   = 200.0
+	barArea    = 280.0
 	barHeight  = 14.0
 	barGap     = 10.0
-	barSpacing = 10.0 // between rows
+	barSpacing = 10.0
 )
 
 type bar struct {
 	element
 	value float64
-	text  string // the value as written, with its unit
+	text  string
 }
 
 var barRE = regexp.MustCompile(`^(.+?)\s*:\s*(-?[0-9]+(?:\.[0-9]+)?)(?:\s+(\S.*))?$`)
@@ -58,8 +58,6 @@ func (p *parser) barList(n int, lines []Line) {
 	}
 }
 
-// drawBars draws the bars of variant on the scale and columns of every
-// variant, so switching variants keeps the geometry.
 func (d *Diagram) drawBars(f *Font, variant string) string {
 	labels := make([]wrapped, len(d.bars))
 	labelW, valueW, top := 0.0, 0.0, 0.0

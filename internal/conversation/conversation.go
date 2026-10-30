@@ -36,8 +36,6 @@ var ErrBusy = errors.New("another lavagna call is live in this conversation")
 
 var ErrNewerFormat = errors.New("conversation state was written by a newer lavagna; run lavagna close to discard it")
 
-// Format is the state.json layout this binary writes. A missing field is the
-// layout before the question ledger.
 const Format = 1
 
 type Conversation struct {
@@ -46,8 +44,6 @@ type Conversation struct {
 	dir  string
 }
 
-// For binds the conversation of a harness identity. Pages never receive the
-// identity, only the key derived from it.
 func For(identity string) (Conversation, error) {
 	sum := sha256.Sum256([]byte(identity))
 	key := hex.EncodeToString(sum[:8])
@@ -63,8 +59,6 @@ func (c Conversation) Images() string { return filepath.Join(c.dir, imagesDir) }
 
 func (c Conversation) Relay() string { return filepath.Join(c.dir, relayName) }
 
-// Events is the file harness hooks append observations to, for harnesses
-// whose own record a witness cannot read.
 func (c Conversation) Events() string { return filepath.Join(c.dir, eventsName) }
 
 type Origin struct {
@@ -182,10 +176,6 @@ func (l *Lease) Release() { l.lock.Close() }
 
 func (l *Lease) Load() (State, error) { return Peek(l.conv) }
 
-// Current loads the state for a call that changes the phase. State written by
-// an older lavagna yields a fresh phase on the same origin, with stale set so
-// the caller purges the old phase data once it has committed. A newer format is
-// ErrNewerFormat and nothing is touched.
 func (l *Lease) Current() (s State, stale bool, err error) {
 	b, err := os.ReadFile(filepath.Join(l.conv.dir, "state.json"))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -211,9 +201,6 @@ func (l *Lease) Current() (s State, stale bool, err error) {
 	return s, false, err
 }
 
-// Purge deletes a stale phase's data after the fresh phase commits: every
-// artifact kind except questions, which Prune keeps to the committed ledger,
-// and the screenshots. The lock, state and relay socket stay.
 func (l *Lease) Purge() error {
 	errs := []error{os.RemoveAll(filepath.Join(l.conv.dir, imagesDir))}
 	kinds, err := os.ReadDir(filepath.Join(l.conv.dir, artifactsDir))

@@ -16,8 +16,6 @@ const TEXT = {
   uncertain: 'Consegna non riuscita: l’agente è stato interrotto. I messaggi inviati sono tornati in bozza: puoi reinviarli.',
   paused: 'L’agente sta riprendendo l’attesa: la bozza è conservata e potrai inviarla tra poco.',
 };
-// Each stage: the short form in the title bar and the full sentence in the
-// footer. A null sentence shows the draft summary instead.
 const STAGES = {
   connecting: ['Collegamento a lavagna…', ''],
   user: ['Tocca a te', null],
@@ -55,15 +53,10 @@ const LINE_SEPARATORS = new RegExp('[' + String.fromCharCode(0x2028, 0x2029) + '
 
 const $ = selector => document.querySelector(selector);
 const composer = $('#composer');
-// At phone width the rail is a strip, the discussion a sheet and Expand shows
-// the block full screen at its own size. lavagna.css uses the same width.
 const PHONE = matchMedia('(max-width: 640px)');
 const WIDE = matchMedia('(min-width: 1024px)');
 const encoder = new TextEncoder();
 
-// view is the server's last view of the phase. record is the phase's draft in
-// localStorage: unsent choices, answers, messages and screenshots, seen marks,
-// and the batch sent in the current call until the server's threads hold it.
 let view = null;
 let record = null;
 let active = null;
@@ -96,8 +89,6 @@ function thread() { return { messages: [], images: [], composer: '', notes: [] }
 
 function callNumber(call) { return Number(String(call || '').replace(/^c/, '')) || 0; }
 
-// stored reads the phase record. A record this shell cannot read comes back as
-// its raw text, to be offered once and dropped.
 function stored() {
   let raw = null;
   try { raw = localStorage.getItem(RECORD_KEY); } catch { }
@@ -109,7 +100,6 @@ function stored() {
   return { unreadable: raw };
 }
 
-// salvage collects the text the user wrote in an unreadable record.
 function salvage(raw) {
   const texts = [];
   const walk = (value, name) => {
@@ -123,10 +113,6 @@ function salvage(raw) {
   return texts.join('\n\n');
 }
 
-// save stores the record unless another tab already stored a later call's. A
-// batch stays stored only until it is returned: until then a reload or a lost
-// call needs it; afterwards it is delivered and only this tab shows it until
-// the server's threads hold it.
 function save() {
   if (!record) return;
   const other = stored().record;
@@ -140,8 +126,6 @@ function track(task) {
   task.then(() => renders.delete(task), () => renders.delete(task));
   return task;
 }
-
-// ---- reading the view ----
 
 function questions() { return view ? view.phase.questions : []; }
 
@@ -177,8 +161,6 @@ function key(q, answer) {
   return answer.text && answer.text.trim() ? '✎' : '';
 }
 
-// ---- the draft ----
-
 function draftOf(id) {
   if (id === OVERVIEW) return record.overview;
   if (!record.questions[id]) record.questions[id] = thread();
@@ -196,8 +178,6 @@ function ledgerAnswer(q) {
   return q.answer.choice ? { choice: q.answer.choice } : { text: q.answer.text || '' };
 }
 
-// The answer last sent: this call's batch when one is pending in the threads,
-// else the ledger's recorded answer.
 function baseline(q) {
   if (record.batch && answerable(q)) {
     const sent = record.batch.questions[q.id];
@@ -265,18 +245,11 @@ function imageCount() {
   return total;
 }
 
-// named is how a notice names an answer: its letter, or the free text.
 function named(q, answer) {
   if (answer.choice) return answer.key || (q ? key(q, answer) : '?');
   return '«' + answer.text.trim() + '»';
 }
 
-// reconcile adapts the phase draft to a view; prev is the view it replaces.
-// A rewritten question keeps a choice whose option survives; otherwise its
-// thread says the choice is gone. A settled question drops a different staged
-// answer and its thread says so. Restored messages the ledger now holds leave
-// the draft. A batch from an earlier call that the ledger never received
-// returns to the draft.
 function reconcile(prev) {
   for (const id of Object.keys(record.questions)) {
     if (!question(id)) delete record.questions[id];
@@ -315,9 +288,6 @@ function reconcile(prev) {
   record.call = view.call;
 }
 
-// restore returns a batch to the draft before anything written after it. A
-// choice changed since keeps the newer value. Restored items remember their
-// submission, so they leave the draft once the ledger holds them.
 function restore(batch) {
   const back = (id, sent) => {
     if (id !== OVERVIEW && !question(id)) return;
@@ -332,8 +302,6 @@ function restore(batch) {
   back(OVERVIEW, batch.overview);
 }
 
-// markUncertain returns the batch to the draft when the stream watched it
-// accepted and then dropped before it was returned.
 function markUncertain() {
   const d = delivery();
   if (!d || d.stage !== 'accepted' || d.submission !== acceptedLive || !record.batch) return;
@@ -348,8 +316,6 @@ function noteAccepted() {
   if (live && d && d.stage === 'accepted') acceptedLive = d.submission;
 }
 
-// changed records a draft edit. Composer text never shows on the rail, so
-// typing a message leaves the rail alone.
 function changed(rail = true) {
   if (!record.delivery || !record.delivery.stage) record.submission = null;
   if (!inactive) refusal = '';
@@ -357,8 +323,6 @@ function changed(rail = true) {
   if (rail) renderRail();
   updateFooter();
 }
-
-// ---- stages ----
 
 function delivery() { return record && record.delivery && view && record.delivery.call === view.call ? record.delivery : null; }
 
@@ -391,8 +355,6 @@ function advance(receipt) {
   if (ORDER.indexOf(receipt.stage) > ORDER.indexOf(d.stage)) d.stage = receipt.stage;
 }
 
-// ---- small DOM helpers ----
-
 function element(tag, text, className) {
   const node = document.createElement(tag);
   if (text !== undefined) node.append(text);
@@ -410,8 +372,6 @@ function button(text, className) {
   return node;
 }
 
-// fmt renders agent text as text nodes, with `code` and **bold** spans: the
-// shell never parses agent HTML.
 function fmt(text) {
   const fragment = document.createDocumentFragment();
   for (const part of String(text).split(/(`[^`]+`|\*\*[^*]+\*\*)/)) {
@@ -438,8 +398,6 @@ function kilobytes(bytes) {
 
 function plural(count, one, many) { return count + ' ' + (count === 1 ? one : many); }
 
-// ---- title bar ----
-
 function renderTitle() {
   const name = phase();
   const turn = $('#turn');
@@ -450,8 +408,6 @@ function renderTitle() {
   setText($('#round-label'), view.round);
   document.title = 'lavagna · ' + (view.phase.title || 'round ' + view.phase.round);
 }
-
-// ---- rail ----
 
 function seen(q) { return record.seen[q.id] === q.version; }
 
@@ -573,8 +529,6 @@ function legend() {
   return node;
 }
 
-// ---- center ----
-
 function defaultActive() {
   const current = questions().find(q => q.status !== 'planned' && q.round === view.phase.round);
   return current ? current.id : OVERVIEW;
@@ -609,9 +563,6 @@ function markRead() {
   save();
 }
 
-// renderCenter redraws the head and 03 when the question's place in the phase
-// changes, and the frame only when the question or its version changes, so a
-// reply or a replacement of another question leaves its prototype state alone.
 function renderCenter() {
   const head = $('#question-head');
   const frameArea = $('#frame-area');
@@ -767,10 +718,6 @@ function typeFree(id, value) {
   updateDecide(q);
 }
 
-// ---- content frame ----
-
-// One frame exists, for the active question. It is destroyed and recreated on
-// every switch; while a question keeps its version, a new call keeps it.
 function mountFrame(q, area) {
   const frame = element('iframe', undefined, 'content-frame');
   frame.id = 'content';
@@ -802,8 +749,6 @@ function destroyFrame() {
   snapshotURL = null;
 }
 
-// The frame learns only the selected option and whether a free-text answer
-// exists: never the free text, messages, screenshots, capability or token.
 function sendOption() {
   if (!content || !content.ready || !content.frame.contentWindow) return;
   const q = question(content.id);
@@ -827,17 +772,10 @@ function fromFrame(event) {
   }
 }
 
-// frameGesture tells whether the user is acting inside the frame: it holds
-// focus and the page has transient activation. A round script alone cannot
-// expand the page, so after Riduci it cannot expand it again.
 function frameGesture() {
   return document.activeElement === content.frame && (!navigator.userActivation || navigator.userActivation.isActive);
 }
 
-// expand changes presentation only: rail and discussion, or at phone width the
-// whole page chrome, hide while the active frame shows one wide block larger.
-// At phone width the shell's own bar keeps Riduci, which frame code cannot
-// remove. The frame learns the state once the layout has changed.
 function expand(active) {
   const page = $('#page');
   expanded = active && Boolean(content);
@@ -861,8 +799,6 @@ async function cacheQuestion(q) {
   }
 }
 
-// cacheView keeps the view and every question's frame, so a reload while
-// nothing listens rebuilds the page and rereads any question.
 async function cacheView(next) {
   const cache = await caches.open(CACHE_NAME);
   await cache.put(VIEW_URL, new Response(JSON.stringify(next), { headers: { 'Content-Type': 'application/json' } }));
@@ -889,9 +825,6 @@ function dataURL(blob) {
   });
 }
 
-// snapshot rebuilds a cached question's frame document with its resources as
-// data URLs and its scripts pinned by CSP hashes, for reading while nothing
-// listens on the origin.
 async function snapshot(q) {
   const cache = await caches.open(CACHE_NAME);
   const resources = new Map();
@@ -943,10 +876,6 @@ async function snapshot(q) {
   return URL.createObjectURL(new Blob(['<!doctype html>' + doc.documentElement.outerHTML], { type: 'text/html' }));
 }
 
-// ---- discussion ----
-
-// threadEntries lists a thread as shown: sent messages from the server, this
-// call's batch until the server holds it, then the staged draft.
 function threadEntries(id) {
   const entries = serverThread(id).map(m => ({ kind: m.author === 'agent' ? 'agent' : 'user', text: m.text || '', images: (m.images || []).map(image => ({ id: image })) }));
   const notes = peek(id) ? peek(id).notes || [] : [];
@@ -1026,8 +955,6 @@ function unstage(id, entry) {
   renderDiscussion();
 }
 
-// The discussion opens as a sheet from the footer at phone width; elsewhere it
-// stays beside the question and the toggle is hidden.
 function toggleSheet() {
   sheet = !sheet;
   $('#page').toggleAttribute('data-sheet', sheet);
@@ -1062,8 +989,6 @@ function stageMessage() {
   renderDiscussion();
   composer.focus();
 }
-
-// ---- screenshots ----
 
 function imageProblem(files) {
   const total = imageCount() + uploading + files.length;
@@ -1117,8 +1042,6 @@ function carriesFiles(event) {
   return event.dataTransfer && event.dataTransfer.types.includes('Files');
 }
 
-// ---- footer and send ----
-
 function summary(items) {
   if (!items.length) return 'Niente in bozza';
   const parts = items.map(item => item.kind === 'choice' ? label(item.id) + ' → ' + item.key
@@ -1167,7 +1090,6 @@ function draftUnwitnessed(name) {
   return d && d.unwitnessed && DEGRADED.includes(name);
 }
 
-// draftText is every staged text, grouped by question and Overview.
 function draftText() {
   const parts = [];
   const section = (title, lines) => {
@@ -1203,8 +1125,6 @@ function newSubmission() {
   return 's-' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// batch collects the current answers of the current round's open questions and
-// every staged message and screenshot, composer text included.
 function batch() {
   const wire = { questions: {}, overview: {} };
   const shown = { questions: {}, overview: {} };
@@ -1298,10 +1218,6 @@ async function send() {
   }
 }
 
-// ---- view arrival ----
-
-// A new round opens on its first question. Within a round, keep the selected
-// question or Overview, including across reloads.
 function ensureActive(advanced = false) {
   const q = active === OVERVIEW ? null : question(active);
   if (!advanced && (active === OVERVIEW || q && q.status !== 'planned')) return;
@@ -1311,8 +1227,6 @@ function ensureActive(advanced = false) {
   $('#center').scrollTop = 0;
 }
 
-// reloadForBuild reloads a tab whose shell differs from the server's, once
-// per build. Without sessionStorage it keeps the tab rather than risk a loop.
 function reloadForBuild(build) {
   if (!build) return false;
   if (build === BUILD) {
@@ -1463,8 +1377,6 @@ function connect() {
     try { token = JSON.parse(event.data).token; } catch { return; }
     showClosed(token);
   });
-  // Retries fail every 250 ms while nothing listens; only a change of state
-  // redraws, so the page stays usable offline.
   source.addEventListener('error', () => {
     if (leaving) return;
     const was = live;
@@ -1486,8 +1398,6 @@ function connect() {
     }
   });
 }
-
-// ---- events ----
 
 composer.addEventListener('input', () => {
   if (!view) return;
@@ -1562,7 +1472,6 @@ for (const type of ['dragover', 'drop']) {
 }
 
 window.addEventListener('message', fromFrame);
-// A reload aborts the stream before pagehide; neither drop is a lost call.
 window.addEventListener('beforeunload', () => { leaving = true; });
 window.addEventListener('pagehide', () => { leaving = true; });
 window.addEventListener('pageshow', () => { leaving = closed; });

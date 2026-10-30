@@ -56,7 +56,6 @@ textarea::placeholder { color: var(--muted); }
 .small { font-size: 13px; }
 .eyebrow { display: flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 650; letter-spacing: .3px; color: var(--muted); margin-bottom: 6px; }
 
-/* the shell: title bar, rail, active question, discussion, footer */
 .page { display: grid; height: 100dvh; grid-template-columns: minmax(0, 1fr); grid-template-rows: 54px minmax(0, 1fr); grid-template-areas: "title" "center"; background: var(--surface); }
 .page[data-state="ready"] { grid-template-columns: 248px minmax(0, 1fr) 320px; grid-template-rows: 54px minmax(0, 1fr) 60px; grid-template-areas: "title title title" "rail center discussion" "footer footer footer"; }
 .titlebar { grid-area: title; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 22px; border-bottom: 1px solid var(--line); min-width: 0; }
@@ -185,7 +184,6 @@ button.option:disabled.on { opacity: 1; }
 .salvage p { margin: 0; flex: 1 1 280px; }
 .salvage-actions { display: flex; gap: 8px; }
 
-/* expansion: the active frame shows one wide block larger */
 .page[data-state="ready"][data-expanded] { grid-template-columns: minmax(0, 1fr); grid-template-areas: "title" "center" "footer"; }
 .page[data-expanded] .rail, .page[data-expanded] .discussion { display: none; }
 .page[data-expanded="native"] .titlebar, .page[data-expanded="native"] .footer { display: none; }
@@ -210,7 +208,6 @@ button.option:disabled.on { opacity: 1; }
   .page[data-collapsed] .discussion-toggle-label { display: block; writing-mode: vertical-rl; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; }
 }
 
-/* a narrow window: the rail shrinks to question numbers */
 @media (max-width: 1023px) {
   .page[data-state="ready"] { grid-template-columns: 76px minmax(0, 1fr) 280px; }
   .rail { padding: 10px 6px 14px; gap: 10px; }
@@ -224,7 +221,6 @@ button.option:disabled.on { opacity: 1; }
   .center { padding: 18px 20px 32px; }
 }
 
-/* a phone: the rail is a strip at the top, the discussion a sheet */
 @media (max-width: 640px) {
   .page[data-state="ready"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: 54px auto minmax(0, 1fr) 60px; grid-template-areas: "title" "rail" "center" "footer"; }
   .titlebar { padding: 0 14px; }
@@ -252,7 +248,6 @@ button.option:disabled.on { opacity: 1; }
 .done-mark { display: inline-grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--action); margin-bottom: 18px; }
 .done-mark::after { content: ""; width: 22px; height: 12px; border-left: 4px solid var(--on-accent); border-bottom: 4px solid var(--on-accent); transform: translateY(-3px) rotate(-45deg); }
 
-/* the content frame: 01 Capire and 02 Confrontare of the active question */
 html.frame, html.frame body { background: transparent; }
 html.frame { overflow: hidden; }
 html.frame body { font-size: 14px; }
@@ -330,7 +325,6 @@ html.frame[data-expanded="native"] .raw.expanded { position: fixed; inset: 0; z-
 html.frame[data-expanded="native"] .raw.expanded > .raw-head { display: none; }
 html.frame[data-expanded="native"] .raw.expanded > .raw-stage { flex: 1; min-height: 0; margin: 0; overflow: auto; }
 
-/* diagrams: static SVG drawn by the CLI; tones come from markers and variants */
 .diagram { margin: 16px 0; }
 .diagram-svg { display: block; max-width: 100%; height: auto; font-family: var(--sans); }
 .dg-neutral { --tone: var(--muted); --tone-soft: var(--surface); --tone-text: var(--ink); }

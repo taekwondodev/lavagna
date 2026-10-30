@@ -45,7 +45,6 @@ func answered(l Ledger, submission string, choices map[string]string) Ledger {
 	return l.Accept(b)
 }
 
-// The five-call walk of "What does the agent send on each call after the first?".
 func TestApplyFollowsTheFiveCallWalk(t *testing.T) {
 	l := apply(t, Ledger{}, Call{Phase: "Archivio delle sessioni", PhaseLine: 1, Questions: []Version{
 		whole("storage", fileOrDB), whole("retention", dayOrWeek), whole("crash", atomicNone),

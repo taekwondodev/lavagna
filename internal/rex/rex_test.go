@@ -27,9 +27,6 @@ const (
 	pageB     = "http://127.0.0.1:41000/s/" + capB + "/"
 )
 
-// The test binary doubles as the external tools: symlinks named rex and
-// terminal-browser run fakeTool, which keeps a Rex registry in FAKE_STATE and
-// records every invocation in FAKE_LOG.
 func TestMain(m *testing.M) {
 	switch filepath.Base(os.Args[0]) {
 	case "rex", "terminal-browser":
@@ -46,7 +43,7 @@ type fakeBlock struct {
 type fakeState struct {
 	Blocks []fakeBlock `json:"blocks"`
 	Next   int         `json:"next"`
-	// FailRunAfterCreate makes run create the block, then fail.
+
 	FailRunAfterCreate bool `json:"fail_run_after_create"`
 	RefuseActions      bool `json:"refuse_actions"`
 }
@@ -81,7 +78,6 @@ func fakeTool(tool string, args []string) int {
 	save := func() { b, _ := json.Marshal(st); os.WriteFile(os.Getenv("FAKE_STATE"), b, 0o600) }
 	deny := func() int { fmt.Fprintln(os.Stderr, "boom http://127.0.0.1:41000/SECRETCAP-STDERR"); return 1 }
 
-	// Skip the global flags the product always passes first.
 	rest := args
 	for len(rest) > 0 && strings.HasPrefix(rest[0], "--") {
 		if rest[0] == "--server" || rest[0] == "--timeout" {

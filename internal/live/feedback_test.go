@@ -96,7 +96,7 @@ func TestFeedbackReadsRecordsWrittenByOtherVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The record shape written before per-question feedback, byte for byte.
+
 	old := `{"lavagna":"feedback","round":"r1","submission":"s-12345678","choices":{"storage":"db"},"comments":[{"anchor":null,"text":"è ok"}],"images":[]}`
 	if err := lease.StoreArtifact("feedback", "s-12345678", []byte(old)); err != nil {
 		t.Fatal(err)

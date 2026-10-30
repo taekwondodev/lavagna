@@ -5,12 +5,8 @@ import (
 	"strings"
 )
 
-// interruption opens the user entry Claude Code appends when the user
-// interrupts a turn, with or without a running tool.
 const interruption = "[Request interrupted by user"
 
-// claude reads a Claude Code transcript. Its format carries no version, so
-// any shape outside the accepted ones ends the observation.
 type claude struct{ turn }
 
 func newClaude(submission string) *claude { return &claude{turn{submission: []byte(submission)}} }
@@ -35,7 +31,7 @@ func (w *claude) entry(line []byte) verdict {
 	if json.Unmarshal(line, &e) != nil || e.Type == "" {
 		return unrecognized
 	}
-	// Subagent sidechains run inside the turn and never end it.
+
 	if e.IsSidechain || e.Type != "user" && e.Type != "assistant" {
 		return watching
 	}

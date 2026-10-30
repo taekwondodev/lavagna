@@ -24,11 +24,8 @@ var assets embed.FS
 
 var Assets = mustSub(assets, "assets")
 
-// Build identifies the embedded page. The server sends it in the view and the
-// shell carries it, so a tab built differently can reload.
 var Build = build()
 
-// Shell is the shell document, stamped with Build.
 var Shell = bytes.Replace(shell, []byte("{{build}}"), []byte(Build), 1)
 
 func build() string {

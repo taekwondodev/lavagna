@@ -90,8 +90,6 @@ func verdicts(r reader, lines [][]byte) []verdict {
 	return got
 }
 
-// watchingBut is n verdicts, all watching except the ones at the given
-// positions.
 func watchingBut(n int, at map[int]verdict) []verdict {
 	out := make([]verdict, n)
 	for i, v := range at {

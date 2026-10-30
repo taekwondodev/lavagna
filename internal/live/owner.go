@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// The harness owns the call's process group, but is not part of it. Watching
-// round's parent would instead watch a shell that exits normally after round.
 type relayOwner struct {
 	PID     int
 	Started string
@@ -37,8 +35,6 @@ func ownerPID() (int, error) {
 	return pid, nil
 }
 
-// ownerExecutable names the executable of the call's owner, or is empty when
-// the owner cannot be identified.
 func ownerExecutable() string {
 	pid, err := ownerPID()
 	if err != nil {

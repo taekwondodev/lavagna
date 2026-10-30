@@ -1,8 +1,3 @@
-// Cuts a witness sample out of a real Pi session file, keeping every entry Pi
-// wrote after the round call verbatim except the submission ID, which becomes
-// the placeholder the tests replace.
-// Usage: node internal/witnesstest/testdata/cut.mjs <session.jsonl> <name> <round entry> <last entry>
-// <round entry> is the index of the assistant entry that ran `lavagna round`.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";

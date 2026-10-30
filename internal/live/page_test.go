@@ -21,12 +21,10 @@ import (
 	"github.com/taekwondodev/lavagna/internal/page"
 )
 
-// phaseRun drives successive round calls of one conversation through
-// PhaseRound, as the agent would, while a browser page answers them.
 type phaseRun struct {
 	t      *testing.T
 	getenv func(string) string
-	// within is the deadline the next call declares, as --within does.
+
 	within time.Duration
 	url    string
 	out    *bytes.Buffer
@@ -44,8 +42,7 @@ func (w *firstLine) Write(p []byte) (int, error) {
 }
 
 func newPhaseRun(t *testing.T) *phaseRun {
-	// A short home keeps relay.sock within the Unix socket path limit, so
-	// the relay holds the page between calls as it does for users.
+
 	home, err := os.MkdirTemp("/tmp", "lavagna-")
 	if err != nil {
 		t.Fatal(err)
@@ -64,8 +61,7 @@ func newPhaseRun(t *testing.T) *phaseRun {
 		}
 		return ""
 	}}
-	// The relay outlives the test binary, since it watches the shell that
-	// started the tests; end it with the test.
+
 	t.Cleanup(func() {
 		if _, c, err := bound(r.getenv); err == nil {
 			if ln := take(c.Relay()); ln != nil {
@@ -76,8 +72,6 @@ func newPhaseRun(t *testing.T) *phaseRun {
 	return r
 }
 
-// call starts one call with source and the question resources in files, keyed
-// by their path under DIR, and returns once the page origin listens.
 func (r *phaseRun) call(source string, files map[string]string) {
 	r.t.Helper()
 	dir := ""
@@ -114,8 +108,6 @@ func (r *phaseRun) call(source string, files map[string]string) {
 	r.out, r.done = out, done
 }
 
-// silence takes the page origin from the relay and closes it, so nothing
-// listens until the next call, as when the relay could not start.
 func (r *phaseRun) silence() {
 	r.t.Helper()
 	_, c, err := bound(r.getenv)
@@ -129,7 +121,6 @@ func (r *phaseRun) silence() {
 	ln.Close()
 }
 
-// outcome waits for the running call to return and decodes its result.
 func (r *phaseRun) outcome() map[string]any {
 	r.t.Helper()
 	select {
@@ -147,9 +138,6 @@ func (r *phaseRun) outcome() map[string]any {
 	return result
 }
 
-// prose is n bytes of words. A run of 25,000 "x" takes Chrome about a second
-// to insert in the embedded font, enough to time out a CDP call under load,
-// while other runs that long take milliseconds.
 func prose(n int) string {
 	return strings.Repeat("parola ", n/7+1)[:n]
 }
@@ -211,8 +199,6 @@ Le sessioni chiuse occupano spazio.
 # Chi esegue la pulizia? {id="cleanup" after="retention"}
 `
 
-// screenScript follows the choice from inside the frame, as a round prototype
-// would.
 const screenScript = `document.addEventListener('lavagna:option', event => {
   document.getElementById('screen').textContent = JSON.stringify(event.detail);
 });`
@@ -323,7 +309,7 @@ func TestPageAnswersAPhaseOneQuestionAtATime(t *testing.T) {
 		t.Fatalf("batch %s", jsonOf(got))
 	}
 	p.WaitFor(`document.querySelector('#turn').textContent === 'Consegnato al terminale'`)
-	// No witness observes this conversation, so live status is unavailable.
+
 	wantText(t, p, "#summary", "Consegnato al terminale · stato in tempo reale non disponibile")
 	if evalString(p, `String(document.querySelector('#send').disabled)`) != "true" {
 		t.Error("Send is enabled before the next call")
@@ -536,8 +522,6 @@ func TestFrameLearnsOnlyTheOptionAndOnlyTheActiveFrameSpeaks(t *testing.T) {
 		t.Errorf("frame <html> attributes %q", attrs)
 	}
 
-	// cdptest follows one frame per page: mark the active one before another
-	// window attaches.
 	f.MustEval(`window.kept = true`, nil)
 	height := evalString(p, `document.querySelector('#content').style.height`)
 	p.MustEval(`window.forged = {self: 0, other: 0}; addEventListener('message', e => {
@@ -626,8 +610,7 @@ func TestPausedCallClosesSendAndKeepsTheDraftUntilTheNextCall(t *testing.T) {
 	if got := run.outcome(); got["lavagna"] != "waiting" || got["round"] != "r1" {
 		t.Fatalf("outcome %v, want waiting in r1", got)
 	}
-	// Send stays closed while the draft stays editable. The handoff to the
-	// relay drops the stream briefly, as after a return.
+
 	paused := func() {
 		t.Helper()
 		p.WaitFor(`document.querySelector('#turn').textContent === 'In attesa dell’agente' && document.querySelector('#summary').textContent === 'L’agente sta riprendendo l’attesa: la bozza è conservata e potrai inviarla tra poco. · 1 in bozza' && document.querySelector('#send').disabled && document.querySelector('.option[data-option="atomic"]') && !document.querySelector('.option[data-option="atomic"]').disabled`)
@@ -730,7 +713,7 @@ func TestDiagramsFollowTheVariantShown(t *testing.T) {
 	f := p.Frame("#content")
 	shown := `[...document.querySelectorAll('#confrontare .diagram-variant')].filter(d => !d.hidden).map(d => d.dataset.variant).join(' ')`
 	capire := `[...document.querySelectorAll('#capire svg text')].map(t => t.textContent).join('|')`
-	// Both diagrams, the sequence and the flow, follow the variant shown.
+
 	f.WaitFor(shown + ` === 'atomic atomic'`)
 	p.Click(`.option[data-option="journal"]`)
 	f.WaitFor(shown + ` === 'journal journal'`)
@@ -742,7 +725,6 @@ func TestDiagramsFollowTheVariantShown(t *testing.T) {
 		t.Errorf("01 must keep the present state: %s", got)
 	}
 
-	// The frame draws the labels as wide as the CLI measured them.
 	b, err := fs.ReadFile(page.Assets, page.Font)
 	if err != nil {
 		t.Fatal(err)

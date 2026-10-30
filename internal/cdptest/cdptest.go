@@ -200,8 +200,6 @@ func (b *Browser) Open(url string, width, height int) *Page {
 	return p
 }
 
-// Resize sets the page's viewport, as a resized window would. A mobile
-// viewport, as on a phone, has overlay scrollbars.
 func (p *Page) Resize(width, height int, mobile bool) {
 	p.t.Helper()
 	p.b.must(nil, p.session, "Emulation.setDeviceMetricsOverride",
@@ -233,7 +231,6 @@ func (p *Page) Close() {
 	}
 }
 
-// Screenshot returns the page as PNG bytes.
 func (p *Page) Screenshot() []byte {
 	p.t.Helper()
 	var shot struct {

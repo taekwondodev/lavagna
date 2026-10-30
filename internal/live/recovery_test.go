@@ -16,8 +16,6 @@ import (
 	"github.com/taekwondodev/lavagna/internal/conversation"
 )
 
-// callServer serves one call's spec on a fixed origin and can stop without
-// returning a batch, as an interrupted call does.
 type callServer struct {
 	t  *testing.T
 	s  *server
@@ -52,13 +50,11 @@ func freeOrigin(t *testing.T) conversation.Origin {
 	return conversation.Origin{Port: ln.Addr().(*net.TCPAddr).Port, Cap: conversation.Secret(32)}
 }
 
-// nextCall is spec as a later call of the same phase serves it.
 func nextCall(spec roundSpec, call string) roundSpec {
 	spec.Call, spec.Token = call, "tok-"+call
 	return spec
 }
 
-// reload reloads p and waits for the new document's shell.
 func reload(p *cdptest.Page) {
 	p.MustEval(`window.previousDocument = true`, nil)
 	p.Reload()
@@ -88,7 +84,7 @@ func TestReloadRebuildsThePageAndRereadsAnyQuestionWhileNothingListens(t *testin
 	p.Type("#composer", "Commento generale in bozza")
 
 	reload(p)
-	// The batch was returned before the reload, so its stage stays.
+
 	wantText(t, p, "#turn", "Consegnato al terminale")
 	if evalString(p, `String(document.querySelector('.card[data-target=":overview"]').getAttribute('aria-current'))`) != "true" {
 		t.Error("the reload did not restore the active Overview")
@@ -148,7 +144,7 @@ func TestNextCallReconcilesTheDraftPerQuestion(t *testing.T) {
 	p.Click(`.option[data-option="week"]`)
 	p.Click("#send")
 	run.outcome()
-	// Wait for the relay to serve the page, which redraws it.
+
 	p.WaitFor(`live && document.querySelector('#turn').textContent === 'Consegnato al terminale'`)
 
 	p.Click(`.option[data-option="month"]`)
@@ -325,8 +321,6 @@ func TestDetachedTabIsReadOnlyAndCopiesTheDraft(t *testing.T) {
 	go squatter.Serve(ln)
 	t.Cleanup(func() { squatter.Close() })
 
-	// The squatter answers the stream with 404, so it fails for good: the tab
-	// is detached, which is the only state a stream failing for good reaches.
 	p.WaitFor(`document.querySelector('#turn').textContent === 'Scheda non collegata'`)
 	if got := evalString(p, `document.querySelector('#composer').value`); got != "In generale va bene" {
 		t.Errorf("the Overview draft after the stream failed: %q", got)
@@ -456,7 +450,7 @@ func TestPhaseDraftSizeNearTheBatchBounds(t *testing.T) {
 	p.Click("#send")
 	<-call.s.accepted
 	p.WaitFor(`document.querySelector('#turn').textContent === 'Inviato'`)
-	// Uploads close once a batch is admitted, so the new draft holds text only.
+
 	stageText()
 	size := len(evalString(p, `localStorage.getItem('lavagna:' + location.pathname)`))
 	t.Logf("phase draft holding an accepted batch at the 32 KiB text and 8-screenshot bounds plus a new 32 KiB text draft: %d UTF-16 code units", size)

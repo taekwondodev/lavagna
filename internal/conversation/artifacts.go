@@ -12,12 +12,10 @@ import (
 
 var artifactID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,80}$`)
 
-// StoreArtifact publishes a new artifact; an existing one is fs.ErrExist.
 func (l *Lease) StoreArtifact(kind, id string, data []byte) error {
 	return l.publish(kind, id, data, os.Link)
 }
 
-// ReplaceArtifact atomically publishes an artifact over an existing one.
 func (l *Lease) ReplaceArtifact(kind, id string, data []byte) error {
 	return l.publish(kind, id, data, os.Rename)
 }
@@ -65,8 +63,6 @@ func (l *Lease) RemoveArtifact(kind, id string) error {
 	return os.Remove(filepath.Join(l.conv.dir, artifactsDir, kind, id+".json"))
 }
 
-// Prune deletes every artifact of kind not named in keep, including leftovers
-// of a call that died before its commit.
 func (l *Lease) Prune(kind string, keep map[string]bool) error {
 	if !artifactID.MatchString(kind) {
 		return errors.New("invalid artifact reference")

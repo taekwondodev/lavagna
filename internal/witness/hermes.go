@@ -6,11 +6,6 @@ import (
 	"slices"
 )
 
-// Hermes keeps its conversations in a database whose rows do not tell an
-// interrupted turn apart, so its shell hooks report to lavagna instead. Each
-// hook payload becomes at most one line of the conversation's events file,
-// holding only submission ids and turn outcomes, never tool output.
-
 var submissionID = regexp.MustCompile(`s-[0-9a-f]{8,64}`)
 
 type hermesEvent struct {
@@ -19,9 +14,6 @@ type hermesEvent struct {
 	Outcome     string   `json:"outcome,omitempty"`
 }
 
-// HermesObservation reads one shell-hook payload. It returns the session the
-// hook fired for and the events line to append, or ok false when the payload
-// tells lavagna nothing.
 func HermesObservation(payload []byte) (session string, line []byte, ok bool) {
 	var p struct {
 		Event   string `json:"hook_event_name"`
@@ -50,7 +42,7 @@ func HermesObservation(payload []byte) (session string, line []byte, ok bool) {
 		slices.Sort(ids)
 		e = hermesEvent{Event: "tool", Submissions: slices.Compact(ids)}
 	case "on_session_end":
-		// Exit paths fire a reduced legacy shape without the turn's outcome.
+
 		x := p.Extra
 		if x.Completed == nil || x.Failed == nil || x.Interrupted == nil {
 			return "", nil, false
@@ -69,7 +61,6 @@ func HermesObservation(payload []byte) (session string, line []byte, ok bool) {
 	return p.Session, b, true
 }
 
-// hermes reads the events file the Hermes hooks append.
 type hermes struct{ turn }
 
 func newHermes(submission string) *hermes { return &hermes{turn{submission: []byte(submission)}} }

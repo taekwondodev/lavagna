@@ -19,22 +19,15 @@ const (
 
 const sessionVersion = 3
 
-// reader turns one appended line of a harness record into a verdict about the
-// returned submission.
 type reader interface {
 	entry(line []byte) verdict
 }
 
-// turn holds what every reader tracks: the submission to recognize and
-// whether the agent already received it.
 type turn struct {
 	submission []byte
 	received   bool
 }
 
-// receive marks the receipt the first time the submission appears in text the
-// harness delivered to the agent. Matching the id rather than its JSON-quoted
-// form survives harnesses that nest the output in another JSON string.
 func (t *turn) receive(text []byte) bool {
 	if t.received || !bytes.Contains(text, t.submission) {
 		return false
@@ -43,7 +36,6 @@ func (t *turn) receive(text []byte) bool {
 	return true
 }
 
-// end is the verdict when the agent's turn ends, normally or interrupted.
 func (t *turn) end(interrupted bool) verdict {
 	switch {
 	case !t.received && interrupted:
@@ -56,7 +48,6 @@ func (t *turn) end(interrupted bool) verdict {
 	return answered
 }
 
-// pi reads a Pi session.
 type pi struct{ turn }
 
 func newPi(submission string) *pi { return &pi{turn{submission: []byte(submission)}} }

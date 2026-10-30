@@ -14,12 +14,8 @@ import (
 	"github.com/taekwondodev/lavagna/internal/diagram"
 )
 
-// MaxMessageBytes bounds one agent message, like the user's text per batch.
 const MaxMessageBytes = 32 << 10
 
-// Phase is one call: its questions and the call elements phase, reply and
-// settled. Question source is retained so callers can version and render each
-// question independently.
 type Phase struct {
 	Title     string `json:"title,omitempty"`
 	TitleLine int    `json:"-"`
@@ -29,7 +25,6 @@ type Phase struct {
 	Budget    int       `json:"-"`
 }
 
-// Element is one ::: reply [ID] or ::: settled ID [OPTION] block; Text is its body.
 type Element struct {
 	Line   int
 	ID     string
@@ -37,16 +32,12 @@ type Element struct {
 	Text   string
 }
 
-// RecapRow is one row of the decisions table rendered by ::: recap.
 type RecapRow struct {
 	Question, Decision, Round, Why string
 	Rejected                       []string
 	Struck                         bool
 }
 
-// PhaseQuestion is one question as authored. Lead, option labels, details and
-// Reason are plain text for the shell; HTML holds only 01 Capire and
-// 02 Confrontare, rendered for the content frame.
 type PhaseQuestion struct {
 	ID        string        `json:"id"`
 	Title     string        `json:"title"`
@@ -63,8 +54,6 @@ type PhaseQuestion struct {
 	StartLine int           `json:"-"`
 }
 
-// Size is the rendered size of the question: its frame document, the text the
-// shell shows and its resources.
 func (q PhaseQuestion) Size() int {
 	n := len(q.HTML) + len(q.Title) + len(q.Lead) + len(q.Reason)
 	for _, o := range q.Options {
@@ -91,11 +80,8 @@ var (
 	callElementRE = regexp.MustCompile(`^::: (phase|reply|settled)(?:\s+(.*))?$`)
 )
 
-// ParsePhase validates and parses the per-question authoring format.
 func ParsePhase(src []byte) (Phase, []string) { return ParsePhaseKnown(src, nil) }
 
-// ParsePhaseKnown additionally accepts question ids already retained in the
-// conversation ledger as valid dependencies.
 func ParsePhaseKnown(src []byte, prior map[string][]string) (Phase, []string) {
 	phase := Phase{Budget: MaxBytes - len(src)}
 	if len(src) > MaxBytes {
@@ -111,8 +97,7 @@ func ParsePhaseKnown(src []byte, prior map[string][]string) (Phase, []string) {
 	}
 	var sections []section
 	var errs []string
-	// inQuestion holds lines for the last section; skip drops the body of a
-	// rejected title, already reported once.
+
 	inQuestion, skip := false, false
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimRight(lines[i], " \t")
@@ -191,8 +176,7 @@ func ParsePhaseKnown(src []byte, prior map[string][]string) (Phase, []string) {
 		}
 		phase.Questions = append(phase.Questions, q)
 	}
-	// Dependencies are directed from a question to prerequisites. Detect cycles
-	// over the complete batch, independent of authoring order.
+
 	graph := map[string][]string{}
 	lineByID := map[string]int{}
 	currentID := map[string]bool{}
@@ -302,8 +286,6 @@ func (phase *Phase) element(line int, kind, args, body string, errs *[]string) {
 	}
 }
 
-// AttachPhaseFiles binds every resource to exactly one question. Root-level
-// resources and resources for unknown questions are rejected rather than shared.
 func AttachPhaseFiles(phase *Phase, files []File) []string {
 	known := make(map[string]*PhaseQuestion, len(phase.Questions))
 	for i := range phase.Questions {
@@ -438,18 +420,13 @@ func parseQuestionBody(q *PhaseQuestion, start int, errs *[]string) {
 	}
 }
 
-// frameChapters are the chapters rendered in the content frame. Title, lead
-// and 03 Decidere stay in the shell.
 var frameChapters = map[string]struct{ index, role, purpose string }{
 	"Capire":      {"01", "role-information", "dov’è il problema"},
 	"Confrontare": {"02", "role-analysis", "come cambia con la scelta"},
 }
 
-// optionKey is the letter the page shows for the option at index i.
 func optionKey(i int) string { return string(rune('A' + i)) }
 
-// preview renders the head of 02: one Anteprima chip per option and the
-// effect line of each option. The frame helper shows the variant in use.
 func preview(q *PhaseQuestion) string {
 	var b strings.Builder
 	b.WriteString(`<div class="preview" role="group" aria-label="Anteprima"><span class="preview-label">Anteprima</span>`)
@@ -470,8 +447,6 @@ func preview(q *PhaseQuestion) string {
 	return b.String()
 }
 
-// RenderPhase renders every complete question of the call. recap holds the
-// decisions table after the call's settled elements.
 func RenderPhase(phase *Phase, excerpt Excerpter, recap []RecapRow) []string {
 	var errs []string
 	remaining := phase.Budget
@@ -491,8 +466,7 @@ func RenderPhase(phase *Phase, excerpt Excerpter, recap []RecapRow) []string {
 		chapter := ""
 		compared := false
 		var body []line
-		// flush renders a frame chapter; one with no content is hidden. 02
-		// starts with the diagrams of 01 that declare variants.
+
 		flush := func() {
 			c, framed := frameChapters[chapter]
 			empty := !slices.ContainsFunc(body, func(l line) bool { return strings.TrimSpace(l.text) != "" })

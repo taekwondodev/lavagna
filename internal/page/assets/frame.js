@@ -1,11 +1,5 @@
 'use strict';
 
-// The content frame helper: it reports the document's layout to the shell and
-// follows the option the shell reports, so 02 shows the variant in use: its
-// effect line and the drawing of each diagram. The
-// shell sends only the selected option id and whether a free-text answer
-// exists; the preview chosen here never leaves the frame. It also fits raw
-// HTML blocks wider than the column and asks the shell to expand one.
 (() => {
   const EXPAND_BELOW = 0.85;
   const shell = window.parent;
@@ -15,8 +9,6 @@
   let preview = null;
   let reported = '';
   let announced = '';
-  // expanded and native are the shell's last `expanded` state: native shows
-  // the expanding block full screen at its own size, else it stays fitted.
   let expanded = false;
   let native = false;
   let expanding = null;
@@ -30,8 +22,6 @@
     return chip ? chip.dataset.variant : null;
   }
 
-  // The preview, else the choice, else the recommended option. A free-text
-  // answer shows the recommended variant until the agent draws it.
   function variant() {
     return preview || option || recommended();
   }
@@ -54,7 +44,6 @@
       chip.setAttribute('aria-pressed', String(on));
     }
     for (const effect of document.querySelectorAll('.effect')) effect.hidden = effect.dataset.variant !== shown;
-    // Diagrams draw the present state until a variant is shown.
     for (const drawing of document.querySelectorAll('.diagram-variant')) drawing.hidden = drawing.dataset.variant !== (shown || 'now');
     const label = document.querySelector('.preview-note');
     if (label) label.textContent = note();
@@ -80,9 +69,6 @@
     return node;
   }
 
-  // fitBlock measures the block at the column width and, when it overflows,
-  // zooms its stage to fit. The expanding block keeps its header so Riduci
-  // stays reachable, and at native size it scrolls instead of zooming.
   function fitBlock(block) {
     const stage = block.querySelector(':scope > .raw-stage');
     const open = expanded && block === expanding;
@@ -109,8 +95,6 @@
     for (const block of document.querySelectorAll('.raw')) fitBlock(block);
   }
 
-  // follow applies the shell's `expanded` state. Without a block asking, as
-  // after a forged `expand`, the first wide block is shown, else none.
   function follow(data) {
     expanded = data.active === true;
     native = expanded && data.native === true;

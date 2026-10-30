@@ -54,7 +54,7 @@ func invalid(w io.Writer, errs ...string) int {
 	more := max(0, len(errs)-maxErrors)
 	shown := make([]string, 0, min(len(errs), maxErrors))
 	for _, err := range errs[:min(len(errs), maxErrors)] {
-		// Bound diagnostics, not valid feedback. Preserve the location and fix first.
+
 		original := err
 		if len(err) > 380 {
 			err = err[:380]
@@ -103,7 +103,6 @@ func busy(w io.Writer, c conversation.Conversation) int {
 
 func Usage(out io.Writer, usage string) int { return invalid(out, usage) }
 
-// bound resolves the invoking harness and the conversation it identifies.
 func bound(getenv func(string) string) (harness.Harness, conversation.Conversation, error) {
 	h, err := harness.Resolve(getenv, ownerExecutable)
 	if err != nil {

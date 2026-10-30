@@ -1,24 +1,5 @@
 package diagram
 
-// The flow layout is layered, left to right, after Sugiyama et al. 1981 and
-// Gansner et al. 1993, trimmed for graphs of about 20 nodes as measured in #13:
-//
-//  1. cycle removal: DFS in input order reverses back edges (Gansner §2.1);
-//     parallel and opposite edges merge into one layered edge;
-//  2. layering: longest path, single-node moves that shorten edges, then
-//     balanced nodes move to the least crowded feasible layer (Gansner
-//     fig. 2-1, remark 8);
-//  3. dummy vertices split edges longer than one layer (Gansner §3);
-//  4. ordering: weighted median sweeps and transpose (Gansner fig. 3-1), then
-//     exhaustive search over adjacent layer pairs; members of a group stay
-//     contiguous in a layer and groups keep one order in every layer
-//     (Forster 2002, R1 and R2);
-//  5. rows: integer grid rows by iterated weighted medians and isotonic
-//     regression, then each group's band is cleared of non-members;
-//  6. routing: ports spread along each node side by the row of the other end,
-//     and each layer-to-layer hop is a straight segment in the gap between
-//     columns, so no edge passes through a node.
-
 import (
 	"math"
 	"slices"
@@ -26,8 +7,8 @@ import (
 )
 
 const (
-	pairOff = 8.0 // between parallel edges and between ports
-	// maxOrders caps the orders of a pair of adjacent layers searched at once.
+	pairOff = 8.0
+
 	maxOrders = 50000
 )
 
@@ -40,8 +21,6 @@ func (r rect) h() float64 { return r.y1 - r.y0 }
 
 func overlaps(a, b rect) bool { return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1 }
 
-// segmentHits reports whether the segment from a to b enters r, by clipping
-// it to r (Liang and Barsky).
 func segmentHits(a, b point, r rect) bool {
 	t0, t1 := 0.0, 1.0
 	dx, dy := b.x-a.x, b.y-a.y
@@ -62,44 +41,38 @@ func segmentHits(a, b point, r rect) bool {
 	return t0 < t1
 }
 
-// graph is a flow as one variant draws it: node and edge label sizes, edges as
-// pairs of node indices and the group of each node, or -1.
 type graph struct {
-	nodes  []point // width and height of each node box
+	nodes  []point
 	edges  [][2]int
-	labels []point // width and height of each edge label, zero without one
+	labels []point
 	group  []int
 	groups int
 }
 
-// geometry is a laid-out graph, in the graph's order.
 type geometry struct {
 	nodes  []rect
-	paths  [][]point // from the edge's source to the tip of its arrow
-	labels []rect    // zero for an edge without a label
-	groups []rect    // with the title on top
+	paths  [][]point
+	labels []rect
+	groups []rect
 }
 
 type layered struct {
 	g        *graph
-	n        int   // real vertices are 0..n-1, dummies follow
-	group    []int // per vertex
+	n        int
+	group    []int
 	layer    []int
 	layers   [][]int
-	pos      []int // index of each vertex in its layer
+	pos      []int
 	row      []int
 	up, down [][]int
-	reversed []bool // per edge
-	// groupOrder ranks the groups; members of a group are contiguous in
-	// every layer and the groups follow this order in all of them.
+	reversed []bool
+
 	groupOrder []int
-	chains     [][]int   // per layered edge: its vertices from left to right
-	origs      [][]int   // per layered edge: the edges drawn along it
-	widen      []float64 // per gap after a layer: width added for crowded labels
+	chains     [][]int
+	origs      [][]int
+	widen      []float64
 }
 
-// omega weights the straightness of an edge segment by how many of its ends
-// are dummies (Gansner p. 18), so long edges run straight.
 func (l *layered) omega(a, b int) float64 {
 	switch {
 	case a >= l.n && b >= l.n:
@@ -129,7 +102,7 @@ func (l *layered) breakCycles() {
 		indeg[ed[1]]++
 	}
 	l.reversed = make([]bool, len(l.g.edges))
-	state := make([]int, l.n) // 0 unvisited, 1 on the stack, 2 done
+	state := make([]int, l.n)
 	var dfs func(v int)
 	dfs = func(v int) {
 		state[v] = 1
@@ -152,8 +125,6 @@ func (l *layered) breakCycles() {
 	}
 }
 
-// merge orients every edge and merges parallel ones, so a pair of opposite
-// edges becomes one layered edge drawn twice.
 func (l *layered) merge() (succ, pred [][]int) {
 	succ, pred = make([][]int, l.n), make([][]int, l.n)
 	key := map[[2]int]int{}
@@ -194,8 +165,7 @@ func (l *layered) rank(succ, pred [][]int) {
 			}
 		}
 	}
-	// A node with more out- than in-edges shortens the total edge length by
-	// moving right up to its nearest successor, and the converse to the left.
+
 	for changed, i := true, 0; changed && i < 4*l.n; i++ {
 		changed = false
 		for v := range l.n {
@@ -219,8 +189,7 @@ func (l *layered) rank(succ, pred [][]int) {
 			}
 		}
 	}
-	// A node with as many in- as out-edges moves to the feasible layer with
-	// the fewest nodes, which spreads isolated nodes instead of stacking them.
+
 	last, count := 0, map[int]int{}
 	for _, r := range l.layer {
 		last = max(last, r)
@@ -251,8 +220,7 @@ func (l *layered) rank(succ, pred [][]int) {
 
 func (l *layered) addDummies() {
 	for k, c := range l.chains {
-		// A dummy takes the group of a grouped end: the edge enters that box
-		// anyway, so it may run inside it instead of around it.
+
 		a, b := c[0], c[1]
 		g := max(l.group[a], l.group[b])
 		if l.group[a] >= 0 && l.group[b] >= 0 && l.group[a] != l.group[b] {
@@ -274,7 +242,7 @@ func (l *layered) addDummies() {
 			l.up[c[i+1]] = append(l.up[c[i+1]], c[i])
 		}
 	}
-	// The first order is breadth-first from the first layer, in input order.
+
 	l.layers = make([][]int, slices.Max(l.layer)+1)
 	seen := make([]bool, nv)
 	var queue []int
@@ -306,14 +274,12 @@ func (l *layered) addDummies() {
 	}
 }
 
-// index records the position of each vertex of layer r.
 func (l *layered) index(r int) {
 	for i, v := range l.layers[r] {
 		l.pos[v] = i
 	}
 }
 
-// crossingsAt counts the crossings between layer r and the next one.
 func (l *layered) crossingsAt(r int) int {
 	if r < 0 || r+1 >= len(l.layers) {
 		return 0
@@ -334,7 +300,6 @@ func (l *layered) crossingsAt(r int) int {
 	return c
 }
 
-// crossings counts the crossings between layers from and to, inclusive.
 func (l *layered) crossings(from, to int) int {
 	c := 0
 	for r := from; r < to; r++ {
@@ -355,8 +320,6 @@ func median(xs []float64) float64 {
 	return (s[m-1] + s[m]) / 2
 }
 
-// arrange sorts layer r by weight while keeping each group contiguous and the
-// groups in the order rank gives them (Forster's R1 and R2).
 func (l *layered) arrange(r int, w []float64, rank []int) {
 	type block struct {
 		key float64
@@ -402,7 +365,6 @@ func (l *layered) arrange(r int, w []float64, rank []int) {
 	l.index(r)
 }
 
-// groupRank orders the groups by the mean relative position of their members.
 func (l *layered) groupRank() []int {
 	score := make([]float64, l.g.groups)
 	count := make([]float64, l.g.groups)
@@ -498,7 +460,6 @@ func (l *layered) order() {
 	l.permute()
 }
 
-// transpose swaps neighbours of the same group while that removes crossings.
 func (l *layered) transpose() {
 	for improved := true; improved; {
 		improved = false
@@ -522,8 +483,6 @@ func (l *layered) transpose() {
 	}
 }
 
-// orders counts the orders of layers of the given sizes searched together, up
-// to one more than maxOrders.
 func orders(sizes ...int) int {
 	n := 1
 	for _, size := range sizes {
@@ -536,11 +495,6 @@ func orders(sizes ...int) int {
 	return n
 }
 
-// permute tries every order of each pair of adjacent layers, or of a single
-// layer when the pair has too many orders, that keeps groups contiguous and in
-// groupOrder, keeping the one with the fewest crossings, until
-// nothing improves. At this size it escapes the local minima that median
-// sweeps and transpose leave, such as two sources sharing two targets.
 func (l *layered) permute() {
 	for improved := true; improved && l.total() > 0; {
 		improved = false
@@ -616,10 +570,6 @@ func (l *layered) respectsGroups(ly []int, rank []int) bool {
 	return true
 }
 
-// assignRows gives every vertex an integer grid row, strictly increasing within
-// a layer. Each pass moves vertices to the weighted median row of their
-// neighbours, then restores the order with isotonic regression on row minus
-// index.
 func (l *layered) assignRows() {
 	nv := len(l.layer)
 	l.row = make([]int, nv)
@@ -635,7 +585,7 @@ func (l *layered) assignRows() {
 				c += l.omega(v, w) * math.Abs(float64(rows[v]-rows[w]))
 			}
 		}
-		// Prefer the shorter of equally straight drawings.
+
 		return c + 0.5*float64(slices.Max(rows))
 	}
 	l.constrain()
@@ -681,8 +631,6 @@ func (l *layered) assignRows() {
 	l.row = best
 }
 
-// isotonic returns the weighted least-squares nondecreasing fit of d[i]-i, by
-// pooling adjacent violators.
 func isotonic(d, w []float64) []float64 {
 	type pool struct {
 		sum, wt float64
@@ -705,22 +653,6 @@ func isotonic(d, w []float64) []float64 {
 	return out
 }
 
-// constrain moves rows down, as little as the constraints need, until every
-// group spans a band of rows that holds, in the layers the group spans, only
-// its members and its own dummies, and groups whose layers overlap take
-// disjoint bands in groupOrder. Group boxes then hold no other node and do not
-// overlap.
-//
-// The constraints are differences between rows and the top and bottom row of
-// each band, so the least solution above the current rows is a longest path,
-// taken in topological order. Above and below a group's block follow the
-// layer order; in a layer of its span where a group has no vertex, the split
-// falls between the groups ranked before and after it, nearest the band's
-// current middle. Within a layer the splits of the groups spanning it then
-// follow groupOrder, and the constraints are acyclic: a path from a band
-// limit through one layer to another band limit can only lead from the top
-// to the bottom of one band or to a band ranked later, and a path through
-// vertices alone runs down one layer.
 func (l *layered) constrain() {
 	nv, groups := len(l.layer), l.g.groups
 	if groups == 0 {
@@ -728,7 +660,7 @@ func (l *layered) constrain() {
 	}
 	type limit struct{ from, to, gap int }
 	var limits []limit
-	top := func(g int) int { return nv + 2*g } // first row of the band of g
+	top := func(g int) int { return nv + 2*g }
 	bottom := func(g int) int { return nv + 2*g + 1 }
 	for _, ly := range l.layers {
 		for i := 0; i+1 < len(ly); i++ {
@@ -752,7 +684,7 @@ func (l *layered) constrain() {
 		byRank[r] = g
 	}
 	for r, ly := range l.layers {
-		floor := 0 // the vertices before it are above every group placed so far
+		floor := 0
 		for k, g := range byRank {
 			if r < span[g][0] || r > span[g][1] {
 				continue
@@ -764,7 +696,7 @@ func (l *layered) constrain() {
 					end++
 				}
 			} else {
-				// Split before the first block of a group ranked after g.
+
 				limit := slices.IndexFunc(ly, func(v int) bool {
 					return l.group[v] >= 0 && slices.Contains(byRank[k+1:], l.group[v])
 				})
@@ -831,22 +763,18 @@ func (l *layered) constrain() {
 	}
 }
 
-// Spacing of the flow geometry.
 const (
 	gapMin = 56.0
-	// labelInset keeps an edge label clear of the columns and group borders
-	// beside its gap.
+
 	labelInset = 20.0
 	emptyColW  = 24.0
-	labelClear = 4.0 // between an edge label and its own line
-	// widenBy is added to a gap whose labels find no free place, at most
-	// widenTimes times.
+	labelClear = 4.0
+
 	widenBy, widenTimes = 40.0, 3
 	groupPadX           = 12.0
 	groupPadY           = 10.0
 )
 
-// fit places the graph, widening the gaps whose labels find no free place.
 func (l *layered) fit(rowGap float64, titles []float64) geometry {
 	if l.widen == nil {
 		l.widen = make([]float64, len(l.layers))
@@ -862,11 +790,6 @@ func (l *layered) fit(rowGap float64, titles []float64) geometry {
 	}
 }
 
-// place turns the layered graph into geometry and lists the gaps holding a
-// label that found no free place. rowGap is the vertical space between the
-// boxes of adjacent rows and titles the height of each group's title, which
-// its box adds above the members; the left column starts at x = 0 and the top
-// row at y = 0.
 func (l *layered) place(rowGap float64, titles []float64) (geometry, []int) {
 	g := l.g
 	colW := make([]float64, len(l.layers))
@@ -920,8 +843,8 @@ func (l *layered) place(rowGap float64, titles []float64) (geometry, []int) {
 	geo.paths = make([][]point, len(g.edges))
 	type gapSegment struct {
 		p, q  point
-		lower bool // the lower of parallel edges
-		gap   int  // the layer the gap follows
+		lower bool
+		gap   int
 	}
 	segments := make([]gapSegment, len(g.edges))
 	for k, c := range l.chains {
@@ -936,8 +859,7 @@ func (l *layered) place(rowGap float64, titles []float64) (geometry, []int) {
 				}
 				return rowY(l.row[v]) + off
 			}
-			// The tail leaves 2 px from its box and the arrow tip stops 3 px
-			// short of its own.
+
 			a, b := c[0], c[len(c)-1]
 			ga, gb := 2.0, 3.0
 			if l.reversed[e] {
@@ -960,9 +882,6 @@ func (l *layered) place(rowGap float64, titles []float64) (geometry, []int) {
 		}
 	}
 
-	// Each label takes the first of its candidate places that keeps clear of
-	// nodes, group titles and borders, other edges and the labels placed
-	// before it, or the first candidate when none does.
 	var titleRects []rect
 	for i, r := range geo.groups {
 		if titles != nil {
@@ -1014,10 +933,6 @@ func (l *layered) place(rowGap float64, titles []float64) (geometry, []int) {
 	return geo, crowded
 }
 
-// labelPlaces lists the places for a label of size along the segment from p
-// to q across a gap, best first: above the segment, or below it for the lower
-// of two parallel edges, then the other side, each at the middle and then
-// nearer either end.
 func labelPlaces(p, q, size point, lower bool) []rect {
 	var out []rect
 	for _, below := range []bool{lower, !lower} {
@@ -1028,9 +943,6 @@ func labelPlaces(p, q, size point, lower bool) []rect {
 	return out
 }
 
-// labelAt places a label of size in the gap crossed by the segment from p to
-// q, above or below the segment at the fraction t of its length, beside that
-// point on the side the segment slopes away from.
 func labelAt(p, q, size point, lower bool, t float64) rect {
 	mid := point{p.x + t*(q.x-p.x), p.y + t*(q.y-p.y)}
 	x0 := mid.x - size.x/2
@@ -1057,9 +969,6 @@ func labelAt(p, q, size point, lower bool, t float64) rect {
 	return rect{x0, y1 - size.y, x0 + size.x, y1}
 }
 
-// ports spreads the edges leaving one side of a node along that side, ordered
-// by the row of the next vertex, so edges sharing a node do not cross there.
-// The key is the edge and 0 for its left end or 1 for its right end.
 func (l *layered) ports(boxes []rect) map[[2]int]float64 {
 	type end struct {
 		key    [2]int

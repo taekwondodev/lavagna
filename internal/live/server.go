@@ -64,10 +64,6 @@ func (s stage) MarshalText() ([]byte, error) {
 	return []byte([...]string{"", "accepted", "returned", "received", "unread", "ended", "aborted", "unread-aborted"}[s]), nil
 }
 
-// view is what the page renders for one call: the question ledger with the
-// current version of every question, the threads sent so far and the call's
-// credentials. Text reaches the shell as plain text; only frame documents
-// carry rendered HTML.
 type view struct {
 	ID         string                `json:"round"`
 	Call       string                `json:"call"`
@@ -77,8 +73,7 @@ type view struct {
 	ImageLimit int                   `json:"imageLimit"`
 	ImageBytes int                   `json:"imageBytes"`
 	Previous   *conversation.Outcome `json:"previous"`
-	// Paused marks a call that reached its deadline before any batch: Send
-	// stays closed until the next call resumes the round.
+
 	Paused bool      `json:"paused,omitempty"`
 	Phase  phaseView `json:"phase"`
 }
@@ -108,8 +103,6 @@ type questionView struct {
 	Resources []string              `json:"resources,omitempty"`
 }
 
-// messageView is a sent thread message; Images are upload ids the page reads
-// under images/, never host paths.
 type messageView struct {
 	Author     string   `json:"author"`
 	Round      int      `json:"round"`
@@ -257,8 +250,6 @@ type event struct {
 	data any
 }
 
-// roundSpec is everything one call serves. The relay receives it gob-encoded
-// and serves the same view during the agent's turn.
 type roundSpec struct {
 	Origin   conversation.Origin
 	ID       string
@@ -268,8 +259,7 @@ type roundSpec struct {
 	Previous *conversation.Outcome
 	Images   string
 	Ledger   conversation.Ledger
-	// Questions holds the current version of every question in ledger order;
-	// planned questions carry only their id.
+
 	Questions []round.PhaseQuestion
 }
 
@@ -286,8 +276,7 @@ func newRound(spec roundSpec) *server {
 		entry := l.Questions[q.ID]
 		v := questionView{ID: q.ID, Title: entry.Title, After: entry.After, Status: entry.Status, Round: entry.Round, Marks: entry.Marks, Version: entry.Version,
 			Lead: q.Lead, Options: q.Options, Reason: q.Reason, Answer: entry.Answer, Thread: messages(entry.Thread)}
-		// Only the current round's open questions take a choice or answer;
-		// every other question takes messages and screenshots.
+
 		s.answerable[q.ID] = entry.Status == conversation.Open && entry.Round == l.Round
 		s.options[q.ID] = map[string]bool{}
 		for _, o := range q.Options {
@@ -374,9 +363,6 @@ func (s *server) returned(witnessed bool) {
 	s.broadcast(event{"receipt", s.receipt()})
 }
 
-// pause closes admission when the call's deadline comes before any batch, and
-// tells open pages. It reports false when a batch was already admitted: the
-// call must return that batch instead.
 func (s *server) pause() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
