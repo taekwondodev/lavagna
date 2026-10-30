@@ -379,6 +379,9 @@ func TestConcurrentFirstCallsConvergeOnOneOwner(t *testing.T) {
 		wg.Go(func() { calls[i] = spawn(t, environ, decision) })
 	}
 	wg.Wait()
+	if t.Failed() {
+		t.FailNow()
+	}
 	var owners []*call
 	for _, c := range calls {
 		switch {
@@ -545,8 +548,8 @@ func TestAnyStartSweepsIdleConversations(t *testing.T) {
 		}
 		return dir
 	}
-	idle := conversationDir("idle", 8*24*time.Hour)
 	recent := conversationDir("recent", 23*time.Hour)
+	idle := conversationDir("idle", 8*24*time.Hour)
 	cmd := exec.Command(binary, "check")
 	cmd.Env = environ("other")
 	if out, err := cmd.CombinedOutput(); err != nil {
