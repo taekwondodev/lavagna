@@ -112,20 +112,22 @@ func (b *Browser) read(r *os.File) {
 			var a struct {
 				SessionID  string `json:"sessionId"`
 				TargetInfo struct {
-					Type string `json:"type"`
+					Type     string `json:"type"`
+					TargetID string `json:"targetId"`
 				} `json:"targetInfo"`
 			}
 			json.Unmarshal(m.Params, &a)
 			if a.TargetInfo.Type == "iframe" {
-				b.frames[m.SessionID] = a.SessionID
+				b.frames[a.TargetInfo.TargetID] = a.SessionID
 			}
 		case "Target.detachedFromTarget":
 			var d struct {
 				SessionID string `json:"sessionId"`
+				TargetID  string `json:"targetId"`
 			}
 			json.Unmarshal(m.Params, &d)
-			if b.frames[m.SessionID] == d.SessionID {
-				delete(b.frames, m.SessionID)
+			if b.frames[d.TargetID] == d.SessionID {
+				delete(b.frames, d.TargetID)
 			}
 		}
 		ch := b.pending[m.ID]
@@ -204,6 +206,8 @@ func (p *Page) Resize(width, height int, mobile bool) {
 	p.t.Helper()
 	p.b.must(nil, p.session, "Emulation.setDeviceMetricsOverride",
 		map[string]any{"width": width, "height": height, "deviceScaleFactor": 1, "mobile": mobile})
+	p.WaitFor(fmt.Sprintf("innerWidth === %d && innerHeight === %d", width, height))
+	p.MustEval("(async () => { "+painted+" })()", nil)
 }
 
 func (p *Page) Close() {
@@ -313,17 +317,65 @@ func (p *Page) center(selector string) (pt point) {
 	p.b.must(nil, p.session, "Page.bringToFront", map[string]any{})
 	p.MustEval(fmt.Sprintf(`(async () => {
 		const el = document.querySelector(%q);
-		el.scrollIntoView({block: 'center'});
-		%s
-		const r = el.getBoundingClientRect();
-		return {X: r.left + r.width / 2, Y: r.top + r.height / 2};
+		for (let last = ''; ; ) {
+			el.scrollIntoView({block: 'center'});
+			%s
+			const r = el.getBoundingClientRect();
+			const pt = {X: r.left + r.width / 2, Y: r.top + r.height / 2};
+			const hit = document.elementFromPoint(pt.X, pt.Y);
+			if (JSON.stringify(pt) === last && hit && el.contains(hit)) return pt;
+			last = JSON.stringify(pt);
+		}
 	})()`, selector, painted), &pt)
 	return pt
 }
 
 func (p *Page) ClickTimes(selector string, n int) {
 	p.t.Helper()
-	p.press(p.center(selector), n)
+	p.press(p.aim(selector), n)
+}
+
+func (p *Page) aim(selector string) point {
+	p.t.Helper()
+	deadline := time.Now().Add(callTimeout)
+	for {
+		pt := p.center(selector)
+		p.MustEval(tracking, nil)
+		p.hover(pt)
+		var routed bool
+		p.MustEval(reached(selector), &routed)
+		if routed {
+			return pt
+		}
+		p.repaint()
+		if time.Now().After(deadline) {
+			p.t.Fatalf("the pointer never reached %s", selector)
+		}
+	}
+}
+
+func reached(selector string) string {
+	return fmt.Sprintf(`Boolean(window.cdptestHover && document.querySelector(%q).contains(cdptestHover))`, selector)
+}
+
+const tracking = `window.cdptestHover = null; if (!window.cdptestTracking) { window.cdptestTracking = true; addEventListener('pointermove', e => { cdptestHover = e.target; }, true); }`
+
+func (p *Page) repaint() {
+	p.t.Helper()
+	p.MustEval(`(async () => {
+		const frames = () => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+		document.documentElement.style.opacity = '0.999';
+		await frames();
+		document.documentElement.style.opacity = '';
+		await frames();
+	})()`, nil)
+}
+
+func (p *Page) hover(pt point) {
+	p.t.Helper()
+	for _, dx := range []float64{1, 0} {
+		p.b.must(nil, p.session, "Input.dispatchMouseEvent", map[string]any{"type": "mouseMoved", "x": pt.X + dx, "y": pt.Y})
+	}
 }
 
 type point struct{ X, Y float64 }
@@ -397,13 +449,45 @@ type Frame struct {
 func (p *Page) Frame(selector string) *Frame { return &Frame{p: p, selector: selector} }
 
 func (f *Frame) eval(expr string, into any) error {
-	f.p.b.mu.Lock()
-	session := f.p.b.frames[f.p.session]
-	f.p.b.mu.Unlock()
-	if session == "" {
-		return fmt.Errorf("no frame attached to the page")
+	session, err := f.session()
+	if err != nil {
+		return err
 	}
 	return f.p.b.eval(session, expr, into)
+}
+
+func (f *Frame) session() (string, error) {
+	raw, err := f.p.b.call(f.p.session, "Runtime.evaluate", map[string]any{"expression": fmt.Sprintf("document.querySelector(%q)", f.selector)})
+	if err != nil {
+		return "", err
+	}
+	var found struct {
+		Result struct {
+			ObjectID string `json:"objectId"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &found); err != nil || found.Result.ObjectID == "" {
+		return "", fmt.Errorf("no %s in the page", f.selector)
+	}
+	raw, err = f.p.b.call(f.p.session, "DOM.describeNode", map[string]any{"objectId": found.Result.ObjectID})
+	f.p.b.call(f.p.session, "Runtime.releaseObject", map[string]any{"objectId": found.Result.ObjectID})
+	if err != nil {
+		return "", err
+	}
+	var owner struct {
+		Node struct {
+			FrameID string `json:"frameId"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal(raw, &owner); err != nil {
+		return "", err
+	}
+	f.p.b.mu.Lock()
+	defer f.p.b.mu.Unlock()
+	if session := f.p.b.frames[owner.Node.FrameID]; session != "" {
+		return session, nil
+	}
+	return "", fmt.Errorf("%s has no attached document", f.selector)
 }
 
 func (f *Frame) MustEval(expr string, into any) {
@@ -422,21 +506,44 @@ func (f *Frame) WaitFor(expr string) {
 func (f *Frame) Click(selector string) {
 	f.p.t.Helper()
 	f.p.b.must(nil, f.p.session, "Page.bringToFront", map[string]any{})
-	var r struct{ X, Y, Width, Height float64 }
-	f.MustEval(fmt.Sprintf(`(() => {
-		const r = document.querySelector(%q).getBoundingClientRect();
-		return {X: r.left, Y: r.top, Width: r.width, Height: r.height};
-	})()`, selector), &r)
-	box := fmt.Sprintf(`(() => {
-		const el = document.querySelector(%q);
-		const r = el.getBoundingClientRect();
-		return {X: r.left + el.clientLeft, Y: r.top + el.clientTop};
-	})()`, f.selector)
-	var at point
-	f.p.MustEval(box, &at)
-	f.p.MustEval(fmt.Sprintf(`(async () => { window.scrollBy({top: %f - innerHeight / 2, behavior: 'instant'}); %s })()`, at.Y+r.Y+r.Height/2, painted), nil)
-	f.p.MustEval(box, &at)
-	f.p.press(point{at.X + r.X + r.Width/2, at.Y + r.Y + r.Height/2}, 1)
+	deadline := time.Now().Add(callTimeout)
+	for last := (point{-1, -1}); ; {
+		var inner struct {
+			X, Y float64
+			Hit  bool
+		}
+		f.MustEval(fmt.Sprintf(`(() => {
+			const el = document.querySelector(%q);
+			const r = el.getBoundingClientRect();
+			const x = r.left + r.width / 2, y = r.top + r.height / 2;
+			const hit = document.elementFromPoint(x, y);
+			return {X: x, Y: y, Hit: Boolean(hit && el.contains(hit))};
+		})()`, selector), &inner)
+		var at point
+		f.p.MustEval(fmt.Sprintf(`(async () => {
+			const el = document.querySelector(%q);
+			window.scrollBy({top: el.getBoundingClientRect().top + el.clientTop + %f - innerHeight / 2, behavior: 'instant'});
+			%s
+			const r = el.getBoundingClientRect();
+			return {X: r.left + el.clientLeft, Y: r.top + el.clientTop};
+		})()`, f.selector, inner.Y, painted), &at)
+		at = point{at.X + inner.X, at.Y + inner.Y}
+		if inner.Hit && at == last {
+			f.MustEval(tracking, nil)
+			f.p.hover(at)
+			var routed bool
+			f.MustEval(reached(selector), &routed)
+			if routed {
+				f.p.press(at, 1)
+				return
+			}
+			f.p.repaint()
+		}
+		if time.Now().After(deadline) {
+			f.p.t.Fatalf("%s in %s never settled under the pointer", selector, f.selector)
+		}
+		last = at
+	}
 }
 
 type DragItem struct {
@@ -446,7 +553,7 @@ type DragItem struct {
 
 func (p *Page) Drop(selector string, files []string, items ...DragItem) {
 	p.t.Helper()
-	pt := p.center(selector)
+	pt := p.aim(selector)
 	data := map[string]any{"items": append([]DragItem{}, items...), "files": append([]string{}, files...), "dragOperationsMask": 1}
 	for _, typ := range []string{"dragEnter", "dragOver", "drop"} {
 		p.b.must(nil, p.session, "Input.dispatchDragEvent", map[string]any{"type": typ, "x": pt.X, "y": pt.Y, "data": data})
