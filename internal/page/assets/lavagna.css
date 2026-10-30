@@ -196,7 +196,6 @@ button.option:disabled.on { opacity: 1; }
 .page[data-expanded="native"] .content-frame { position: fixed; top: 44px; left: 0; z-index: 30; height: calc(100% - 44px) !important; background: var(--surface); }
 .sheet-toggle, .discussion-toggle { display: none; }
 
-/* a wide window: the discussion collapses to a strip that reopens it */
 @media (min-width: 1024px) {
   .discussion { position: relative; }
   .discussion-head { padding-right: 48px; }

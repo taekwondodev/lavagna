@@ -58,6 +58,7 @@ const composer = $('#composer');
 // At phone width the rail is a strip, the discussion a sheet and Expand shows
 // the block full screen at its own size. lavagna.css uses the same width.
 const PHONE = matchMedia('(max-width: 640px)');
+const WIDE = matchMedia('(min-width: 1024px)');
 const encoder = new TextEncoder();
 
 // view is the server's last view of the phase. record is the phase's draft in
@@ -604,7 +605,7 @@ function markRead() {
     const q = question(active);
     if (q) record.seen[q.id] = q.version;
   }
-  record.heard[active] = agentCount(active);
+  if (!threadHidden()) record.heard[active] = agentCount(active);
   save();
 }
 
@@ -972,7 +973,11 @@ function renderDiscussion() {
   const entries = threadEntries(id);
   setText($('#discussion-count'), plural(entries.length, 'messaggio', 'messaggi'));
   setText($('#sheet-toggle'), sheet ? 'Chiudi discussione' : 'Discussione' + (entries.length ? ' ' + entries.length : ''));
-  setText($('#discussion-toggle-label'), 'Discussione' + (entries.length ? ' · ' + entries.length : ''));
+  const strip = 'Discussione' + (entries.length ? ' · ' + entries.length : '');
+  setText($('#discussion-toggle-label'), strip);
+  const unheard = newReply(id);
+  $('#discussion-new').hidden = !unheard;
+  $('#discussion-toggle').setAttribute('aria-label', collapsed ? strip + (unheard ? ' · nuova risposta' : '') : 'Chiudi discussione');
   const signature = JSON.stringify([id, entries, frozen()]);
   if (signature !== threadKey) {
     threadKey = signature;
@@ -1030,14 +1035,13 @@ function toggleSheet() {
   renderDiscussion();
 }
 
-// At full width the discussion collapses to a strip beside the question;
-// lavagna.css ignores the state at narrower widths.
+function threadHidden() { return collapsed && WIDE.matches; }
+
 function toggleCollapsed() {
   collapsed = !collapsed;
   $('#page').toggleAttribute('data-collapsed', collapsed);
-  const toggle = $('#discussion-toggle');
-  toggle.setAttribute('aria-expanded', String(!collapsed));
-  toggle.setAttribute('aria-label', collapsed ? 'Apri discussione' : 'Chiudi discussione');
+  $('#discussion-toggle').setAttribute('aria-expanded', String(!collapsed));
+  refreshViews();
 }
 
 function updateComposer() {
@@ -1507,6 +1511,9 @@ $('#reduce').addEventListener('click', () => expand(false));
 PHONE.addEventListener('change', () => {
   if (expanded) expand(true);
 });
+WIDE.addEventListener('change', () => {
+  if (collapsed) refreshViews();
+});
 $('#copy-draft').addEventListener('click', () => copyText(draftText(), $('#copy-draft')));
 $('#salvage-copy').addEventListener('click', () => copyText(salvaged, $('#salvage-copy')));
 $('#salvage-drop').addEventListener('click', () => {
@@ -1529,6 +1536,7 @@ const discussion = $('#discussion');
 discussion.addEventListener('dragover', event => {
   if (!carriesFiles(event) && !event.dataTransfer.types.includes('text/uri-list')) return;
   event.preventDefault();
+  if (threadHidden()) toggleCollapsed();
   event.dataTransfer.dropEffect = frozen() ? 'none' : 'copy';
   discussion.classList.toggle('dropping', !frozen());
 });

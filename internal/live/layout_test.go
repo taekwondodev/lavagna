@@ -1,6 +1,9 @@
 package live
 
 import (
+	"encoding/base64"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -203,6 +206,9 @@ func TestWideWindowCollapsesTheDiscussionToAStrip(t *testing.T) {
 	run.call(wideRound, wideFiles())
 	p := cdptest.Start(t).Open(run.url, desktopWidth, pageHeight)
 	p.WaitFor(`document.querySelector('#content')`)
+	p.Click(`.option[data-option="inline"]`)
+	p.Click("#send")
+	run.outcome()
 
 	open := box(t, p, "#center")
 	p.Click("#discussion-toggle")
@@ -214,9 +220,6 @@ func TestWideWindowCollapsesTheDiscussionToAStrip(t *testing.T) {
 		t.Error("the collapsed strip still shows the composer")
 	}
 	wantText(t, p, "#discussion-toggle-label", "Discussione")
-	if got := evalString(p, `document.querySelector('#discussion-toggle').getAttribute('aria-label')`); got != "Apri discussione" {
-		t.Errorf("collapsed toggle label %q, want Apri discussione", got)
-	}
 
 	p.Resize(narrowWidth, pageHeight, false)
 	if discussion := box(t, p, "#discussion"); discussion == nil || discussion.Right-discussion.Left < 200 || box(t, p, "#discussion-toggle") != nil {
@@ -224,10 +227,38 @@ func TestWideWindowCollapsesTheDiscussionToAStrip(t *testing.T) {
 	}
 
 	p.Resize(desktopWidth, pageHeight, false)
+	run.call("::: reply spesa\nBasta una riga.\n:::\n", nil)
+	p.WaitFor(`document.querySelector('#turn').textContent === 'Tocca a te'`)
+	if box(t, p, `.card[data-target="spesa"] .card-new`) == nil || box(t, p, "#discussion-new") == nil {
+		t.Error("a reply to the active question behind the strip shows no new-reply dot")
+	}
+	if got := evalString(p, `document.querySelector('#discussion-toggle').getAttribute('aria-label')`); got != "Discussione · 1 · nuova risposta" {
+		t.Errorf("collapsed toggle label %q, want the count and the new reply", got)
+	}
+
 	p.Click("#discussion-toggle")
 	if discussion := box(t, p, "#discussion"); discussion == nil || discussion.Right-discussion.Left != 320 || box(t, p, "#composer") == nil {
 		t.Errorf("reopened discussion %v: want the 320 px column with its composer", discussion)
 	}
+	if box(t, p, `.card[data-target="spesa"] .card-new`) != nil {
+		t.Error("reopening the discussion did not clear the new-reply dot")
+	}
+
+	p.Click("#discussion-toggle")
+	png, err := base64.StdEncoding.DecodeString(pixel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropped := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(dropped, png, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.Drop("#discussion-toggle", []string{dropped})
+	if box(t, p, "#composer") == nil {
+		t.Error("a screenshot dragged onto the strip did not open the discussion")
+	}
+	p.Drop("#thread", []string{dropped})
+	p.WaitFor(`document.querySelector('#thread .message-staged img')`)
 }
 
 func TestWideBlocksFitAndExpand(t *testing.T) {
