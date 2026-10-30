@@ -107,8 +107,10 @@ func TestAcquireWaitsOutASweepOfItsConversation(t *testing.T) {
 	}
 	go func() {
 		time.Sleep(200 * time.Millisecond)
-		os.RemoveAll(resumed.dir)
+		buried := filepath.Join(resumed.root, tombstone+"test")
+		os.Rename(resumed.dir, buried)
 		sweeper.Close()
+		os.RemoveAll(buried)
 	}()
 	l, err := Acquire(resumed)
 	if err != nil {
@@ -155,7 +157,7 @@ func TestAcquireReportsALiveCallAsBusy(t *testing.T) {
 	if _, err := Acquire(c); err != ErrBusy {
 		t.Fatalf("second acquire: %v, want ErrBusy", err)
 	}
-	if waited := time.Since(start); waited > sweepRetry*5 {
+	if waited := time.Since(start); waited >= sweepGrace/2 {
 		t.Fatalf("a live call was reported busy after %v", waited)
 	}
 }
