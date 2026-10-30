@@ -82,6 +82,7 @@ let imageRefusal = '';
 let snapshotURL = null;
 let expanded = false;
 let sheet = false;
+let collapsed = false;
 let acceptedLive = null;
 let salvaged = '';
 const renders = new Set();
@@ -971,6 +972,7 @@ function renderDiscussion() {
   const entries = threadEntries(id);
   setText($('#discussion-count'), plural(entries.length, 'messaggio', 'messaggi'));
   setText($('#sheet-toggle'), sheet ? 'Chiudi discussione' : 'Discussione' + (entries.length ? ' ' + entries.length : ''));
+  setText($('#discussion-toggle-label'), 'Discussione' + (entries.length ? ' · ' + entries.length : ''));
   const signature = JSON.stringify([id, entries, frozen()]);
   if (signature !== threadKey) {
     threadKey = signature;
@@ -1026,6 +1028,16 @@ function toggleSheet() {
   $('#page').toggleAttribute('data-sheet', sheet);
   $('#sheet-toggle').setAttribute('aria-expanded', String(sheet));
   renderDiscussion();
+}
+
+// At full width the discussion collapses to a strip beside the question;
+// lavagna.css ignores the state at narrower widths.
+function toggleCollapsed() {
+  collapsed = !collapsed;
+  $('#page').toggleAttribute('data-collapsed', collapsed);
+  const toggle = $('#discussion-toggle');
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  toggle.setAttribute('aria-label', collapsed ? 'Apri discussione' : 'Chiudi discussione');
 }
 
 function updateComposer() {
@@ -1490,6 +1502,7 @@ composer.addEventListener('paste', event => {
 $('#stage-message').addEventListener('click', stageMessage);
 $('#send').addEventListener('click', send);
 $('#sheet-toggle').addEventListener('click', toggleSheet);
+$('#discussion-toggle').addEventListener('click', toggleCollapsed);
 $('#reduce').addEventListener('click', () => expand(false));
 PHONE.addEventListener('change', () => {
   if (expanded) expand(true);

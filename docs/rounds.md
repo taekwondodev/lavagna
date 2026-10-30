@@ -118,7 +118,7 @@ The draft survives calls, so text can be written while the agent works. It freez
 
 Espandi on a fitted block hides the rail and discussion to widen the content. At phone width it shows the block full screen at native size, scrollable in both directions under the shell's Riduci bar. Riduci, <kbd>Esc</kbd> or switching questions ends expansion.
 
-Around 760 px, the rail shrinks to question numbers and discussion remains on the right. At phone width the rail becomes cards below the title bar and discussion opens as a sheet from the footer.
+At full width, the arrow in the discussion header collapses it to a strip at the right edge; the strip shows the message count and reopens it. Around 760 px, the rail shrinks to question numbers and discussion remains on the right. At phone width the rail becomes cards below the title bar and discussion opens as a sheet from the footer.
 
 ## Collect feedback
 

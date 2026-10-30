@@ -198,6 +198,38 @@ func TestNarrowWindowKeepsTheDiscussionAndPhoneOpensItAsASheet(t *testing.T) {
 	wantText(t, p, "#summary", "2 in bozza · Q1 → ✎ · Q1 +1 msg")
 }
 
+func TestWideWindowCollapsesTheDiscussionToAStrip(t *testing.T) {
+	run := newPhaseRun(t)
+	run.call(wideRound, wideFiles())
+	p := cdptest.Start(t).Open(run.url, desktopWidth, pageHeight)
+	p.WaitFor(`document.querySelector('#content')`)
+
+	open := box(t, p, "#center")
+	p.Click("#discussion-toggle")
+	strip, center := box(t, p, "#discussion"), box(t, p, "#center")
+	if strip == nil || strip.Right-strip.Left > 44 || strip.Right != desktopWidth || center.Right <= open.Right {
+		t.Errorf("collapsed discussion %v, center %v: want a strip at the right edge and a wider center", strip, center)
+	}
+	if box(t, p, "#composer") != nil {
+		t.Error("the collapsed strip still shows the composer")
+	}
+	wantText(t, p, "#discussion-toggle-label", "Discussione")
+	if got := evalString(p, `document.querySelector('#discussion-toggle').getAttribute('aria-label')`); got != "Apri discussione" {
+		t.Errorf("collapsed toggle label %q, want Apri discussione", got)
+	}
+
+	p.Resize(narrowWidth, pageHeight, false)
+	if discussion := box(t, p, "#discussion"); discussion == nil || discussion.Right-discussion.Left < 200 || box(t, p, "#discussion-toggle") != nil {
+		t.Errorf("at %d px: discussion %v; want the full discussion and no toggle", narrowWidth, discussion)
+	}
+
+	p.Resize(desktopWidth, pageHeight, false)
+	p.Click("#discussion-toggle")
+	if discussion := box(t, p, "#discussion"); discussion == nil || discussion.Right-discussion.Left != 320 || box(t, p, "#composer") == nil {
+		t.Errorf("reopened discussion %v: want the 320 px column with its composer", discussion)
+	}
+}
+
 func TestWideBlocksFitAndExpand(t *testing.T) {
 	run := newPhaseRun(t)
 	run.call(wideRound, wideFiles())

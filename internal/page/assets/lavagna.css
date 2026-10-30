@@ -194,7 +194,22 @@ button.option:disabled.on { opacity: 1; }
 .expand-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #reduce { flex-shrink: 0; padding: 4px 12px; font-size: 13px; font-weight: 700; }
 .page[data-expanded="native"] .content-frame { position: fixed; top: 44px; left: 0; z-index: 30; height: calc(100% - 44px) !important; background: var(--surface); }
-.sheet-toggle { display: none; }
+.sheet-toggle, .discussion-toggle { display: none; }
+
+/* a wide window: the discussion collapses to a strip that reopens it */
+@media (min-width: 1024px) {
+  .discussion { position: relative; }
+  .discussion-head { padding-right: 48px; }
+  .discussion-toggle { position: absolute; top: 11px; right: 10px; display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border-color: transparent; background: transparent; color: var(--muted); }
+  .chevron { width: 8px; height: 8px; border-top: 2px solid currentColor; border-right: 2px solid currentColor; transform: translateX(-1px) rotate(45deg); }
+  .discussion-toggle-label { display: none; }
+  .page[data-state="ready"][data-collapsed]:not([data-expanded]) { grid-template-columns: 248px minmax(0, 1fr) 44px; }
+  .page[data-collapsed] .discussion { grid-template-rows: minmax(0, 1fr); }
+  .page[data-collapsed] .discussion > :not(.discussion-toggle) { display: none; }
+  .page[data-collapsed] .discussion-toggle { position: static; display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; height: 100%; padding: 18px 0; border: 0; border-radius: 0; outline-offset: -3px; }
+  .page[data-collapsed] .chevron { transform: translateX(1px) rotate(-135deg); }
+  .page[data-collapsed] .discussion-toggle-label { display: block; writing-mode: vertical-rl; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; }
+}
 
 /* a narrow window: the rail shrinks to question numbers */
 @media (max-width: 1023px) {
