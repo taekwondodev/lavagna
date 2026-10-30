@@ -459,7 +459,7 @@ func RenderPhase(phase *Phase, excerpt Excerpter, recap []RecapRow) []string {
 		for _, file := range q.Resources {
 			files[q.ID+"/"+file.Name] = true
 		}
-		p := parser{out: &strings.Builder{}, questions: map[string]bool{}, anchors: map[string]bool{}, in: Input{Files: files, Budget: remaining, Excerpt: excerpt}, recap: recap, phase: true}
+		p := parser{out: &strings.Builder{}, files: files, budget: remaining, repository: excerpt, recap: recap}
 		for i, o := range q.Options {
 			p.options = append(p.options, diagram.Option{ID: o.ID, Key: optionKey(i)})
 		}
@@ -482,7 +482,7 @@ func RenderPhase(phase *Phase, excerpt Excerpter, recap []RecapRow) []string {
 					p.out.WriteString(strings.Join(p.repeat, ""))
 				}
 				p.current = chapter
-				p.blocks(body, scope{frame: true})
+				p.blocks(body, false)
 				p.out.WriteString("</div></section>")
 			}
 			body = nil

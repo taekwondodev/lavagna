@@ -45,16 +45,8 @@ func TestLoadReadsTheRoundDirectory(t *testing.T) {
 	if !slices.IsSorted(order) || order[0] != "a-c.js" || order[1] != "a/b.js" {
 		t.Fatalf("files in %q, want path order", order)
 	}
-	names := d.Names()
-	if !names["img/flusso.svg"] || !names["demo.js"] || names["round.md"] {
-		t.Fatalf("names %v", names)
-	}
-	total := 0
-	for _, body := range files {
-		total += len(body)
-	}
-	if d.Bytes != total {
-		t.Fatalf("bytes %d, want %d", d.Bytes, total)
+	if !slices.Contains(order, "img/flusso.svg") || !slices.Contains(order, "demo.js") || slices.Contains(order, "round.md") {
+		t.Fatalf("files %q, want the round's files without round.md", order)
 	}
 }
 

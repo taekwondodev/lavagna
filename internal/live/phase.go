@@ -31,7 +31,7 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, within ti
 		return invalid(out, err.Error())
 	}
 	conversation.Sweep(c, time.Now())
-	in, files, errs := input(src, dir)
+	source, files, errs := input(src, dir)
 	if errs != nil {
 		return invalid(out, errs...)
 	}
@@ -51,7 +51,7 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, within ti
 	for id, q := range st.Ledger.Questions {
 		prior[id] = q.After
 	}
-	phase, errs := round.ParsePhaseKnown(in.Source, prior)
+	phase, errs := round.ParsePhaseKnown(source, prior)
 	if errs != nil {
 		return invalid(out, errs...)
 	}
