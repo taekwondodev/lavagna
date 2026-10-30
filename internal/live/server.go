@@ -370,7 +370,9 @@ func (s *server) pause() bool {
 		return false
 	}
 	s.gate.paused = true
-	s.view.Paused = true
+	paused := *s.view
+	paused.Paused = true
+	s.view = &paused
 	s.broadcast(event{"paused", struct{}{}})
 	return true
 }
