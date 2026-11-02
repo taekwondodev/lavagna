@@ -14,6 +14,8 @@ import (
 
 const callTimeout = 10 * time.Second
 
+const gracefulShutdownTimeout = 5 * time.Second
+
 type Browser struct {
 	t       testing.TB
 	w       *os.File
@@ -68,6 +70,8 @@ func Start(t testing.TB) *Browser {
 	}
 	fromChromeR, fromChromeW, err := os.Pipe()
 	if err != nil {
+		toChromeR.Close()
+		toChromeW.Close()
 		t.Fatal(err)
 	}
 	cmd := exec.Command(path, "--headless=new", "--remote-debugging-pipe", "--use-mock-keychain", "--password-store=basic",
@@ -75,18 +79,53 @@ func Start(t testing.TB) *Browser {
 	cmd.ExtraFiles = []*os.File{toChromeR, fromChromeW}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
+		for _, f := range []*os.File{toChromeR, toChromeW, fromChromeR, fromChromeW} {
+			f.Close()
+		}
 		t.Fatal(err)
 	}
 	toChromeR.Close()
 	fromChromeW.Close()
-	t.Cleanup(func() {
-		toChromeW.Close()
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		cmd.Wait()
-	})
 	b := &Browser{t: t, w: toChromeW, pending: map[int]chan message{}, paused: map[string][]string{}, frames: map[string]string{}}
+	t.Cleanup(func() {
+		processExit := make(chan error, 1)
+		go func() { processExit <- cmd.Wait() }()
+		killProcessGroup := func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		b.shutdown(processExit, gracefulShutdownTimeout, killProcessGroup)
+		fromChromeR.Close()
+	})
 	go b.read(fromChromeR)
 	return b
+}
+
+func (b *Browser) shutdown(processExit <-chan error, gracefulTimeout time.Duration, killProcessGroup func()) {
+	deadline := time.Now().Add(gracefulTimeout)
+	b.requestClose(deadline)
+
+	gracefulExitTimer := time.NewTimer(time.Until(deadline))
+	defer gracefulExitTimer.Stop()
+	select {
+	case exitError := <-processExit:
+		if exitError != nil {
+			killProcessGroup()
+		}
+	case <-gracefulExitTimer.C:
+		killProcessGroup()
+		<-processExit
+	}
+}
+
+func (b *Browser) requestClose(deadline time.Time) {
+	b.mu.Lock()
+	b.next++
+	id := b.next
+	b.mu.Unlock()
+	closeRequest := request{ID: id, Method: "Browser.close"}
+	if commandJSON, err := json.Marshal(closeRequest); err == nil {
+		b.w.SetWriteDeadline(deadline)
+		b.w.Write(append(commandJSON, 0))
+	}
+	b.w.Close()
 }
 
 func (b *Browser) read(r *os.File) {
