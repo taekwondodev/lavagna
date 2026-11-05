@@ -1437,7 +1437,7 @@ document.addEventListener('keydown', event => {
     expand(false);
     return;
   }
-  if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return;
+  if (event.key !== 'Enter' || !event.ctrlKey || event.metaKey) return;
   event.preventDefault();
   send();
 });

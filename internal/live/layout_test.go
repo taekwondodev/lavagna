@@ -260,10 +260,12 @@ func TestWideBlocksFitAndExpand(t *testing.T) {
 	run.call(wideRound, wideFiles())
 	p := cdptest.Start(t).Open(run.url, desktopWidth, pageHeight)
 	p.WaitFor(`document.querySelector('#content')`)
+	// Fix the available content width independently of the OS scrollbar preference.
+	p.MustEval(`document.querySelector('#center').style.scrollbarWidth = 'none'`, nil)
 	f := p.Frame("#content")
 	f.WaitFor(`document.querySelector('.raw.wide')`)
 
-	wantHeads(t, f, "Schermata 1200 px · 49 % [Espandi a tutta pagina] | - | -", "the wide screen is fitted with Expand, the others untouched")
+	wantHeads(t, f, "Schermata 1200 px · 51 % [Espandi a tutta pagina] | - | -", "the wide screen is fitted with Expand, the others untouched")
 	if got := frameString(f, `String(Math.round(document.querySelector('#desk').getBoundingClientRect().right) <= innerWidth)`); got != "true" {
 		t.Error("the fitted screen overflows the column")
 	}
@@ -274,7 +276,7 @@ func TestWideBlocksFitAndExpand(t *testing.T) {
 		t.Error("desktop Expand must hide only rail and discussion")
 	}
 	f.WaitFor(`document.querySelector('.raw-expand').textContent === 'Riduci'`)
-	wantHeads(t, f, "Schermata 1200 px · 97 % [Riduci] | - | -", "the expanded screen refits to the wider column")
+	wantHeads(t, f, "Schermata 1200 px · 98 % [Riduci] | - | -", "the expanded screen refits to the wider column")
 	p.Press("Escape", 27, 0)
 	p.WaitFor(`!document.querySelector('#page').dataset.expanded`)
 	f.WaitFor(`document.querySelector('.raw-expand').textContent === 'Espandi a tutta pagina'`)
@@ -337,7 +339,7 @@ func TestWideBlocksFitAndExpand(t *testing.T) {
 	}
 
 	p.Resize(desktopWidth, pageHeight, false)
-	wantHeads(t, f, "Schermata 1200 px · 49 % [Espandi a tutta pagina] | - | -", "back at desktop width")
+	wantHeads(t, f, "Schermata 1200 px · 51 % [Espandi a tutta pagina] | - | -", "back at desktop width")
 	f.Click(".raw-expand")
 	p.WaitFor(`document.querySelector('#page').dataset.expanded === 'fit'`)
 	p.MustEval(`show('retention')`, nil)

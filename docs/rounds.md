@@ -98,7 +98,7 @@ Arrival does not take focus. A new Rex panel also preserves focus. Outside Rex, 
 
 ## Answer on the page
 
-The page has a rail of rounds, an active question and its discussion. The title bar shows the phase title and delivery stage; the footer holds the draft summary and Send to Agent. <kbd>⌘</kbd><kbd>↩</kbd> also sends.
+The page has a rail of rounds, an active question and its discussion. The title bar shows the phase title and delivery stage; the footer holds the draft summary and Send to Agent. <kbd>⌃</kbd><kbd>↩</kbd> (Ctrl+Enter) also sends.
 
 ### Navigate and decide
 
