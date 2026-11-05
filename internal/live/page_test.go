@@ -303,6 +303,12 @@ func TestPageAnswersAPhaseOneQuestionAtATime(t *testing.T) {
 	wantText(t, p, "#summary", "3 in bozza · Q1 → B · Q1 +1 msg · Panoramica +1 msg")
 	wantText(t, p, "#send-count", "3")
 
+	wantText(t, p, ".kbd-hint", "⌃↩ invia")
+	p.Press("Enter", 13, 4)
+	if evalString(p, `String(document.querySelector('#send').disabled)`) != "false" {
+		t.Fatal("Cmd+Enter must not send the draft")
+	}
+	wantText(t, p, "#summary", "3 in bozza · Q1 → B · Q1 +1 msg · Panoramica +1 msg")
 	p.Press("Enter", 13, 2)
 	got := run.outcome()
 	if jsonOf(got["questions"]) != `{"crash":{"choice":"journal","messages":["Il rename è atomico su NFS?"]}}` || jsonOf(got["overview"]) != `{"messages":["Il design mi convince"]}` {

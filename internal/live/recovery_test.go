@@ -334,10 +334,10 @@ func TestDetachedTabIsReadOnlyAndCopiesTheDraft(t *testing.T) {
 		t.Errorf("detached tab composer read-only, Send disabled, Copia bozza hidden: %s", got)
 	}
 	p.MustEval(`window.sends = 0; const original = window.fetch; window.fetch = (url, init) => { if (String(url).endsWith('send')) sends++; return original(url, init); }`, nil)
-	p.Press("Enter", 13, 4)
+	p.Press("Enter", 13, 2)
 	time.Sleep(300 * time.Millisecond)
 	if evalString(p, `String(window.sends)`) != "0" {
-		t.Error("⌘↩ sent from a detached tab")
+		t.Error("⌃↩ sent from a detached tab")
 	}
 	stubClipboard(p)
 	p.Click("#copy-draft")
