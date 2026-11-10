@@ -348,6 +348,41 @@ func TestOpenCreatesIsolatedSplitWithoutFocus(t *testing.T) {
 	}
 }
 
+func TestOpenResetsSavedZoomBeforeCreatingPanel(t *testing.T) {
+	e := newEnv(t)
+	sum := sha256.Sum256([]byte(pageA))
+	profiles := filepath.Join(e.home, ".local", "share", "lavagna", "rex-browser", fmt.Sprintf("lavagna-%x", sum[:8]), "profiles")
+	zoomed := filepath.Join(profiles, "terminal-browser-612f6b28", "Preferences")
+	malformed := filepath.Join(profiles, "broken", "Preferences")
+	for path, content := range map[string]string{
+		zoomed:    `{"partition":{"per_host_zoom_levels":{"1":{"127.0.0.1":6.67}},"default_zoom_level":{}},"browser":{"x":1}}`,
+		malformed: `{"partition":`,
+	} {
+		os.MkdirAll(filepath.Dir(path), 0o700)
+		os.WriteFile(path, []byte(content), 0o600)
+	}
+	if err := e.open(pageA, false); err != nil {
+		t.Fatal(err)
+	}
+	var prefs struct {
+		Partition map[string]any `json:"partition"`
+		Browser   map[string]any `json:"browser"`
+	}
+	b, _ := os.ReadFile(zoomed)
+	if err := json.Unmarshal(b, &prefs); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := prefs.Partition["per_host_zoom_levels"]; ok {
+		t.Errorf("saved zoom survived: %s", b)
+	}
+	if _, ok := prefs.Partition["default_zoom_level"]; !ok || prefs.Browser["x"] != 1.0 {
+		t.Errorf("other preferences changed: %s", b)
+	}
+	if b, _ := os.ReadFile(malformed); string(b) != `{"partition":` {
+		t.Errorf("malformed preferences rewritten: %s", b)
+	}
+}
+
 func TestOpenSamePageOnceAndDifferentPagesApart(t *testing.T) {
 	e := newEnv(t)
 	var wg sync.WaitGroup

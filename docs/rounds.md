@@ -23,7 +23,7 @@ Install [Rex](https://www.superlogical.com/rex/docs/) with Kitty graphics suppor
 
 Lavagna opens a dedicated terminal-browser panel to the right without taking focus. Later calls find and reuse that conversation's panel, including when another browser already has the page open. Closing the panel lets the next call recreate it beside the invoking terminal. Different conversations get different panels. The UI remains the same web page, not a text-only alternative; a narrow panel uses the existing responsive layout.
 
-Each conversation uses its own terminal-browser profile and runtime, so browser state such as zoom does not cross between panels. Profile files are not removed while Chromium is running; [close](#close-or-restart) still clears the connected page's draft and cache. [Security](../SECURITY.md#macos-notification-helper) states the limits of this separation.
+Each conversation uses its own terminal-browser profile and runtime, so browser state such as zoom does not cross between panels. Each new panel opens at 100% zoom; if an open panel grows enlarged, press Cmd+0 inside it. Profile files are not removed while Chromium is running; [close](#close-or-restart) still clears the connected page's draft and cache. [Security](../SECURITY.md#macos-notification-helper) states the limits of this separation.
 
 Only local Unix-socket Rex servers are supported. Missing tools, an unavailable server or an expired destination produce diagnostics without failing the round or silently opening Chrome. Lavagna never installs these dependencies. Start Rex and retry, or set `BROWSER` to choose another opener.
 
