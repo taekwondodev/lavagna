@@ -339,7 +339,36 @@ func (t *Target) prepareBrowser(runtime, label string) ([]string, error) {
 		}
 		env = append(env, dir.name+"="+dir.path)
 	}
+	resetZoom(filepath.Join(base, "profiles"))
 	return env, nil
+}
+
+// resetZoom is a temporary workaround for
+// https://github.com/zenbu-labs/terminal-browser/issues/166: terminal-browser
+// raises Chromium's saved zoom on resizes, and the zoom saved for 127.0.0.1
+// reopens every later panel of the conversation enlarged (330% and more).
+// The browser exits with its panel, so clearing the saved levels before a new
+// panel starts it at 100%. When that issue is fixed in terminal-browser,
+// delete this function and its test.
+func resetZoom(profiles string) {
+	paths, _ := filepath.Glob(filepath.Join(profiles, "*", "Preferences"))
+	for _, path := range paths {
+		var prefs, partition map[string]json.RawMessage
+		b, err := os.ReadFile(path)
+		if err != nil || json.Unmarshal(b, &prefs) != nil || json.Unmarshal(prefs["partition"], &partition) != nil {
+			continue
+		}
+		if _, ok := partition["per_host_zoom_levels"]; !ok {
+			continue
+		}
+		delete(partition, "per_host_zoom_levels")
+		prefs["partition"], _ = json.Marshal(partition)
+		out, _ := json.Marshal(prefs)
+		tmp := path + ".lavagna"
+		if os.WriteFile(tmp, out, 0o600) != nil || os.Rename(tmp, path) != nil {
+			os.Remove(tmp)
+		}
+	}
 }
 
 type client struct {
