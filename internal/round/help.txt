@@ -1,14 +1,14 @@
 lavagna round [--within DURATION] [DIR] < round.md
 Wait for the next feedback batch with no shell timeout; Esc interrupts. If the tool
 forces one, use its longest, also as --within (e.g. 10m); on {"lavagna":"waiting"}
-resume at once with an empty call.
+resume with an empty call.
 DIR supplies round.md and files under DIR/<question-id>/. Each question owns its
-resources. A bare question title plans it without presenting an artifact.
+resources. A bare question title plans it.
 Stdout: one JSON result grouped by question. URL/status: stderr. Large outcomes
-are deferred; read them with lavagna feedback SUBMISSION [--question ID|--overview|--all].
-Use lavagna feedback --help for selectors and retained reads.
+are deferred: lavagna feedback SUBMISSION [--question ID|--overview|--all];
+feedback --help has selectors and retained reads.
 An unanswered question is not approval. Feedback is not completion: continue with
-round; only close ends the phase. Close deletes the retained question artifacts.
+round; only close ends the phase. Close deletes the retained artifacts.
 
 Minimal question:
 # Where do we store state? {id="storage"}
@@ -18,12 +18,14 @@ Per-session files keep the state local.
 - [file] Per-session files {recommended}
 - [db] Database
 
-Several questions may be included in one call. Use ## Capire, ## Confrontare,
-and ## Decidere in that order.
-Lavagna keeps the phase's questions: later calls send only what changes. A new
+A call may bring several questions. Use ## Capire, ## Confrontare and
+## Decidere in that order.
+Lavagna keeps the phase's questions: later calls send only changes. A new
 question opens the next round; a whole question with a known id replaces it.
 ::: reply [ID] posts a message, ::: settled ID [OPTION] closes a question with
 its Why as body; close both with :::. An empty call only resumes waiting.
+With no open question round returns {"lavagna":"no-open-question"} at once:
+close or send a question.
 Current question versions fit 16 MiB per phase; one message fits 32 KiB.
 After close, expiry or an upgrade the phase is empty: send complete questions.
 More: lavagna round --help grammar.

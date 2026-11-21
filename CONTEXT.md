@@ -9,7 +9,7 @@ Lavagna connects an agent conversation to a browser page for explicit user feedb
 | **Phase** | The conversation's current question ledger and feedback lifecycle. |
 | **Question ledger** | The questions retained for a phase, each with its current content, round, discussion and recorded answer, together with the settled decisions. It lets each call send only what changes. |
 | **Round** | A stage of the phase, opened by a call that brings new questions; its open questions collect feedback across one or more calls until a later round takes the unsettled ones over. |
-| **Call** | One `lavagna round` invocation: it applies its elements to the question ledger and awaits one feedback batch, or pauses before the harness's call time limit so that a later call resumes the round. |
+| **Call** | One `lavagna round` invocation: it applies its elements to the question ledger and, while a question is open, awaits one feedback batch or pauses before the harness's call time limit so that a later call resumes the round. |
 | **Question** | One identified decision or planned decision, with its own authored content, resources, answer and discussion. |
 | **Overview** | Feedback attached to the phase as a whole rather than to one question. |
 | **Shell** | The trusted browser UI that owns decisions, the feedback editor and send. Not the invoking terminal shell. |

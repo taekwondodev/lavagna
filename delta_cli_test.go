@@ -450,3 +450,31 @@ func TestStateFromAnotherVersion(t *testing.T) {
 		}
 	})
 }
+
+func TestACallThatLeavesNoOpenQuestionReturnsAtOnce(t *testing.T) {
+	environ := env(t, "LAVAGNA_SESSION=last-settle")
+	first := startRound(t, environ, decision)
+	first.answer("s-0000000000000001", `{"storage":{"choice":"db"}}`)
+
+	const idle = `{"lavagna":"no-open-question","round":"r1"}`
+	settle := spawn(t, environ, "::: settled storage\nNessuna dipendenza nuova.\n:::\n", "--within", "1m")
+	if lines, code := settle.finish(); code != 0 || len(lines) != 1 || lines[0] != idle {
+		t.Fatalf("the call that settles the last open question: exit %d %q", code, lines)
+	}
+	view := event(t, first.url, "round")
+	if !strings.Contains(view, `"status":"settled"`) || !strings.Contains(view, `"paused":true`) {
+		t.Fatalf("the page does not show the settled phase with Send closed: %.300s", view)
+	}
+	_, token := first.view()
+	if code := first.post(first.url+"send", first.origin, "application/json", batch("r1", token, "s-0000000000000002")); code != http.StatusServiceUnavailable {
+		t.Fatalf("send with no open question: status %d", code)
+	}
+	if lines, code := run(t, environ, "", "round"); code != 0 || last(lines) != idle {
+		t.Fatalf("an empty call with no open question: exit %d %q", code, lines)
+	}
+
+	reopened := startRound(t, environ, decision)
+	if got := reopened.answer("s-0000000000000003", `{"storage":{"choice":"file"}}`); !strings.Contains(got, `"storage":{"choice":"file"}`) {
+		t.Fatalf("a reopened question collects feedback again: %s", got)
+	}
+}
