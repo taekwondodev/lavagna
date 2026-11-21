@@ -634,6 +634,28 @@ func TestPausedCallClosesSendAndKeepsTheDraftUntilTheNextCall(t *testing.T) {
 	wantText(t, p, "#summary", "1 in bozza · Q1 → B")
 }
 
+func TestSettlingTheLastOpenQuestionTellsTheUserNothingIsAwaited(t *testing.T) {
+	run := newPhaseRun(t)
+	run.call(crashRound, crashFiles())
+	p := cdptest.Start(t).Open(run.url, 1280, 860)
+	p.WaitFor(`document.querySelector('#content')`)
+	p.Click(`.option[data-option="journal"]`)
+	p.Click(`#send`)
+	run.outcome()
+
+	run.call("::: settled crash\nIl journal copre il crash.\n:::\n::: settled retention week\nCopre il weekend.\n:::\n", nil)
+	if got := run.outcome(); got["lavagna"] != "no-open-question" || got["round"] != "r1" {
+		t.Fatalf("outcome %v, want no-open-question in r1", got)
+	}
+	idle := func() {
+		t.Helper()
+		p.WaitFor(`document.querySelector('#turn').textContent === 'Nessuna domanda aperta' && document.querySelector('#summary').textContent === 'Non devi rispondere: l’agente chiude la fase o apre altre domande.' && document.querySelector('#send').disabled`)
+	}
+	idle()
+	p.Reload()
+	idle()
+}
+
 func TestDeliveryStagesShowInTitleBarAndFooter(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -39,6 +39,7 @@ lavagna close
 - `check` returns `{"lavagna":"ready"}` when the conversation identity is bindable, otherwise an invalid result that names the recognized harnesses and `LAVAGNA_SESSION`.
 - `round` applies one call to the phase and waits for a feedback batch; Esc interrupts. `round DIR` reads `DIR/round.md` and its question-scoped resources.
 - Where the shell tool can wait without a timeout, pass none. Where it limits a call, pass its timeout to the tool and the same duration as `round --within DURATION`, for example `10m`. Without `--within`, the harness's default limit from the table above applies; a longer declared duration is reduced to the harness's maximum. Shortly before the limit, a tenth of it and at most 15 s early, `round` returns `{"lavagna":"waiting","round":"r1"}`. The phase is unchanged and the relay keeps the page with Send closed; a call with no element resumes the same round. A batch the user sent before the pause is returned instead.
+- A call that leaves no open question, for example one that settles the last open one, does not wait: `round` returns `{"lavagna":"no-open-question","round":"r1"}` at once, whatever else the call brings. The page shows the call's changes with Send closed and "Nessuna domanda aperta". Close the phase, or send a new or replacing question to collect feedback again; an empty call returns the same result.
 - `round --help` prints the minimal format; `round --help grammar` prints the syntax reference. `feedback --help` describes retained feedback reads.
 - `close` ends the phase and deletes its retained data. Read needed feedback and images first. Source directories are not deleted. See [recovery](#recover-an-interrupted-round) for browser cleanup and restarting.
 
@@ -72,7 +73,7 @@ This example continues a phase that already contains `storage`, `crash` and `ret
 | `::: reply ID` or `::: reply` | Posts the body as an agent message in that question's discussion, closed rounds included, or in the Overview. |
 | `::: settled ID [OPTION]` | Closes the question with the recorded answer, or with that option of the current version. The body is the Why of its decisions row, which also copies the title, decision, round and rejected options. Settling again replaces the decision. |
 | `::: recap` | Inside a question, renders the decisions table after this call's settles. Write risks, evidence and confirm-or-correct options around it. |
-| No element | Resumes waiting, for example after Esc. |
+| No element | Resumes waiting, for example after Esc; with no open question it [returns at once](#present-and-close). |
 
 Elements apply in the order phase, settled, replacements, reply, new questions, recap. A reply cannot address a question new in the same call. Replies, settles and replacements stay in the current round. Any invalid element rejects the whole call without changing the ledger or stored questions. One agent message is bounded to 32 KiB; [Authoring](authoring.md#input-limits-and-errors) lists content bounds.
 
@@ -84,7 +85,7 @@ On macOS, `make install` also installs `~/Applications/Lavagna.app`, which posts
 | --- | --- |
 | The first one with content in a phase, including after close, expiry or an older-format restart | Primo round pronto |
 | Any later one with new, replaced or planned questions, replies or settles | Round aggiornato |
-| An empty call that resumes waiting, or an invalid call | None |
+| An empty call that resumes waiting, a call that leaves no open question, or an invalid call | None |
 
 One call produces one notification, whatever it contains. Reloads, reconnects, accepted feedback and delivery stages produce none. The text is fixed; question content and the page URL never appear in it.
 
@@ -181,6 +182,7 @@ The title bar shows a short stage and the footer a sentence, followed by "· N i
 | Turn ended or interrupted | Grilling ancora aperto, Turno interrotto | Whether receipt was observed first |
 | Uncertain | Consegna non riuscita | Sent messages returned to the draft |
 | Paused at the call's limit | In attesa dell’agente | L’agente sta riprendendo l’attesa: la bozza è conservata e potrai inviarla tra poco. |
+| No open question after the call | Nessuna domanda aperta | Non devi rispondere: l’agente chiude la fase o apre altre domande. |
 
 ## Recover an interrupted round
 

@@ -70,7 +70,6 @@ func TestEachContentCallNotifiesOnceBeforeFeedback(t *testing.T) {
 		"::: reply\nSolo panoramica.\n:::\n",
 		"# Dopo, rinominata {id=\"later\"}\n",
 		strings.Replace(hostile, "Un database", "SQLite", 1),
-		"::: settled storage file\nDeciso.\n:::\n",
 		"::: reply later\nUna.\n:::\n# Uno {id=\"one\"}\n## Decidere\n- [a] A\n- [b] B\n# Due {id=\"two\"}\n## Decidere\n- [a] A\n- [b] B\n",
 	} {
 		c := startRound(t, environ, src)
@@ -83,6 +82,10 @@ func TestEachContentCallNotifiesOnceBeforeFeedback(t *testing.T) {
 	resumed.page()
 	notified(t, read, want)
 	resumed.answer("s-00000000000000aa", `{"storage":{"messages":["ok"]}}`)
+	if lines, code := run(t, environ, "::: settled storage file\nDeciso.\n:::\n::: settled one a\nDeciso.\n:::\n::: settled two a\nDeciso.\n:::\n", "round"); code != 0 || last(lines) != `{"lavagna":"no-open-question","round":"r2"}` {
+		t.Fatalf("settling every open question: %d %q", code, lines)
+	}
+	notified(t, read, want)
 	if lines, code := run(t, environ, "::: reply ghost\nx\n:::\n", "round"); code != 2 {
 		t.Fatalf("invalid call: %d %q", code, lines)
 	}

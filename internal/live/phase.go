@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"time"
 
@@ -140,6 +141,10 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, within ti
 	}
 
 	spec := roundSpec{Origin: origin, ID: st.RoundID(), Call: st.Live, Token: conversation.Secret(16), FrameKey: conversation.Secret(16), Previous: st.Previous, Images: c.Images(), Ledger: st.Ledger, Questions: questions}
+	if !st.Ledger.Awaiting() {
+		fmt.Fprintf(errw, "lavagna · round %s · %s · nessuna domanda aperta\n", st.RoundID(), origin.URL())
+		return unawaited(out, errw, lease, st, "no-open-question", c.Relay(), ln, spec)
+	}
 	srv := newRound(spec)
 	h := listen(srv, ln)
 	defer h.stop()
@@ -149,16 +154,7 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, within ti
 	go announce(getenv, errw, kind, origin.URL(), target)
 	got, ok := await(srv, caller.Deadline(getenv, within), started)
 	if !ok {
-		st = st.Step(conversation.CallPaused{})
-		record(errw, lease, st)
-		if result(out, exitOK, struct {
-			Lavagna string `json:"lavagna"`
-			Round   string `json:"round"`
-		}{"waiting", st.RoundID()}) != exitOK {
-			return exitError
-		}
-		handOver(errw, c.Relay(), ln, relayed{Round: spec, Paused: true})
-		return exitOK
+		return unawaited(out, errw, lease, st, "waiting", c.Relay(), ln, spec)
 	}
 	st = st.Step(conversation.BatchAccepted{Batch: got.ledgerBatch()})
 	record(errw, lease, st)
@@ -186,6 +182,19 @@ func PhaseRound(getenv func(string) string, src io.Reader, dir string, within ti
 
 	spec.Ledger = st.Ledger
 	srv.returned(handOver(errw, c.Relay(), ln, relayed{Round: spec, Submission: got.submission, Session: observe(getenv, caller, c)}))
+	return exitOK
+}
+
+func unawaited(out, errw io.Writer, lease *conversation.Lease, st conversation.State, outcome, relay string, ln net.Listener, spec roundSpec) int {
+	st = st.Step(conversation.CallPaused{})
+	record(errw, lease, st)
+	if result(out, exitOK, struct {
+		Lavagna string `json:"lavagna"`
+		Round   string `json:"round"`
+	}{outcome, st.RoundID()}) != exitOK {
+		return exitError
+	}
+	handOver(errw, relay, ln, relayed{Round: spec, Paused: true})
 	return exitOK
 }
 

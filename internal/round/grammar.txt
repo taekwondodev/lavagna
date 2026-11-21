@@ -182,6 +182,8 @@ A message for the Overview.
 - `::: recap` with no body, inside a question, renders the decisions table
   (question, decision, round, why, rejected options) after this call's settles.
 - A call with no element only resumes waiting, for example after Esc.
+- A call that leaves no question open, such as one settling the last open
+  question, does not wait: it returns {"lavagna":"no-open-question"} at once.
 
 Elements apply in the order phase, settled, replacements, reply, new
 questions; a reply cannot address a question new in the same call. Any

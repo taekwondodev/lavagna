@@ -315,6 +315,15 @@ func (l Ledger) received(submission string) bool {
 	return false
 }
 
+func (l Ledger) Awaiting() bool {
+	for _, q := range l.Questions {
+		if q.Status == Open {
+			return true
+		}
+	}
+	return false
+}
+
 func (l Ledger) Stored() int {
 	total := 0
 	for _, q := range l.Questions {

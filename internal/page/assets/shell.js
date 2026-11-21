@@ -14,6 +14,7 @@ const TEXT = {
   closed: 'Frontiera chiusa, torna al terminale',
   reconnecting: 'Riconnessione a lavagna…',
   uncertain: 'Consegna non riuscita: l’agente è stato interrotto. I messaggi inviati sono tornati in bozza: puoi reinviarli.',
+  idle: 'Non devi rispondere: l’agente chiude la fase o apre altre domande.',
   paused: 'L’agente sta riprendendo l’attesa: la bozza è conservata e potrai inviarla tra poco.',
 };
 const STAGES = {
@@ -24,6 +25,7 @@ const STAGES = {
   sending: ['Invio in corso…', 'Invio in corso…'],
   inactive: ['Round non più attivo', ''],
   paused: ['In attesa dell’agente', TEXT.paused],
+  idle: ['Nessuna domanda aperta', TEXT.idle],
   accepted: ['Inviato', TEXT.accepted],
   returned: ['Consegnato al terminale', TEXT.returned],
   waiting: ['Consegnato al terminale', TEXT.returned],
@@ -342,7 +344,7 @@ function phase() {
     if (d.stage === 'accepted' && !live) return 'reconnecting';
     return d.stage;
   }
-  if (view.paused) return live ? 'paused' : 'reconnecting';
+  if (view.paused) return !live ? 'reconnecting' : view.phase.questions.some(q => q.status === 'open') ? 'paused' : 'idle';
   if (d && d.uncertain) return 'uncertain';
   if (inactive) return 'inactive';
   return live ? 'user' : 'reconnecting';
