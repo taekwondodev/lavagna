@@ -29,12 +29,9 @@ for arg in "$@"; do
     session.focus_block|client.perform) printf '{}'; exit 0 ;;
     client.list)
       printf '{"clients":[{"client_id":"client:33333333-3333-4333-8333-333333333333","info":{"kind":"app","platform":"macos"},"session_ids":["session:11111111-1111-4111-8111-111111111111"]}]}'; exit 0 ;;
-    run)
-      previous=''
-      for value in "$@"; do
-        if [ "$previous" = '--label' ]; then label=$value; fi
-        previous=$value
-      done
+    session.new_split)
+      for value in "$@"; do request=$value; done
+      label=$(printf '%%s' "$request" | sed -n 's/.*"label":"\([^"]*\)".*/\1/p')
       printf '{"block_id":"block:11111111-1111-4111-8111-111111111111","label":"%%s","placement":"placed","creator_name":"com.superlogical.terminal","owner":"client:33333333-3333-4333-8333-333333333333","window_id":"window:44444444-4444-4444-8444-444444444444"}' "$label" > %q
       printf '{}'; exit 0 ;;
   esac
@@ -83,13 +80,13 @@ exit 1
 				}
 				for time.Now().Before(deadline) {
 					calls, _ := os.ReadFile(log)
-					if strings.Contains(string(calls), "\nrun\n") {
+					if strings.Contains(string(calls), "\nsession.new_split\n") {
 						break
 					}
 					time.Sleep(10 * time.Millisecond)
 				}
 				calls, _ := os.ReadFile(log)
-				if !strings.Contains(string(calls), "\nrun\n") {
+				if !strings.Contains(string(calls), "\nsession.new_split\n") {
 					t.Fatalf("Rex did not open the page despite an existing browser connection: %s", calls)
 				}
 				click := exec.Command(binary, "rex-click", c.url, payload)
@@ -106,7 +103,7 @@ exit 1
 				}
 				calls, _ = os.ReadFile(log)
 				if !strings.Contains(string(calls), "session.focus_block") || !strings.Contains(string(calls), "client.perform") ||
-					strings.Count(string(calls), "\nrun\n") != 1 || strings.Contains(string(calls), "FALLBACK") {
+					strings.Count(string(calls), "\nsession.new_split\n") != 1 || strings.Contains(string(calls), "FALLBACK") {
 					t.Fatalf("callback must focus without duplicate creation or browser fallback: %s", calls)
 				}
 			}

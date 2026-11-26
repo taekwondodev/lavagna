@@ -44,8 +44,9 @@ type fakeState struct {
 	Blocks []fakeBlock `json:"blocks"`
 	Next   int         `json:"next"`
 
-	FailRunAfterCreate bool `json:"fail_run_after_create"`
-	RefuseActions      bool `json:"refuse_actions"`
+	AnchorSize           *termSize `json:"anchor_size"`
+	FailSplitAfterCreate bool      `json:"fail_split_after_create"`
+	RefuseActions        bool      `json:"refuse_actions"`
 }
 
 type call struct {
@@ -86,32 +87,33 @@ func fakeTool(tool string, args []string) int {
 			rest = rest[1:]
 		}
 	}
-	flag := func(name string) string {
-		i := slices.Index(rest, name)
-		if i < 0 {
-			return ""
-		}
-		return rest[i+1]
-	}
 	switch rest[0] {
-	case "run":
-		anchor := slices.IndexFunc(st.Blocks, func(b fakeBlock) bool { return b.ID == flag("--block") && b.Session == flag("--session") })
-		if anchor < 0 {
-			return deny()
-		}
-		st.Next++
-		st.Blocks = append(st.Blocks, fakeBlock{flag("--session"), block{
-			ID: fmt.Sprintf("block:made%04d", st.Next), Label: flag("--label"), Placement: "placed",
-			Creator: terminalCreator, Window: windowID, Owner: appID}})
-		save()
-		if st.FailRunAfterCreate {
-			return deny()
-		}
-		fmt.Println("{}")
 	case "api":
 		var in map[string]any
 		json.Unmarshal([]byte(rest[3]), &in)
 		switch rest[2] {
+		case "session.new_split":
+			anchor := slices.IndexFunc(st.Blocks, func(b fakeBlock) bool { return b.ID == in["anchor_id"] && b.Session == in["session_id"] })
+			if anchor < 0 {
+				return deny()
+			}
+			layout, _ := in["layout"].(map[string]any)
+			node, _ := layout["block"].(map[string]any)
+			label, _ := node["label"].(string)
+			st.Next++
+			st.Blocks = append(st.Blocks, fakeBlock{sessionID, block{
+				ID: fmt.Sprintf("block:made%04d", st.Next), Label: label, Placement: "placed",
+				Creator: terminalCreator, Window: windowID, Owner: appID}})
+			save()
+			if st.FailSplitAfterCreate {
+				return deny()
+			}
+			fmt.Println("{}")
+		case "block.method":
+			if in["session_id"] != sessionID || in["block_id"] != anchorID || in["method"] != "size" || st.AnchorSize == nil {
+				return deny()
+			}
+			json.NewEncoder(os.Stdout).Encode(st.AnchorSize)
 		case "session.list_blocks":
 			if in["session_id"] != sessionID {
 				return deny()
@@ -165,7 +167,10 @@ func newEnv(t *testing.T) *env {
 			os.RemoveAll(dir)
 		}
 	})
-	e.write(fakeState{Blocks: []fakeBlock{{sessionID, block{ID: anchorID, Label: "shell", Placement: "placed", Creator: terminalCreator, Window: windowID, Owner: appID}}}})
+	e.write(fakeState{
+		Blocks:     []fakeBlock{{sessionID, block{ID: anchorID, Label: "shell", Placement: "placed", Creator: terminalCreator, Window: windowID, Owner: appID}}},
+		AnchorSize: &termSize{Columns: 141, Rows: 29, CellWidth: 18, CellHeight: 54, Owner: appID},
+	})
 	e.target = Capture(e.getenv(nil))
 	if e.target == nil {
 		t.Fatal("complete local Rex context was not captured")
@@ -292,7 +297,7 @@ func TestMissingToolsGiveSafeActionableErrors(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	if len(e.calls("rex", "run")) != 0 {
+	if len(e.calls("rex", "session.new_split")) != 0 {
 		t.Error("created a panel without its tools")
 	}
 	if Capture(e.getenv(map[string]string{"REX_BIN_DIR": "", "PATH": ""})).rex != "" {
@@ -306,24 +311,30 @@ func TestOpenCreatesIsolatedSplitWithoutFocus(t *testing.T) {
 	if err := e.open(pageA, false); err != nil {
 		t.Fatal(err)
 	}
-	runs := e.calls("rex", "run")
-	if len(runs) != 1 {
-		t.Fatalf("runs: %d", len(runs))
+	split := onlySplit(t, e)
+	if got := strings.Join(split.call.Args[:4], " "); got != "--server unix:///tmp/rex%20test/server.sock --autostart=false --timeout" {
+		t.Errorf("split does not target the local server without autostart: %q", got)
 	}
-	args := strings.Join(runs[0].Args, "\x00")
+	if split.SessionID != sessionID || split.AnchorID != anchorID || split.Direction != "horizontal" || split.Side != "after" ||
+		split.Ratio != 0.5 || split.Focus == nil || *split.Focus {
+		t.Errorf("split is not an unfocused half to the right of the anchor: %+v", split)
+	}
+	node := split.Layout.Block
+	if node.Flavor != "com.superlogical.terminal.shell" || node.Options.Shell != "none" {
+		t.Errorf("panel is not a terminal started without a shell: %+v", node)
+	}
+	command := strings.Join(node.Options.Command, "\x00")
 	for _, want := range []string{
-		"--server\x00unix:///tmp/rex%20test/server.sock", "--autostart=false",
-		"run\x00--session\x00" + sessionID + "\x00--block\x00" + anchorID + "\x00--split\x00right\x00--ratio\x0050\x00--focus=false",
-		"--shell=none", "\x00--\x00/usr/bin/env\x00", "open\x00" + pageA + "\x00--no-merge",
+		"/usr/bin/env\x00", "open\x00" + pageA + "\x00--no-merge",
 		"TERMINAL_BROWSER_NO_TELEMETRY=1", "TERMINAL_BROWSER_PRESENT=animation", "XDG_RUNTIME_DIR=/tmp/lr-",
 		"TERMINAL_BROWSER_APPDATA=", "TERMINAL_BROWSER_CONFIG_DIR=",
 	} {
-		if !strings.Contains(args, want) {
-			t.Errorf("run lacks %q in %q", want, args)
+		if !strings.Contains(command, want) {
+			t.Errorf("panel command lacks %q in %q", want, command)
 		}
 	}
-	if strings.Contains(args, "XDG_STATE_HOME") || strings.Contains(args, "\x00HOME=") {
-		t.Errorf("run overrides home or state: %q", args)
+	if !strings.HasPrefix(command, "/usr/bin/env\x00") || strings.Contains(command, "XDG_STATE_HOME") || strings.Contains(command, "\x00HOME=") {
+		t.Errorf("panel command overrides home or state: %q", command)
 	}
 	settings := map[string]string{}
 	for _, c := range e.calls("terminal-browser", "config set") {
@@ -345,6 +356,66 @@ func TestOpenCreatesIsolatedSplitWithoutFocus(t *testing.T) {
 	}
 	if len(e.calls("rex", "focus_block")) != 0 {
 		t.Error("an unfocused open focused")
+	}
+}
+
+type splitRequest struct {
+	call      call
+	SessionID string  `json:"session_id"`
+	AnchorID  string  `json:"anchor_id"`
+	Direction string  `json:"direction"`
+	Side      string  `json:"side"`
+	Ratio     float64 `json:"ratio"`
+	Focus     *bool   `json:"focus"`
+	Layout    struct {
+		Block struct {
+			Flavor  string `json:"flavor"`
+			Label   string `json:"label"`
+			Options struct {
+				Shell   string    `json:"shell"`
+				Command []string  `json:"command"`
+				Size    *termSize `json:"size"`
+			} `json:"options"`
+		} `json:"block"`
+	} `json:"layout"`
+}
+
+func onlySplit(t *testing.T, e *env) splitRequest {
+	t.Helper()
+	splits := e.calls("rex", "session.new_split")
+	if len(splits) != 1 {
+		t.Fatalf("splits: %d", len(splits))
+	}
+	req := splitRequest{call: splits[0]}
+	if err := json.Unmarshal([]byte(splits[0].Args[len(splits[0].Args)-1]), &req); err != nil {
+		t.Fatal(err)
+	}
+	return req
+}
+
+func TestPanelStartsWithTheDisplayedAnchorCells(t *testing.T) {
+	for name, tc := range map[string]struct {
+		anchor *termSize
+		want   *termSize
+	}{
+		"displayed anchor":     {&termSize{Columns: 141, Rows: 29, CellWidth: 18, CellHeight: 54, Owner: appID}, &termSize{Columns: 70, Rows: 29, CellWidth: 18, CellHeight: 54}},
+		"never displayed":      {&termSize{Columns: 80, Rows: 24, CellWidth: 8, CellHeight: 16}, nil},
+		"size unavailable":     {nil, nil},
+		"no cell measurements": {&termSize{Columns: 80, Rows: 24, Owner: appID}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			st := e.read()
+			st.AnchorSize = tc.anchor
+			e.write(st)
+			if err := e.open(pageA, false); err != nil {
+				t.Fatal(err)
+			}
+			got := onlySplit(t, e).Layout.Block.Options.Size
+			if (got == nil) != (tc.want == nil) || got != nil && *got != *tc.want {
+				t.Errorf("starting size %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -401,7 +472,7 @@ func TestOpenSamePageOnceAndDifferentPagesApart(t *testing.T) {
 	if err := e.open(pageA, false); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(e.calls("rex", "run")); n != 1 {
+	if n := len(e.calls("rex", "session.new_split")); n != 1 {
 		t.Fatalf("one page created %d panels", n)
 	}
 	if err := e.open(pageB, false); err != nil {
@@ -439,7 +510,7 @@ func TestFocusReusesPanelSelectsAppAndRecreatesAfterClose(t *testing.T) {
 	if err := e.open(pageA, true); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(e.calls("rex", "run")); n != 1 {
+	if n := len(e.calls("rex", "session.new_split")); n != 1 {
 		t.Fatalf("focus created a panel: %d runs", n)
 	}
 	made := e.read().Blocks[1].ID
@@ -464,7 +535,7 @@ func TestFocusReusesPanelSelectsAppAndRecreatesAfterClose(t *testing.T) {
 	if err := e.open(pageA, true); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(e.calls("rex", "run")); n != 2 {
+	if n := len(e.calls("rex", "session.new_split")); n != 2 {
 		t.Fatalf("closed panel was not recreated: %d runs", n)
 	}
 }
@@ -505,7 +576,7 @@ func TestFailuresAreSafeAndCreateNothingUnrelated(t *testing.T) {
 	} {
 		check(name, e.target.Open(context.Background(), page, false))
 	}
-	if n := len(e.calls("rex", "run")); n != 0 {
+	if n := len(e.calls("rex", "session.new_split")); n != 0 {
 		t.Errorf("a failed open still created %d panels", n)
 	}
 }
@@ -513,13 +584,13 @@ func TestFailuresAreSafeAndCreateNothingUnrelated(t *testing.T) {
 func TestRetryAdoptsPanelCreatedBeforeFailedResponse(t *testing.T) {
 	e := newEnv(t)
 	st := e.read()
-	st.FailRunAfterCreate = true
+	st.FailSplitAfterCreate = true
 	e.write(st)
 	if err := e.open(pageA, false); err != nil {
 		t.Fatalf("created panel was not adopted: %v", err)
 	}
 	st = e.read()
-	st.FailRunAfterCreate = false
+	st.FailSplitAfterCreate = false
 	e.write(st)
 	if err := e.open(pageA, false); err != nil || len(e.read().Blocks) != 2 {
 		t.Fatalf("retry duplicated the panel: %v %d", err, len(e.read().Blocks))
