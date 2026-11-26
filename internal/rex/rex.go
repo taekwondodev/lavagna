@@ -306,11 +306,15 @@ func (t *Target) create(ctx context.Context, runtime, label, page string) (block
 	if cmd.Run() != nil {
 		return block{}, errors.New("terminal-browser configuration failed")
 	}
-	argv := []string{"run", "--session", t.session, "--block", t.anchor, "--split", "right", "--ratio", "50",
-		"--focus=false", "--label", label, "--shell=none", "--json", "--", "/usr/bin/env"}
-	argv = append(argv, env...)
-	argv = append(argv, t.browser, "open", page, "--no-merge")
-	_, runErr := t.rexCall(ctx, argv...)
+	command := append(append([]string{"/usr/bin/env"}, env...), t.browser, "open", page, "--no-merge")
+	options := map[string]any{"shell": "none", "command": command}
+	if size, ok := t.displayedSize(ctx); ok {
+		options["size"] = size
+	}
+	splitErr := t.api(ctx, "session.new_split", map[string]any{
+		"session_id": t.session, "anchor_id": t.anchor, "direction": "horizontal", "side": "after", "ratio": 0.5, "focus": false,
+		"layout": map[string]any{"block": map[string]any{"flavor": terminalCreator + ".shell", "label": label, "options": options}},
+	}, nil)
 
 	panel, found, err := t.find(ctx, label)
 	switch {
@@ -318,10 +322,32 @@ func (t *Target) create(ctx context.Context, runtime, label, page string) (block
 		return panel, nil
 	case err != nil:
 		return block{}, err
-	case runErr != nil:
-		return block{}, runErr
+	case splitErr != nil:
+		return block{}, splitErr
 	}
 	return block{}, errors.New("Rex did not place the Lavagna panel")
+}
+
+type termSize struct {
+	Columns    int    `json:"columns"`
+	Rows       int    `json:"rows"`
+	CellWidth  int    `json:"cell_width_px"`
+	CellHeight int    `json:"cell_height_px"`
+	Owner      string `json:"owner,omitempty"`
+}
+
+// displayedSize gives the new panel the anchor's cell metrics. A block no
+// client has displayed yet reports placeholder 8x16 px cells, and
+// terminal-browser scales the page zoom by the cell change when the panel is
+// first shown (from 16 to 54 px is 338%). A size is only known once a client
+// has displayed the anchor.
+func (t *Target) displayedSize(ctx context.Context) (termSize, bool) {
+	var s termSize
+	err := t.api(ctx, "block.method", map[string]string{"session_id": t.session, "block_id": t.anchor, "method": "size"}, &s)
+	if err != nil || s.Owner == "" || s.Columns < 2 || s.Rows < 1 || s.CellWidth < 1 || s.CellHeight < 1 {
+		return termSize{}, false
+	}
+	return termSize{Columns: s.Columns / 2, Rows: s.Rows, CellWidth: s.CellWidth, CellHeight: s.CellHeight}, true
 }
 
 func (t *Target) prepareBrowser(runtime, label string) ([]string, error) {
